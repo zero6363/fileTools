@@ -1,0 +1,26 @@
+# 构建 / 运行产物
+.pybuild/
+build/
+dist/
+*.spec
+/文件工具箱.exe
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 运行期生成的状态与配置（删掉会恢复默认）
+toolbox_window.json
+compressor_config.json
+
+# 迁移前的旧版本代码，不纳入版本库
+/old/
+
+# 编辑器 / 系统杂项
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# 开发过程记录（本地笔记，不属于项目源码）
+/.workbuddy/

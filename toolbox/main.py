@@ -1,0 +1,375 @@
+# -*- coding: utf-8 -*-
+"""文件工具箱（合并版）· 主窗口
+=====================================
+将原先分散的多个小工具合并为一个 GUI 程序，点击左侧纵向菜单即可切换使用对应工具。
+
+标签页与原工具对应关系：
+  ① 文件分组      <- 分组.bat / 分组 - jpg.bat / 分组 -mp4.bat / 分组 -txt.bat / 分组年月.bat
+                    （四个"按数量"的 bat 已合并：后缀下拉可选（jpg/txt/mp4/*）也可自定义，
+                      * = 按图片格式分组（jpg/jpeg/png/gif/bmp/tiff/webp 可改），不会分组所有文件；
+                      每组数量可自定义，文件夹前缀默认随后缀自动变化；同时保留"按年月分组"模式）
+  ② 移动到根目录  <- move.bat（省略了原 bat 的自我删除；默认同名跳过，可选同名重命名移动）
+  ③ 删除空文件夹  <- 空文件夹删除.py
+  ④ 实况图分组    <- 实况分组-可视化.py
+  ⑤ 文件名添加路径 <- 重命名.py（把目录层级添加到文件名前）
+  ⑥ 序号重命名    <- 新增：拖入文件/文件夹，遍历读取，数值化自然排序（9 在 10 前面），
+                      支持【全部重命名为序号 001/002…】和【前加序号 001-原文件名】，
+                      可勾选【仅处理文件夹】只重命名子文件夹
+  ⑦ 视频横竖屏    <- 新增：识别指定文件夹下的视频是横屏还是竖屏，分别移动到
+                      「横屏」「竖屏」子文件夹；不处理子文件夹，纯读容器头极速
+  ⑧ 文件名删除    <- 新增：按位置删除文件名中的字符（可选文件/文件夹、第几位开始、
+                      删几个字、从前/从后），拖入列表读取，预览后执行
+  ⑨ 图片生成MD    <- 记录md.py
+  ⑩ TXT转图片     <- txt2img.py
+  ⑪ TXT合并       <- txt合并.py
+  ⑫ TXT重命名     <- txt重命名.py
+  ⑬ WebP转JPG     <- webp2jpg.py
+  ⑭ 加密包分类    <- zipTestPsw.py
+  ⑮ 图片压缩      <- image_compressor（D:/code/pigc）：mozjpeg 无损优化 + libjpeg-turbo 备选
+  ⑯ ReSoBackup备份 <- ReSoBackup-main（Go 项目，Python 重实现）：RS 纠删码分片 + AES-256-GCM
+
+模块划分：
+  common.py         通用基础设施 + 拖放支持
+  tab_grouping.py   ①②③   tab_live.py ④   tab_rename.py ⑤⑥⑧
+  tab_video.py ⑦          tab_docs.py ⑨⑩⑪⑫
+  tab_media.py ⑬⑭         tab_compress.py ⑮  tab_rsbackup.py ⑯
+
+所有涉及文件移动/重命名的操作均防覆盖：同名跳过或自动改名，两阶段重命名，绝不丢失数据。
+依赖（按需安装，缺失时对应标签页会在运行时提示）：
+  pip install pillow chardet pycryptodome
+  pip install pyzipper rarfile py7zr   # ⑪ 加密包分类增强（zip 用标准库即可识别）
+"""
+import os
+import sys
+import traceback
+import tkinter as tk
+from tkinter import messagebox, ttk
+
+from .common import (APP_TITLE, _module_available, install_drop_support,
+                     load_window_config, restore_window_geometry,
+                     save_window_geometry)
+
+# 窗口几何（位置/大小/最大化）记忆文件，与 exe 同目录
+WINDOW_GEOMETRY_PATH = os.path.join(
+    os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
+    else os.path.dirname(os.path.abspath(__file__)),
+    "toolbox_window.json")
+
+# 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）
+NAV_DEFAULT_WIDTH = 210
+NAV_MIN_WIDTH = 160
+NAV_MAX_WIDTH = 360
+from .tab_grouping import build_empty_tab, build_flatten_tab, build_group_tab
+from .tab_live import build_live_tab
+from .tab_rename import build_rename_tab, build_seq_rename_tab, build_trim_tab
+from .tab_video import build_video_tab
+from .tab_docs import (build_md_tab, build_merge_tab, build_txt2img_tab,
+                       build_txt_rename_tab)
+from .tab_media import build_webp_tab, build_zip_tab
+from .tab_compress import build_compress_tab
+from .tab_rsbackup import build_rsbackup_tab
+
+
+# 主窗口
+# ============================================================
+
+class ToolboxApp:
+    def __init__(self, root):
+        self.root = root
+        root.title(APP_TITLE)
+        # 恢复上次窗口位置与大小；无记录或越界时用默认
+        if not restore_window_geometry(WINDOW_GEOMETRY_PATH, root):
+            root.geometry("1280x900")
+        root.minsize(1080, 720)
+        root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # 恢复上次左侧菜单宽度（越界/缺失时用默认）
+        cfg = load_window_config(WINDOW_GEOMETRY_PATH)
+        saved_nav_w = cfg.get("nav_width")
+        nav_width = saved_nav_w if isinstance(saved_nav_w, int) \
+            and NAV_MIN_WIDTH <= saved_nav_w <= NAV_MAX_WIDTH else NAV_DEFAULT_WIDTH
+
+        # 主体：左侧纵向菜单 + 右侧工具内容区
+        body = ttk.Frame(root)
+        body.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+        # 左侧菜单：宽度可拖拽调整；按钮放画布内，超出高度时可滚动
+        nav = ttk.Frame(body, width=nav_width)
+        nav.pack(side=tk.LEFT, fill=tk.Y)
+        nav.pack_propagate(False)
+        self.nav = nav
+
+        ttk.Label(nav, text="工具箱", font=("Microsoft YaHei", 15, "bold")).pack(pady=(12, 2))
+        ttk.Label(nav, text="点击左侧菜单切换工具", foreground="#888888").pack(pady=(0, 8))
+
+        menu_scroll = ttk.Frame(nav)
+        menu_scroll.pack(fill=tk.BOTH, expand=True)
+        menu_vsb = ttk.Scrollbar(menu_scroll, orient=tk.VERTICAL)
+        menu_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        menu_canvas = tk.Canvas(menu_scroll, yscrollcommand=menu_vsb.set,
+                                highlightthickness=0, bg="#f2f2f2")
+        menu_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        menu_vsb.config(command=menu_canvas.yview)
+
+        menu = tk.Frame(menu_canvas, bg="#f2f2f2")
+        menu_win = menu_canvas.create_window((0, 0), window=menu, anchor="nw")
+
+        def _menu_slack():
+            """可滚动余量 = 内容总高 - 视口高（<=0 表示全部按钮都放得下）"""
+            return menu.winfo_reqheight() - menu_canvas.winfo_height()
+
+        def _sync_menu_window(_e=None):
+            """同步嵌入画布的菜单窗口尺寸、滚动区、滚动条与滚动位置：
+            宽跟随画布、高 = 内容请求高（16 个按钮总高），滚动区 = 内容尺寸。
+            显式设置高度（而非放任自动跟踪）可避免个别环境下嵌入帧被画布高度
+            夹短，导致下方按钮被裁掉。最后还要：
+            1) 内容放得下时隐藏滚动条、并把视图钳制回顶部；
+            2) 内容放得下时画布会允许"越界滚动"（canvasy(0) 越出 0..slack），
+               表现为滚轮/缩放窗口后列表被推出视口、第一个按钮上方（或下方）
+               露出一块空白，这里统一钳回来。"""
+            w = menu_canvas.winfo_width()
+            h = menu.winfo_reqheight()
+            if w <= 1 or h <= 1:
+                return
+            menu_canvas.itemconfigure(menu_win, width=w, height=h)
+            menu_canvas.configure(scrollregion=(0, 0, w, h))
+            slack = max(0, _menu_slack())
+            # 滚动条只在真的需要滚动时出现，免得"看着能滚却只滚出空白"
+            if slack > 0:
+                if not menu_vsb.winfo_ismapped():
+                    # before= 保持原有打包顺序（滚动条在画布右侧），
+                    # 否则重新 pack 会排到画布之后、被 expand 的画布挤成 0 宽
+                    menu_vsb.pack(side=tk.RIGHT, fill=tk.Y, before=menu_canvas)
+            elif menu_vsb.winfo_ismapped():
+                menu_vsb.pack_forget()
+            offset = menu_canvas.canvasy(0)
+            if offset < 0 or offset > slack:
+                menu_canvas.yview_moveto(max(0, min(slack, offset)) / h)
+
+        menu.bind("<Configure>", _sync_menu_window)
+        menu_canvas.bind("<Configure>", _sync_menu_window)
+        root.after_idle(_sync_menu_window)
+        self._menu = menu
+
+        # 鼠标悬停左侧菜单时滚轮滚动菜单（全局监听 + 指针位置判断，
+        # 覆盖按钮/标题/空白各处；内容区滚轮不受影响）
+        def _on_menu_wheel(e):
+            try:
+                x, y = e.x_root, e.y_root
+                nx, ny = nav.winfo_rootx(), nav.winfo_rooty()
+                if not (nx <= x <= nx + nav.winfo_width()
+                        and ny <= y <= ny + nav.winfo_height()):
+                    return
+            except Exception:
+                return
+            if not e.delta:
+                return
+            slack = _menu_slack()
+            if slack <= 0:
+                # 内容放得下：直接不滚（否则画布会越界，把列表推出视口露出空白）
+                return
+            step = max(1, menu_canvas.winfo_height() // 10)  # 与画布默认滚动单位一致
+            offset = menu_canvas.canvasy(0) + (-step if e.delta > 0 else step)
+            offset = max(0, min(slack, offset))
+            menu_canvas.yview_moveto(offset / menu.winfo_reqheight())
+
+        root.bind_all("<MouseWheel>", _on_menu_wheel)
+        self._on_menu_wheel = _on_menu_wheel
+
+        # 分隔条：拖拽调整菜单宽度（限制在 160–360），双击恢复默认宽度
+        sash = tk.Frame(body, width=5, cursor="sb_h_double_arrow")
+        sash.pack(side=tk.LEFT, fill=tk.Y)
+        sash.bind("<ButtonPress-1>", self._on_nav_resize_start)
+        sash.bind("<B1-Motion>", self._on_nav_resize_move)
+        sash.bind("<ButtonRelease-1>", self._on_nav_resize_end)
+        sash.bind("<Double-Button-1>", self._on_nav_reset_width)
+
+        content = ttk.Frame(body)
+        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.tool_frames = []
+        self.nav_items = []  # [(button, frame, title), ...]
+        self._drop_handlers = {}  # {frame: handler} 各工具页注册的拖放处理器
+        self._current_index = 0
+        builders = [
+            ("① 文件分组", build_group_tab),
+            ("② 移动到根目录", build_flatten_tab),
+            ("③ 删除空文件夹", build_empty_tab),
+            ("④ 实况图分组", build_live_tab),
+            ("⑤ 文件名添加路径", build_rename_tab),
+            ("⑥ 序号重命名", build_seq_rename_tab),
+            ("⑦ 视频横竖屏", build_video_tab),
+            ("⑧ 文件名删除", build_trim_tab),
+            ("⑨ 图片生成MD", build_md_tab),
+            ("⑩ TXT转图片", build_txt2img_tab),
+            ("⑪ TXT合并", build_merge_tab),
+            ("⑫ TXT重命名", build_txt_rename_tab),
+            ("⑬ WebP转JPG", build_webp_tab),
+            ("⑭ 加密包分类", build_zip_tab),
+            ("⑮ 图片压缩", build_compress_tab),
+            ("⑯ ReSoBackup备份", build_rsbackup_tab),
+        ]
+        for index, (title, builder) in enumerate(builders):
+            frame = ttk.Frame(content, padding=8)
+            if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
+                            build_compress_tab, build_rsbackup_tab):
+                builder(frame, self)
+            else:
+                builder(frame)
+            self.tool_frames.append(frame)
+            btn = tk.Button(
+                menu, text="  " + title, anchor="w", command=lambda i=index: self.show_tool(i),
+                bg="#f2f2f2", fg="#333333", relief=tk.FLAT, activebackground="#e4e4e4",
+                font=("Microsoft YaHei", 10), padx=10, pady=6, cursor="hand2",
+            )
+            btn.pack(fill=tk.X, pady=1)
+            self.nav_items.append((btn, frame, title))
+
+        self.status = tk.Label(root, text="就绪", anchor="w", relief=tk.SUNKEN, padx=8, pady=3)
+        self.status.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # 注册 Windows 文件拖放（自实现，经队列在正常事件循环中处理）
+        install_drop_support(root, self._on_files_dropped)
+
+        self.show_tool(0)
+        root.after(300, self._check_deps)
+
+    def register_drop_handler(self, frame, handler):
+        """由支持拖放的工具页注册处理器（按页面分发，互不干扰）"""
+        self._drop_handlers[frame] = handler
+
+    def _on_files_dropped(self, files):
+        """拖放回调：分发给当前可见工具页的处理器（经队列在正常事件循环中执行）"""
+        try:
+            paths = [f if isinstance(f, str) else f.decode("utf-8", "ignore") for f in files]
+        except Exception:
+            return
+        frame = self.tool_frames[self._current_index]
+        handler = self._drop_handlers.get(frame)
+        if handler:
+            handler(paths)
+        else:
+            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑬图片压缩）")
+
+    def show_tool(self, index):
+        """切换到指定工具：隐藏其他页，显示对应页，并高亮菜单按钮"""
+        self._current_index = index
+        frame = self.tool_frames[index]
+        for i, f in enumerate(self.tool_frames):
+            if i != index:
+                f.pack_forget()
+        frame.pack(fill=tk.BOTH, expand=True)
+        current_title = self.nav_items[index][2]
+        for i, (btn, _f, _title) in enumerate(self.nav_items):
+            if i == index:
+                btn.config(bg="#2f6bff", fg="white", font=("Microsoft YaHei", 10, "bold"))
+            else:
+                btn.config(bg="#f2f2f2", fg="#333333", font=("Microsoft YaHei", 10))
+        self.status.config(text=f"当前工具：{current_title}")
+
+    def _check_deps(self):
+        missing, optional = check_dependencies()
+        if missing:
+            lines = ["以下依赖缺失，对应功能暂不可用："]
+            for pkg, usage in missing:
+                lines.append(f"  - {pkg}（{usage}）")
+            lines.append("")
+            lines.append("请运行：pip install " + " ".join(p for p, _ in missing))
+            if optional:
+                lines.append("")
+                lines.append("可选增强（⑪ 加密包分类）：pip install " + " ".join(optional))
+            self.status.config(text="部分依赖缺失，详见弹出提示")
+            messagebox.showwarning("缺少依赖", "\n".join(lines))
+        else:
+            self.status.config(text="就绪 —— 所有依赖已安装")
+
+    def _save_window(self):
+        """保存窗口几何 + 左侧菜单宽度（拖拽/双击调整后立即持久化）"""
+        try:
+            save_window_geometry(
+                WINDOW_GEOMETRY_PATH, self.root,
+                extra={"nav_width": self.nav.winfo_width()})
+        except Exception:
+            pass
+
+    def _on_nav_resize_start(self, e):
+        self._nav_resize_x0 = e.x_root
+        self._nav_resize_w0 = self.nav.winfo_width()
+
+    def _on_nav_resize_move(self, e):
+        if getattr(self, "_nav_resize_x0", None) is None:
+            return
+        width = self._nav_resize_w0 + (e.x_root - self._nav_resize_x0)
+        self.nav.configure(width=max(NAV_MIN_WIDTH, min(NAV_MAX_WIDTH, width)))
+
+    def _on_nav_resize_end(self, _e):
+        if getattr(self, "_nav_resize_x0", None) is None:
+            return
+        self._nav_resize_x0 = None
+        self._save_window()
+
+    def _on_nav_reset_width(self, _e):
+        self.nav.configure(width=NAV_DEFAULT_WIDTH)
+        self._save_window()
+
+    def on_close(self):
+        """关闭前记住窗口位置、大小与左侧菜单宽度"""
+        self._save_window()
+        self.root.destroy()
+
+
+def check_dependencies():
+    missing = []
+    if not _module_available("PIL"):
+        missing.append(("pillow", "⑦ TXT转图片 / ⑩ WebP转JPG"))
+    if not _module_available("chardet"):
+        missing.append(("chardet", "⑦ TXT转图片（缺失时使用内置编码猜测，功能仍可用）"))
+    optional = []
+    for mod in ("pyzipper", "rarfile", "py7zr"):
+        if not _module_available(mod):
+            optional.append(mod)
+    return missing, optional
+
+
+def main():
+    # 高 DPI 适配，避免高分屏下界面发虚
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+    root = tk.Tk()
+    app = ToolboxApp(root)
+    try:
+        root.mainloop()
+    except Exception:
+        # windowed exe 无控制台：致命错误写入日志文件，便于排查（不再静默闪退）
+        try:
+            if getattr(sys, "frozen", False):
+                base = os.path.dirname(sys.executable)
+            else:
+                base = os.path.dirname(os.path.abspath(__file__))
+            with open(os.path.join(base, "文件工具箱_错误日志.txt"), "a", encoding="utf-8") as f:
+                f.write("=" * 50 + "\n")
+                f.write(traceback.format_exc() + "\n")
+        except Exception:
+            pass
+        raise
+    finally:
+        # 兜底：非正常退出路径也尽量记住窗口几何与菜单宽度（root 已销毁则跳过）
+        try:
+            if root.winfo_exists():
+                extra = {}
+                try:
+                    w = app.nav.winfo_width()
+                    if w > 1:
+                        extra["nav_width"] = w
+                except Exception:
+                    pass
+                save_window_geometry(WINDOW_GEOMETRY_PATH, root, extra=extra)
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
