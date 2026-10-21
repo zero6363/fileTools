@@ -1073,9 +1073,9 @@ COLS = (
     ("name", "文件", 300),
     ("dur", "时长", 76),
     ("res", "分辨率", 100),
-    ("codec", "编码", 170),
+    ("codec", "编码", 150),
     ("sub", "字幕", 90),
-    ("status", "状态", 190),
+    ("status", "状态", 250),
 )
 
 
@@ -1085,6 +1085,27 @@ def fmt_duration(sec):
     sec = int(sec)
     h, m, s = sec // 3600, sec % 3600 // 60, sec % 60
     return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def estimate_eta(duration, pct, speed):
+    """根据总时长、当前百分比、ffmpeg 速度（如 "3.12x"）估算剩余真实时间（秒）。
+
+    ffmpeg 的 speed 就是"处理时长 / 墙钟时间"，所以：
+        剩余视频时长 = 总时长 × (100 - 百分比) / 100
+        剩余墙钟时间 = 剩余视频时长 / 速度
+    取不到速度时退回按百分比线性外推（仅粗略估计）。无足够信息时返回 None。"""
+    if not duration or duration <= 0 or pct <= 0:
+        return None
+    sp = 0.0
+    if speed:
+        m = re.search(r"([\d.]+)", speed)
+        if m:
+            sp = float(m.group(1))
+    if sp > 0:
+        rem_video = duration * (100 - pct) / 100.0
+        return max(0.0, rem_video / sp)
+    # 无速度：用已用时间反推总耗时（百分比占比），误差较大
+    return max(0.0, duration * (100 - pct) / pct)
 
 
 def collect_videos(paths):
@@ -1750,28 +1771,45 @@ def build_encode_tab(parent, app=None):
                 ui(lambda: set_cell(iid, "status", "压制中 0%"))
                 ui(lambda: state["progress"].__setitem__(iid, 0))
                 work_dir = tempfile.mkdtemp(prefix="vfx_")
-                last = {"t": 0.0, "pct": -1}
+                last = {"t": 0.0, "pct": -1, "speed": ""}
 
                 def on_progress(pct, speed):
                     import time as _t
                     now = _t.time()
+                    # ffmpeg 把速度单独成行上报（pct=None）：记住最新速度，
+                    # 用上一次记录的百分比继续刷新文本，让速度实时跳动。
+                    # 只保存真正带数字的（过滤 "N/A" / "?" 这类无效值）。
+                    speed_changed = False
+                    if speed:
+                        m = re.search(r"([\d.]+)\s*x?", speed, re.I)
+                        if m and speed != last["speed"]:
+                            last["speed"] = speed
+                            speed_changed = True
                     if pct is None:
+                        pct = last["pct"]
+                    if pct < 0:
                         return
-                    if now - last["t"] < 0.4 and pct < 100:
+                    # 节流：同一百分比、速度也没变、且离上次刷新不到 0.4s 就跳过；
+                    # 速度变了（即便百分比没变）也允许刷新——速度行本身约 1 秒一次，不会刷太频。
+                    if (pct == last["pct"] and not speed_changed
+                            and now - last["t"] < 0.4 and pct < 100):
                         return
                     last["t"] = now
-                    if pct != last["pct"]:
-                        last["pct"] = pct
-                        txt = f"压制中 {pct}%"
-                        if speed:
-                            txt += f" {speed}"
+                    last["pct"] = pct
+                    txt = f"压制中 {pct}%"
+                    if last["speed"]:
+                        txt += f" · {last['speed']}"
+                    if pct < 100:
+                        rem = estimate_eta(info["duration"], pct, last["speed"])
+                        if rem is not None:
+                            txt += " · 剩 " + fmt_duration(rem)
 
-                        def apply():
-                            set_cell(iid, "status", txt)
-                            state["progress"][iid] = pct
-                            refresh_progress()
+                    def apply():
+                        set_cell(iid, "status", txt)
+                        state["progress"][iid] = pct
+                        refresh_progress()
 
-                        ui(apply)
+                    ui(apply)
 
                 def on_cmd(cmd):
                     # 弹出 ffmpeg 窗口时，把实际执行的命令行也写进日志（可复制去手动跑）
