@@ -7,8 +7,9 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from .common import (APP_TITLE, DEFAULT_IMAGE_FORMATS, clean_path, clear_log,
-                     make_check, make_entry_row, make_log_panel, make_path_row,
-                     make_spin_row, make_start_button, make_tip, run_task)
+                     form_label, form_note, make_check, make_form, make_log_panel,
+                     make_num_box, make_path_row, make_start_button, make_tip,
+                     run_task)
 
 
 # ① 文件分组（按数量 / 按年月）  —— 原 分组*.bat
@@ -246,70 +247,93 @@ def remove_empty_dirs_loop(root, log):
 
 
 def build_group_tab(parent):
-    parent.grid_rowconfigure(5, weight=1)
-    make_tip(parent, 0, "把文件夹里的文件按规则分组移动：【按数量分组】后缀可选 .jpg/.txt/.mp4/*"
-                        "（* = 按图片格式分组，不会分组其他文件）或自定义后缀，每组数量可自定义；"
-                        "【按年月分组】按文件修改时间归入 年-月 文件夹。同名文件跳过不覆盖，防止丢失。")
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "按数量：按后缀分组（.jpg / .txt / .mp4，* = 按图片格式），每组数量可自定义；"
+                        "按年月：按修改时间归入 年-月 文件夹。同名文件自动跳过，不覆盖。",
+             colspan=1, autowrap=True)
 
-    ttk.Label(parent, text="分组方式：").grid(row=1, column=0, sticky="w", padx=6, pady=5)
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+
+    form_label(form, 0, "分组方式：")
     var_mode = tk.StringVar(value="按数量分组")
-    mode_box = ttk.Combobox(parent, textvariable=var_mode, width=24, state="readonly",
+    mode_box = ttk.Combobox(form, textvariable=var_mode, width=24, state="readonly",
                             values=["按数量分组", "按年月分组（按修改时间）"])
-    mode_box.grid(row=1, column=1, sticky="w", padx=6)
+    mode_box.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=5)
 
-    var_src = make_path_row(parent, 2, "源目录：", title="选择源目录")
+    var_src = make_path_row(form, 1, "源目录：", title="选择源目录")
 
-    frame_count = ttk.Frame(parent)
-    frame_count.grid(row=3, column=0, columnspan=3, sticky="w")
-    ttk.Label(frame_count, text="文件后缀：").grid(row=0, column=0, sticky="w", padx=6, pady=5)
+    # ---------- 按数量分组 ----------
+    suffix_label = form_label(form, 2, "文件后缀：")
     var_suffix = tk.StringVar(value=".jpg")
-    suffix_box = ttk.Combobox(frame_count, textvariable=var_suffix, width=14,
+    suffix_box = ttk.Combobox(form, textvariable=var_suffix, width=14,
                               values=[".jpg", ".gif", ".txt", ".mp4", "*"])
-    suffix_box.grid(row=0, column=1, sticky="w", padx=6)
-    ttk.Label(frame_count, text="下拉选择常用后缀，也可直接输入自定义后缀",
-              foreground="#666666").grid(row=0, column=2, sticky="w", padx=4)
+    suffix_box.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=5)
+    suffix_note = form_note(form, 2, "可选常用后缀，也可自定义")
 
-    # 图片格式行：仅当后缀为 *（按图片格式分组）时显示
-    frame_formats = ttk.Frame(frame_count)
-    var_img_formats = make_entry_row(frame_formats, 0, "图片格式：", default=DEFAULT_IMAGE_FORMATS,
-                                     entry_width=40, note="* 时只分组这些格式的图片，空格分隔")
+    fmt_label = form_label(form, 3, "图片格式：")
+    var_img_formats = tk.StringVar(value=DEFAULT_IMAGE_FORMATS)
+    fmt_entry = ttk.Entry(form, textvariable=var_img_formats, width=40)
+    fmt_entry.grid(row=3, column=1, sticky="w", padx=(0, 6), pady=5)
+    fmt_note = form_note(form, 3, "* 时只处理这些图片格式，空格分隔")
 
-    var_per = make_spin_row(frame_count, 2, "每组数量：", 1500, 1, 1000000, step=100)
-    ttk.Label(frame_count, text="文件夹前缀：").grid(row=3, column=0, sticky="w", padx=6, pady=5)
+    per_label = form_label(form, 4, "每组数量：")
+    box_per, var_per = make_num_box(form, 1500, 1, 1000000, width=8, step=100)
+    box_per.grid(row=4, column=1, sticky="w", padx=(0, 6), pady=3)
+
+    prefix_label = form_label(form, 5, "文件夹前缀：")
     var_prefix = tk.StringVar(value="jpg")
-    ttk.Entry(frame_count, textvariable=var_prefix, width=20).grid(row=3, column=1, sticky="w", padx=6)
-    ttk.Label(frame_count, text="默认随后缀自动变化（* 用 Group），可手动修改",
-              foreground="#666666").grid(row=3, column=2, sticky="w", padx=4)
+    prefix_entry = ttk.Entry(form, textvariable=var_prefix, width=20)
+    prefix_entry.grid(row=5, column=1, sticky="w", padx=(0, 6), pady=5)
+    prefix_note = form_note(form, 5, "随后缀自动变化，可手动修改")
+
+    count_widgets = [suffix_label, suffix_box, suffix_note,
+                     fmt_label, fmt_entry, fmt_note,
+                     per_label, box_per, prefix_label, prefix_entry, prefix_note]
+
+    # ---------- 按年月分组 ----------
+    ym_label = form_label(form, 2, "图片格式：")
+    var_formats = tk.StringVar(value=DEFAULT_IMAGE_FORMATS)
+    ym_entry = ttk.Entry(form, textvariable=var_formats, width=40)
+    ym_entry.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=5)
+    ym_note = form_note(form, 2, "* = 所有格式；按修改时间生成 年-月 文件夹")
+    ym_widgets = [ym_label, ym_entry, ym_note]
 
     def refresh_suffix_ui(*_args):
         """后缀为 * / 空 时显示图片格式框并同步前缀；否则隐藏"""
-        is_star = var_suffix.get().strip() in ("", "*", "*.*")
-        if is_star:
-            frame_formats.grid(row=1, column=0, columnspan=3, sticky="w")
-        else:
-            frame_formats.grid_remove()
         var_prefix.set(prefix_from_suffix(var_suffix.get()))
+        if not var_mode.get().startswith("按数量"):
+            return
+        if var_suffix.get().strip() in ("", "*", "*.*"):
+            fmt_label.grid()
+            fmt_entry.grid()
+            fmt_note.grid()
+        else:
+            fmt_label.grid_remove()
+            fmt_entry.grid_remove()
+            fmt_note.grid_remove()
 
     suffix_box.bind("<<ComboboxSelected>>", refresh_suffix_ui)
     var_suffix.trace_add("write", lambda *_a: refresh_suffix_ui())
-    refresh_suffix_ui()
-
-    frame_ym = ttk.Frame(parent)
-    var_formats = make_entry_row(frame_ym, 0, "图片格式：", default=DEFAULT_IMAGE_FORMATS,
-                                 entry_width=40, note="空格分隔；* = 所有格式，生成 年-月 文件夹（如 2025-12）")
 
     def refresh_mode(*_args):
         if var_mode.get().startswith("按数量"):
-            frame_ym.grid_remove()
-            frame_count.grid(row=3, column=0, columnspan=3, sticky="w")
+            for w in ym_widgets:
+                w.grid_remove()
+            for w in count_widgets:
+                w.grid()
+            refresh_suffix_ui()
         else:
-            frame_count.grid_remove()
-            frame_ym.grid(row=3, column=0, columnspan=3, sticky="w")
+            for w in count_widgets:
+                w.grid_remove()
+            for w in ym_widgets:
+                w.grid()
 
     mode_box.bind("<<ComboboxSelected>>", refresh_mode)
     refresh_mode()
 
-    text_log, log = make_log_panel(parent, 5)
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         src = clean_path(var_src.get())
@@ -333,18 +357,28 @@ def build_group_tab(parent):
         run_task(btn, log, work,
                  on_done=lambda err: None if err else messagebox.showinfo("完成", "分组结束，详情见日志。"))
 
-    btn = make_start_button(parent, 4, "开始分组", start)
+    btn = make_start_button(form, 6, "开始分组", start)
 
 
 def build_flatten_tab(parent):
-    parent.grid_rowconfigure(5, weight=1)
-    make_tip(parent, 0, "把子目录里的文件全部移动到根目录（原 move.bat 功能）。默认遇到同名文件跳过不移动；"
-                        "勾选后自动改名移动，两种模式都不会覆盖已有文件。")
-    var_src = make_path_row(parent, 1, "根目录：", title="选择根目录")
-    var_rec = make_check(parent, "递归所有层级的子目录（取消勾选只处理一级子目录）", default=True, row=2, column=0)
-    var_rename = make_check(parent, "同名重命名移动（不勾选则跳过同名文件）", default=False, row=3, column=0)
-    var_del = make_check(parent, "移动完成后删除空的子文件夹", default=False, row=3, column=1)
-    text_log, log = make_log_panel(parent, 5)
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "把子目录里的文件全部移动到根目录。默认遇到同名文件跳过不移动；"
+                        "勾选后自动改名移动，两种模式都不会覆盖已有文件。",
+             colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+
+    var_src = make_path_row(form, 0, "根目录：", title="选择根目录")
+    var_rec = make_check(form, "递归所有层级的子目录（取消勾选只处理一级子目录）",
+                         default=True, row=1, column=1)
+    var_rename = make_check(form, "同名重命名移动（不勾选则跳过同名文件）",
+                            default=False, row=2, column=1)
+    var_del = make_check(form, "移动完成后删除空的子文件夹",
+                         default=False, row=3, column=1)
+
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         src = clean_path(var_src.get())
@@ -356,7 +390,7 @@ def build_flatten_tab(parent):
                  lambda: flatten_files(src, var_rec.get(), var_del.get(), var_rename.get(), log),
                  on_done=lambda err: None if err else messagebox.showinfo("完成", "移动结束，详情见日志。"))
 
-    btn = make_start_button(parent, 4, "开始移动", start)
+    btn = make_start_button(form, 4, "开始移动", start)
 
 
 def build_empty_tab(parent):

@@ -7,8 +7,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from .common import (clean_path, clear_log, get_unique_path, make_check,
-                     make_log_panel, make_path_row, make_start_button,
-                     make_tip, run_task)
+                     make_form, make_log_panel, make_path_row,
+                     make_start_button, make_tip, run_task)
 
 
 # ④ 实况图分组 —— 原 实况分组-可视化.py
@@ -161,13 +161,23 @@ def run_live_sort(target_dir, move_static, move_live, extract_video, log):
 
 
 def build_live_tab(parent):
-    parent.grid_rowconfigure(6, weight=1)
-    make_tip(parent, 0, "识别安卓实况图（JPEG 内嵌视频）：实况图移入 LivePhotos 并提取 mp4，静态图移入 StaticPhotos。")
-    var_src = make_path_row(parent, 1, "目标文件夹：", title="选择目标文件夹")
-    var_static = make_check(parent, "移动静态图片到 StaticPhotos（不勾选保持原位）", default=True, row=2, column=0)
-    var_live = make_check(parent, "移动实况图片到 LivePhotos（不勾选保持原位）", default=True, row=3, column=0)
-    var_extract = make_check(parent, "提取实况图视频到 LivePhotos/videos", default=True, row=4, column=0)
-    text_log, log = make_log_panel(parent, 6)
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "识别安卓实况图（JPEG 内嵌视频）：实况图移入 LivePhotos 并提取 mp4，"
+                        "静态图移入 StaticPhotos。", colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+
+    var_src = make_path_row(form, 0, "目标文件夹：", title="选择目标文件夹")
+    var_static = make_check(form, "移动静态图片到 StaticPhotos（不勾选保持原位）",
+                            default=True, row=1, column=1)
+    var_live = make_check(form, "移动实况图片到 LivePhotos（不勾选保持原位）",
+                          default=True, row=2, column=1)
+    var_extract = make_check(form, "提取实况图视频到 LivePhotos/videos",
+                             default=True, row=3, column=1)
+
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         src = clean_path(var_src.get())
@@ -182,4 +192,4 @@ def build_live_tab(parent):
                  lambda: run_live_sort(src, var_static.get(), var_live.get(), var_extract.get(), log),
                  on_done=lambda err: None if err else messagebox.showinfo("完成", "处理结束，详情见日志。"))
 
-    btn = make_start_button(parent, 5, "开始处理", start)
+    btn = make_start_button(form, 4, "开始处理", start)

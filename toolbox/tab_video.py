@@ -18,7 +18,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from .common import (DEFAULT_IMAGE_FORMATS, clean_path, clear_log,
-                     get_unique_path, make_check, make_entry_row,
+                     get_unique_path, make_check, make_entry_row, make_form,
                      make_log_panel, make_num_row, make_path_row,
                      make_start_button, make_tip, run_task)
 
@@ -886,17 +886,24 @@ def run_video_sort(directory, exts_text, threads, move_unknown, log):
 # ============================================================
 
 def build_video_tab(parent, app=None):
-    parent.grid_rowconfigure(7, weight=1)
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
     make_tip(parent, 0, "识别指定文件夹下的视频是横屏还是竖屏，分别移动到「横屏」「竖屏」子文件夹。"
-                        "只处理当前文件夹，不进入子文件夹。只读取视频头信息，速度极快、不改画质。")
-    var_src = make_path_row(parent, 1, "目标文件夹：", title="选择视频文件夹")
-    var_exts = make_entry_row(parent, 2, "视频格式：", default=DEFAULT_VIDEO_EXTS,
+                        "只处理当前文件夹，不进入子文件夹；只读视频头信息，速度极快、不改画质。",
+             colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+
+    var_src = make_path_row(form, 0, "目标文件夹：", title="选择视频文件夹")
+    var_exts = make_entry_row(form, 1, "视频格式：", default=DEFAULT_VIDEO_EXTS,
                               entry_width=52, note="空格分隔，可自行增删")
-    var_threads = make_num_row(parent, 3, "识别线程数：", 8, 1, 32,
+    var_threads = make_num_row(form, 2, "识别线程数：", 8, 1, 32,
                                note="读文件头几乎不占 CPU，线程多更快")
-    var_unknown = make_check(parent, "无法识别的视频移到「未知」文件夹（不勾选保持原位）",
-                             default=False, row=4, column=0)
-    text_log, log = make_log_panel(parent, 6)
+    var_unknown = make_check(form, "无法识别的视频移到「未知」文件夹（不勾选保持原位）",
+                             default=False, row=3, column=1)
+
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         src = clean_path(var_src.get())
@@ -913,4 +920,4 @@ def build_video_tab(parent, app=None):
                  on_done=lambda err: None if err else messagebox.showinfo(
                      "完成", "识别与移动结束，详情见日志。"))
 
-    btn = make_start_button(parent, 5, "开始识别", start)
+    btn = make_start_button(form, 4, "开始识别", start)

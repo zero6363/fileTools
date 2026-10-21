@@ -11,10 +11,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from .common import (_module_available, clean_path, clear_log, make_check,
-                     make_entry_row, make_file_row, make_log_panel,
-                     make_path_row, make_spin_row, make_start_button,
-                     make_tip, natural_key, run_task)
+from .common import (_module_available, clean_path, clear_log, form_label,
+                     form_note, make_check, make_entry_row, make_file_row,
+                     make_form, make_log_panel, make_path_row, make_spin_row,
+                     make_start_button, make_tip, natural_key, run_task)
 
 
 # ⑩ 图片生成MD —— 原 记录md.py
@@ -583,27 +583,31 @@ def rename_txt_by_first_line(src_dir, log):
 
 
 def build_md_tab(parent):
-    parent.grid_rowconfigure(5, weight=1)
-    make_tip(parent, 0, "把目录中的图片整理成一个 Markdown 文件：图片复制到 输出文件夹/appdata/Image，"
-                        "并生成 源目录名.md。\n"
-                        "已存在同名 md 时自动进入更新模式：只把新增图片复制过去，按文件名顺序插入到"
-                        "「排序后下一张已引用图片」的文本上方（后面没有已引用的图就作为最后一张），"
-                        "已有内容不改动。")
-    var_src = make_path_row(parent, 1, "源目录：", title="选择源目录")
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "把目录中的图片整理成 Markdown：图片复制到 输出文件夹/appdata/Image 并生成 源目录名.md；"
+                        "已存在同名 md 时只追加新增图片，不改动已有内容。",
+             colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+
+    var_src = make_path_row(form, 0, "源目录：", title="选择源目录")
     # 输出文件夹名：默认“记录”，下拉可选“a3”，也支持直接输入自定义名称
-    ttk.Label(parent, text="输出文件夹名：").grid(row=2, column=0, sticky="w", padx=6, pady=5)
+    form_label(form, 1, "输出文件夹名：")
     var_out = tk.StringVar(value="记录")
-    ttk.Combobox(parent, textvariable=var_out, width=30,
-                 values=["记录", "a3"]).grid(row=2, column=1, sticky="w", padx=6)
-    ttk.Label(parent, text="在源目录下创建该文件夹（可自定义输入）",
-              foreground="#666666").grid(row=2, column=2, sticky="w", padx=4)
-    # 三个复选框收进独立行容器：容器内列宽只由复选框自身决定，不会被其他行列宽顶偏
-    check_row = ttk.Frame(parent)
-    check_row.grid(row=3, column=0, columnspan=4, sticky="w", pady=4)
+    ttk.Combobox(form, textvariable=var_out, width=24,
+                 values=["记录", "a3"]).grid(row=1, column=1, sticky="w", padx=(0, 6), pady=5)
+    form_note(form, 1, "在源目录下创建该文件夹，可自定义输入")
+
+    # 三个复选框放在输入列，与上方输入框左对齐
+    check_row = ttk.Frame(form)
+    check_row.grid(row=2, column=1, sticky="w", pady=2)
     var_sub = make_check(check_row, "递归遍历子目录", default=True, row=0, column=0)
     var_folder = make_check(check_row, "md添加文件夹名称", default=True, row=0, column=1)
     var_fname = make_check(check_row, "md添加原图名称", default=True, row=0, column=2)
-    text_log, log = make_log_panel(parent, 5)
+
+    text_log, log = make_log_panel(parent, 2, colspan=1)
     result = {}
 
     def start():
@@ -640,7 +644,7 @@ def build_md_tab(parent):
 
         run_task(btn, log, work, on_done=done)
 
-    btn = make_start_button(parent, 4, "开始生成", start)
+    btn = make_start_button(form, 3, "开始生成", start)
 
 
 def build_txt2img_tab(parent):

@@ -11,7 +11,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-APP_VERSION = "1.05"
+APP_VERSION = "1.06"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -202,28 +202,71 @@ def clean_path(p):
     return p.strip().strip('"').strip("'").strip()
 
 
+def make_form(parent):
+    """表单容器：所有输入行放进同一个容器，标签列宽统一，
+    输入框/浏览按钮左边缘对齐，说明文字统一放在第 4 列。
+    （不要把提示文字直接跨列放在外层，否则会把列宽撑开，导致各行错位。）"""
+    frame = ttk.Frame(parent)
+    try:
+        from tkinter import font as tkfont
+        ref = tkfont.nametofont("TkDefaultFont").measure("输出文件夹名：") + 18
+    except Exception:
+        ref = 108
+    frame.grid_columnconfigure(0, minsize=ref)
+    frame.grid_columnconfigure(3, weight=1)
+    return frame
+
+
+def form_label(parent, row, text):
+    """表单标签：右对齐，使同一容器内的输入框起点一致"""
+    lbl = ttk.Label(parent, text=text)
+    lbl.grid(row=row, column=0, sticky="e", padx=(6, 8), pady=5)
+    return lbl
+
+
+def form_note(parent, row, text, column=3, columnspan=1):
+    """表单说明文字：固定放第 4 列，不参与列宽计算；
+    窗口变窄时自动按可用宽度换行，避免长说明被裁掉。"""
+    lbl = ttk.Label(parent, text=text, foreground="#666666", justify="left")
+    lbl.grid(row=row, column=column, columnspan=columnspan,
+             sticky="w", padx=(8, 4), pady=5)
+
+    def _rewrap(event):
+        try:
+            if event.width > 40:
+                lbl.configure(wraplength=max(80, event.width - 2))
+        except Exception:
+            pass
+
+    lbl.bind("<Configure>", _rewrap, add="+")
+    return lbl
+
+
 def make_path_row(parent, row, label, default="", title="选择文件夹", entry_width=52, note=None):
     """目录输入行：标签 + 可编辑文本框 + 浏览按钮"""
-    ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=5)
+    form_label(parent, row, label)
     var = tk.StringVar(value=default)
-    ttk.Entry(parent, textvariable=var, width=entry_width).grid(row=row, column=1, sticky="w", padx=6)
+    ttk.Entry(parent, textvariable=var, width=entry_width).grid(
+        row=row, column=1, sticky="w", padx=(0, 6), pady=5)
 
     def _browse():
         p = filedialog.askdirectory(title=title)
         if p:
             var.set(p)
 
-    ttk.Button(parent, text="浏览...", command=_browse).grid(row=row, column=2, sticky="w")
+    ttk.Button(parent, text="浏览...", command=_browse).grid(
+        row=row, column=2, sticky="w", padx=(0, 4), pady=5)
     if note:
-        ttk.Label(parent, text=note, foreground="#666666").grid(row=row, column=3, sticky="w", padx=4)
+        form_note(parent, row, note)
     return var
 
 
 def make_file_row(parent, row, label, default="", title="选择文件", entry_width=52, note=None):
     """文件输入行（用于字体等文件选择）"""
-    ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=5)
+    form_label(parent, row, label)
     var = tk.StringVar(value=default)
-    ttk.Entry(parent, textvariable=var, width=entry_width).grid(row=row, column=1, sticky="w", padx=6)
+    ttk.Entry(parent, textvariable=var, width=entry_width).grid(
+        row=row, column=1, sticky="w", padx=(0, 6), pady=5)
 
     def _browse():
         p = filedialog.askopenfilename(
@@ -233,18 +276,20 @@ def make_file_row(parent, row, label, default="", title="选择文件", entry_wi
         if p:
             var.set(p)
 
-    ttk.Button(parent, text="浏览...", command=_browse).grid(row=row, column=2, sticky="w")
+    ttk.Button(parent, text="浏览...", command=_browse).grid(
+        row=row, column=2, sticky="w", padx=(0, 4), pady=5)
     if note:
-        ttk.Label(parent, text=note, foreground="#666666").grid(row=row, column=3, sticky="w", padx=4)
+        form_note(parent, row, note)
     return var
 
 
 def make_entry_row(parent, row, label, default="", entry_width=30, note=None):
-    ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=5)
+    form_label(parent, row, label)
     var = tk.StringVar(value=default)
-    ttk.Entry(parent, textvariable=var, width=entry_width).grid(row=row, column=1, sticky="w", padx=6)
+    ttk.Entry(parent, textvariable=var, width=entry_width).grid(
+        row=row, column=1, sticky="w", padx=(0, 6), pady=5)
     if note:
-        ttk.Label(parent, text=note, foreground="#666666").grid(row=row, column=2, sticky="w", padx=4)
+        form_note(parent, row, note)
     return var
 
 
@@ -271,13 +316,11 @@ def make_num_box(parent, default, min_, max_, width=6, step=1):
 
 def make_num_row(parent, row, label, default, min_, max_, note=None, width=6, step=1):
     """带标签/说明的整行数字输入（[－] Entry [＋]，方便鼠标操作），返回 StringVar"""
-    frame = ttk.Frame(parent)
-    frame.grid(row=row, column=0, columnspan=4, sticky="w", padx=2, pady=3)
-    ttk.Label(frame, text=label).pack(side=tk.LEFT, padx=6)
-    box, var = make_num_box(frame, default, min_, max_, width, step)
-    box.pack(side=tk.LEFT)
+    form_label(parent, row, label)
+    box, var = make_num_box(parent, default, min_, max_, width, step)
+    box.grid(row=row, column=1, sticky="w", padx=(0, 6), pady=3)
     if note:
-        ttk.Label(frame, text=note, foreground="#666666").pack(side=tk.LEFT, padx=6)
+        form_note(parent, row, note)
     return var
 
 
@@ -291,19 +334,20 @@ def make_check(parent, text, default=False, row=None, column=None, var=None):
         var = tk.BooleanVar(value=default)
     cb = ttk.Checkbutton(parent, text=text, variable=var)
     if row is not None:
-        cb.grid(row=row, column=column, sticky="w", padx=6, pady=3)
+        cb.grid(row=row, column=column, sticky="w", padx=(0, 6), pady=3)
     else:
         cb.pack(anchor="w", padx=6, pady=2)
     return var
 
 
 def make_start_button(parent, row, text, command, colspan=3):
+    """主操作按钮：统一放在输入列，左边缘与输入框对齐"""
     btn = tk.Button(
         parent, text=text, command=command,
         bg="#2f6bff", fg="white", activebackground="#2455cc", activeforeground="white",
         font=("Microsoft YaHei", 10, "bold"), height=1, padx=16, pady=4, cursor="hand2",
     )
-    btn.grid(row=row, column=0, columnspan=colspan, pady=12)
+    btn.grid(row=row, column=1, sticky="w", padx=(0, 6), pady=(12, 6))
     return btn
 
 
@@ -318,9 +362,24 @@ def make_log_panel(parent, row, colspan=3, title="运行日志", height=12):
     return text, make_logger(text)
 
 
-def make_tip(parent, row, text, colspan=3):
-    ttk.Label(parent, text=text, foreground="#666666", wraplength=1120).grid(
-        row=row, column=0, columnspan=colspan, sticky="w", padx=8, pady=(0, 6))
+def make_tip(parent, row, text, colspan=3, autowrap=False):
+    """提示文字：autowrap=True 时随容器宽度自动换行，避免文字被裁掉；
+    配合 colspan=1 使用可避免跨列提示把表单列宽撑开。"""
+    lbl = ttk.Label(parent, text=text, foreground="#666666",
+                    wraplength=820 if autowrap else 1120, justify="left")
+    lbl.grid(row=row, column=0, columnspan=colspan,
+             sticky="we" if autowrap else "w", padx=8, pady=(0, 6))
+    if autowrap:
+        def _rewrap(event):
+            try:
+                w = max(240, event.width - 32)
+                if abs(int(lbl.cget("wraplength")) - w) > 12:
+                    lbl.configure(wraplength=w)
+            except Exception:
+                pass
+
+        parent.bind("<Configure>", _rewrap, add="+")
+    return lbl
 
 
 def _module_available(name):

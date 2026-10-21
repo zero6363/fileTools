@@ -9,7 +9,7 @@ from tkinter import messagebox, ttk
 
 from .common import (_is_relative_to, _module_available, clean_path,
                      clear_log, get_unique_path, make_check, make_entry_row,
-                     make_log_panel, make_path_row, make_spin_row,
+                     make_form, make_log_panel, make_path_row, make_spin_row,
                      make_start_button, make_tip, run_task)
 
 
@@ -184,13 +184,19 @@ def sort_encrypted_archives(scan_dir, suffix_str, folder_name, recursive, log):
 
 
 def build_webp_tab(parent):
-    parent.grid_rowconfigure(6, weight=1)
-    make_tip(parent, 0, "把 WebP 图片转换为 JPG。需要 pillow 依赖。")
-    var_src = make_path_row(parent, 1, "源目录：", title="选择源目录")
-    var_out = make_path_row(parent, 2, "输出目录：", title="选择输出目录", note="留空则输出到源目录")
-    var_q = make_spin_row(parent, 3, "JPG质量：", 100, 1, 100)
-    var_del = make_check(parent, "转换成功后删除原webp", default=True, row=4, column=0)
-    text_log, log = make_log_panel(parent, 6)
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "把 WebP 图片转换为 JPG。需要 pillow 依赖。", colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+
+    var_src = make_path_row(form, 0, "源目录：", title="选择源目录")
+    var_out = make_path_row(form, 1, "输出目录：", title="选择输出目录", note="留空则输出到源目录")
+    var_q = make_spin_row(form, 2, "JPG质量：", 100, 1, 100)
+    var_del = make_check(form, "转换成功后删除原 webp", default=True, row=3, column=1)
+
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         src = clean_path(var_src.get())
@@ -207,19 +213,26 @@ def build_webp_tab(parent):
         run_task(btn, log, lambda: webp_to_jpg(src, out, quality, var_del.get(), log),
                  on_done=lambda err: None if err else messagebox.showinfo("完成", "转换结束，详情见日志。"))
 
-    btn = make_start_button(parent, 5, "开始转换", start)
+    btn = make_start_button(form, 4, "开始转换", start)
 
 
 def build_zip_tab(parent):
-    parent.grid_rowconfigure(6, weight=1)
-    make_tip(parent, 0, "扫描压缩包，把加密的移动到指定文件夹。zip 用标准库即可识别；rar/7z 需要 rarfile / py7zr。")
-    var_dir = make_path_row(parent, 1, "扫描目录：", title="选择扫描目录")
-    var_suffix = make_entry_row(parent, 2, "压缩包后缀：", default=".zip .rar .7z",
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "扫描压缩包，把加密的移动到指定文件夹。zip 用标准库即可识别；"
+                        "rar/7z 需要 rarfile / py7zr。", colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+
+    var_dir = make_path_row(form, 0, "扫描目录：", title="选择扫描目录")
+    var_suffix = make_entry_row(form, 1, "压缩包后缀：", default=".zip .rar .7z",
                                 entry_width=24, note="空格分隔")
-    var_folder = make_entry_row(parent, 3, "目标文件夹名：", default="加密",
+    var_folder = make_entry_row(form, 2, "目标文件夹名：", default="加密",
                                 entry_width=16, note="在扫描目录下创建")
-    var_rec = make_check(parent, "递归扫描子文件夹", default=True, row=4, column=0)
-    text_log, log = make_log_panel(parent, 6)
+    var_rec = make_check(form, "递归扫描子文件夹", default=True, row=3, column=1)
+
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         scan_dir = clean_path(var_dir.get())
@@ -236,7 +249,7 @@ def build_zip_tab(parent):
                  lambda: sort_encrypted_archives(scan_dir, suffix_str, folder_name, var_rec.get(), log),
                  on_done=lambda err: None if err else messagebox.showinfo("完成", "检测结束，详情见日志。"))
 
-    btn = make_start_button(parent, 5, "开始检测", start)
+    btn = make_start_button(form, 4, "开始检测", start)
 
 
 # ============================================================
