@@ -1613,9 +1613,20 @@ def build_encode_tab(parent, app=None):
     var_console = tk.BooleanVar(value=False)
     ttk.Checkbutton(opt_line, text="显示 ffmpeg 窗口", variable=var_console).pack(side=tk.LEFT)
 
+    # 第 3 行：归档动作开关（默认全开；关掉就地把文件留在原位）
+    move_line = ttk.Frame(settings_box)
+    move_line.grid(row=3, column=0, columnspan=6, sticky="w", pady=(4, 0))
+    ttk.Label(move_line, text="完成后移动：", foreground="#666666").pack(side=tk.LEFT, padx=(4, 2))
+    var_move_ok = tk.BooleanVar(value=True)
+    ttk.Checkbutton(move_line, text="成功 → success/", variable=var_move_ok).pack(side=tk.LEFT, padx=(0, 10))
+    var_move_fail = tk.BooleanVar(value=True)
+    ttk.Checkbutton(move_line, text="失败 → error/", variable=var_move_fail).pack(side=tk.LEFT, padx=(0, 10))
+    var_move_grow = tk.BooleanVar(value=True)
+    ttk.Checkbutton(move_line, text="变大 → oversize/", variable=var_move_grow).pack(side=tk.LEFT)
+
     # 第 4 行：编码器状态（一行小字）
     lbl_enc = ttk.Label(settings_box, text="编码器：检测中…", foreground="#1a6b1a")
-    lbl_enc.grid(row=3, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
+    lbl_enc.grid(row=4, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
 
     # ---------------- 文件列表 ----------------
     list_bar = ttk.Frame(parent)
@@ -1983,6 +1994,9 @@ def build_encode_tab(parent, app=None):
             "preset": var_preset.get().strip(),
             "burn_sub": bool(var_burn.get()),
             "keep_dv": bool(var_keepdv.get()),
+            "move_ok": bool(var_move_ok.get()),
+            "move_fail": bool(var_move_fail.get()),
+            "move_grow": bool(var_move_grow.get()),
             "show_console": bool(var_console.get()),
             "concurrency": conc,
             "out_dir": clean_path(var_outdir.get()),
@@ -2062,6 +2076,16 @@ def build_encode_tab(parent, app=None):
                 f"{q_txt}　preset {settings['preset']}　"
                 f"并发：{settings['concurrency']}　硬烧字幕：{'开' if settings['burn_sub'] else '关'}　"
                 f"共 {len(jobs)} 个文件")
+        # 关掉了哪类移动就提示一句，免得用户以为文件丢了
+        mv_off = []
+        if not settings.get("move_ok", True):
+            mv_off.append("成功")
+        if not settings.get("move_fail", True):
+            mv_off.append("失败")
+        if not settings.get("move_grow", True):
+            mv_off.append("变大")
+        if mv_off:
+            log(f"移动：{'、'.join(mv_off)}的文件不移动（源文件留在原位）")
         # 列表里有杜比视界视频、但没勾「保留杜比视界」时提示一句，避免压完才发现 RPU 没保住
         if settings["mode"] != MODE_REMUX and not settings.get("keep_dv"):
             dv_n = 0
@@ -2108,12 +2132,15 @@ def build_encode_tab(parent, app=None):
                 if not info:
                     # 读不到视频信息：有 ffprobe 说明文件本身有问题，按失败归档
                     out_dir0 = settings["out_dir"] or os.path.dirname(src)
-                    archived = archive_source(src, out_dir0, False) if state["ffprobe"] else ""
+                    move_fail = bool(settings.get("move_fail", True))
+                    archived = (archive_source(src, out_dir0, False)
+                                if (state["ffprobe"] and move_fail) else "")
                     fail_n += 1
                     state["fail"] += 1
                     ui(lambda: set_cell(iid, "status", "失败：读不到视频信息"))
                     ui(lambda: log(f"  ✗ 读不到视频信息：{os.path.basename(src)}"
-                                   + (f"（已移到 {archive_tag(archived)}）" if archived else "")))
+                                   + (f"（已移到 {archive_tag(archived)}）" if archived
+                                      else "（按要求不移动源文件）" if not move_fail else "")))
                     ui(refresh_progress)
                     return
                 plan = resolve_plan(settings, info)
@@ -2256,24 +2283,31 @@ def build_encode_tab(parent, app=None):
                             delta_txt = f" {'↑' if grown else '↓'}{abs(pct):.0f}%（{sizes}）"
                             size_note = f"（体积 {'+' if grown else '-'}{abs(pct):.0f}%，{sizes}）"
                     if grown:
-                        # 越压越大：源文件和成品都挪进 oversize/，方便一起删掉或重调参数
-                        src_new, dst_new = archive_oversize(src, dst, out_dir)
                         grown_n += 1
                         state["grown"] += 1
-                        moved_all = bool(src_new and dst_new)
-                        move_note = (f"；体积变大，源文件与成品已移到 {OVERSIZE_DIR}/"
-                                     if moved_all else
-                                     f"；体积变大，但移到 {OVERSIZE_DIR}/ 未完全成功")
-                        status_txt = f"完成 ✔{delta_txt} → {OVERSIZE_DIR}/"
+                        if settings.get("move_grow", True):
+                            # 越压越大：源文件和成品都挪进 oversize/，方便一起删掉或重调参数
+                            src_new, dst_new = archive_oversize(src, dst, out_dir)
+                            moved_all = bool(src_new and dst_new)
+                            move_note = (f"；体积变大，源文件与成品已移到 {OVERSIZE_DIR}/"
+                                         if moved_all else
+                                         f"；体积变大，但移到 {OVERSIZE_DIR}/ 未完全成功")
+                            status_txt = f"完成 ✔{delta_txt} → {OVERSIZE_DIR}/"
+                        else:
+                            move_note = "；体积变大，按要求不动文件（源与成品留在原位）"
+                            status_txt = f"完成 ✔{delta_txt}"
                         log_txt = f"  ✔ 完成{size_note}：{os.path.basename(dst)}{move_note}"
                     else:
-                        archived = archive_source(src, out_dir, True)
-                        if archived:
-                            move_note = f"；源文件已移到 {archive_tag(archived)}"
-                        elif os.path.basename(os.path.dirname(src)).lower() == "success":
-                            move_note = "；源文件已在 success/ 里，保持原位"
+                        if settings.get("move_ok", True):
+                            archived = archive_source(src, out_dir, True)
+                            if archived:
+                                move_note = f"；源文件已移到 {archive_tag(archived)}"
+                            elif os.path.basename(os.path.dirname(src)).lower() == "success":
+                                move_note = "；源文件已在 success/ 里，保持原位"
+                            else:
+                                move_note = "；源文件移动失败"
                         else:
-                            move_note = "；源文件移动失败"
+                            move_note = "；按要求不移动源文件（留在原位）"
                         status_txt = f"完成 ✔{delta_txt}"
                         log_txt = f"  ✔ 完成{size_note}：{os.path.basename(dst)}{move_note}"
                     ok_n += 1
@@ -2297,16 +2331,21 @@ def build_encode_tab(parent, app=None):
                         os.remove(dst)
                     except OSError:
                         pass
-                    archived = archive_source(src, out_dir, False)
+                    if settings.get("move_fail", True):
+                        archived = archive_source(src, out_dir, False)
+                        if archived:
+                            fail_note = f"（源文件已移到 {archive_tag(archived)}）"
+                        elif os.path.basename(os.path.dirname(src)).lower() == "error":
+                            fail_note = "（源文件已在 error/ 里，保持原位）"
+                        else:
+                            fail_note = ""
+                    else:
+                        fail_note = "（按要求不移动源文件，留在原位）"
                     fail_n += 1
                     state["fail"] += 1
                     state["progress"].pop(iid, None)
                     ui(lambda: set_cell(iid, "status", "失败 ✗"))
-                    ui(lambda: log(f"  ✗ 失败：{os.path.basename(src)}：{msg}"
-                                   + (f"（源文件已移到 {archive_tag(archived)}）" if archived
-                                      else "（源文件已在 error/ 里，保持原位）"
-                                      if os.path.basename(os.path.dirname(src)).lower() == "error"
-                                      else "")))
+                    ui(lambda: log(f"  ✗ 失败：{os.path.basename(src)}：{msg}{fail_note}"))
                     ui(refresh_progress)
 
             # 逐个收集结果：任一文件内部异常只把它自己标记失败，绝不让整个批次线程
@@ -2327,9 +2366,10 @@ def build_encode_tab(parent, app=None):
                         ui(lambda iid=iid: set_cell(iid, "status", "失败：内部异常"))
                         ui(lambda bad=bad, tb=tb: log(f"  ✗ 内部异常：{bad}\n{tb}"))
                         ui(refresh_progress)
-            ui(lambda: finish_batch(ok_n, fail_n, cancel_n, skip_n, grown_n))
+            ui(lambda: finish_batch(ok_n, fail_n, cancel_n, skip_n, grown_n,
+                                    bool(settings.get("move_grow", True))))
 
-        def finish_batch(ok_n, fail_n, cancel_n, skip_n=0, grown_n=0):
+        def finish_batch(ok_n, fail_n, cancel_n, skip_n=0, grown_n=0, moved_grow=True):
             state["running"] = False
             btn_stop.config(state=tk.DISABLED)
             btn_start.config(state=tk.NORMAL)
@@ -2343,7 +2383,7 @@ def build_encode_tab(parent, app=None):
             else:
                 log(f"全部结束：成功 {ok_n}，失败 {fail_n}，取消 {cancel_n}{tail}")
             summary = f"总结：已完成 {ok_n}，失败 {fail_n}，变大 {grown_n} 个"
-            if grown_n:
+            if grown_n and moved_grow:
                 summary += f"（体积变大的源文件与成品都归到了 {OVERSIZE_DIR}/）"
             log(summary)
             lbl_prog.config(text=f"已完成 {ok_n}，失败 {fail_n}，变大 {grown_n} 个")
