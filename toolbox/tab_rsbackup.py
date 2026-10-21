@@ -273,7 +273,7 @@ def rs_discover_set(input_path):
     directory = os.path.dirname(os.path.abspath(input_path))
     if base.endswith(".rsmeta"):
         return os.path.join(directory, base), base[:-len(".rsmeta")], directory
-    idx = base.find(".rs.")
+    idx = base.rfind(".rs.")
     if idx < 0:
         raise ValueError("input must be a .rsmeta or .rs.NNN file")
     prefix = base[:idx]
@@ -632,6 +632,7 @@ def build_rsbackup_tab(parent, app=None):
 
         def done(err):
             state["busy"] = False
+            _toggle_buttons(True)  # 两个按钮都恢复，避免另一侧永久变灰
             if err:
                 messagebox.showerror("失败", "备份失败，详情见日志。")
             else:
@@ -662,6 +663,7 @@ def build_rsbackup_tab(parent, app=None):
 
         def done(err):
             state["busy"] = False
+            _toggle_buttons(True)  # 两个按钮都恢复，避免另一侧永久变灰
             if err:
                 messagebox.showerror("失败", "恢复失败，详情见日志。")
             else:
