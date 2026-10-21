@@ -353,6 +353,45 @@ def _parse_ratio(v):
         return 0.0
 
 
+def _detect_vfr_by_pts(ffprobe, path, max_seconds=120):
+    """用逐包显示时间戳（PTS）的间隔方差判断 VFR。
+
+    只读 packet 元数据、不解码，能抓到 `r_frame_rate` 与 `avg_frame_rate` 很接近的
+    小幅可变帧率（例如手机视频 28.571~30fps、平均 29.97，两者相对差只有 0.1%，
+    单看 r/avg 会误判成 CFR）。最多读取开头 max_seconds 秒的包，避免大文件太慢。
+    返回 True/False；数据不足或失败返回 None（调用方沿用 r/avg 的判断）。"""
+    try:
+        r = _run([ffprobe, "-v", "error", "-select_streams", "v:0",
+                  "-read_intervals", f"%+{int(max_seconds)}",
+                  "-show_entries", "packet=pts_time", "-of", "csv=p=0", path],
+                 timeout=60)
+    except Exception:
+        return None
+    vals = []
+    for line in (r.stdout or b"").decode("utf-8", "ignore").splitlines():
+        s = line.strip().strip(",")
+        if not s or s.upper() in ("N/A", "NAN"):
+            continue
+        try:
+            vals.append(float(s))
+        except ValueError:
+            pass
+    if len(vals) < 8:
+        return None
+    vals.sort()
+    deltas = [b - a for a, b in zip(vals, vals[1:]) if b - a > 0]
+    if len(deltas) < 6:
+        return None
+    med = sorted(deltas)[len(deltas) // 2]
+    if med <= 0:
+        return None
+    # 偏离中位帧间隔超过 2% 的帧占比 >0.5% 即视为 VFR。
+    # 实测手机 VFR（28.571~30fps、平均 29.97）只有约 1% 的帧是慢帧，所以占比阈值不能太高；
+    # 而 CFR 的 NTSC 取整偏差 <0.1%，达不到 2% 的单帧偏差，不会误判。
+    dev = sum(1 for d in deltas if abs(d - med) > med * 0.02) / len(deltas)
+    return dev > 0.005
+
+
 def _chroma_of(pix_fmt):
     """从 ffmpeg 像素格式名解析色度：4:2:0 / 4:2:2 / 4:4:4 / 灰阶。"""
     pf = (pix_fmt or "").lower()
@@ -481,6 +520,12 @@ def probe_media(ffprobe, path):
     vfr = False
     if r_fps > 0 and avg_fps > 0:
         vfr = abs(r_fps - avg_fps) / max(r_fps, avg_fps) > 0.01
+    if not vfr:
+        # r/avg 很接近时仍可能是小幅 VFR（如 28.571~30fps、平均 29.97），
+        # 再用逐包 PTS 间隔方差复核，避免把这类手机视频误判成 CFR。
+        pts_vfr = _detect_vfr_by_pts(ffprobe, path)
+        if pts_vfr is not None:
+            vfr = pts_vfr
 
     return {
         "width": width,
@@ -780,6 +825,10 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
         # 源是可变帧率（VFR）：显式透传时间戳，保证压制后仍是 VFR，
         # 不被 muxer 按平均帧率重采样成恒定帧率（CFR）。CFR 源不加，保持原时间戳。
         args += ["-fps_mode", "passthrough"]
+        # QSV / NVENC 默认会按固定帧时长重排时间戳，只给 passthrough 仍会输出准 CFR；
+        # 指定更细的编码时间基后才能真正保留可变间隔（实测 QSV 1080p HLG：0.0333/0.035 均保留）。
+        if (plan["enc"] or "").endswith(("_qsv", "_nvenc")):
+            args += ["-enc_time_base", "1/90000"]
     args += ["-movflags", "+faststart", "-f", "mp4", dst]
     return args
 

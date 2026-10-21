@@ -23,5 +23,8 @@ ffmpeg_config.json
 Thumbs.db
 desktop.ini
 
+# 本地测试素材（样本视频 / 第三方工具，不纳入版本库）
+/demo/
+
 # 开发过程记录（本地笔记，不属于项目源码）
 /.workbuddy/
