@@ -803,6 +803,17 @@ def extract_subtitle(ffmpeg, src, sub_index, work_dir):
     return None
 
 
+def quality_tag(enc, quality):
+    """日志里的质量参数写法（三种编码器体系不同，别一律写 crf）：
+       QSV 用 global_quality、NVENC 用 cq、软件 x265/x264 用 crf。"""
+    e = enc or ""
+    if e.endswith("_qsv"):
+        return f"gq{quality}"
+    if e.endswith("_nvenc"):
+        return f"cq{quality}"
+    return f"crf{quality}"
+
+
 def select_pix_fmt(info, mode, enc, keep_dv=False):
     """按模式与编码器决定输出像素格式：
         640p（最长边 640，输出短边 360 → 俗称 360p）→ 一律 8bit 4:2:0，不保留高位深；
@@ -1040,6 +1051,9 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
         # （提示 Not writing 'dvcC'/'dvvC' box. Requires -strict unofficial），
         # 没有它播放器只当普通 HDR 播，不会点亮杜比视界。
         args += ["-strict", "unofficial", "-tag:v", "hvc1"]
+    elif plan.get("codec") == CODEC_HEVC:
+        # 非 DV 的 HEVC 也标 hvc1：QuickTime / Safari / iOS 只认 hvc1，hev1 无法播放
+        args += ["-tag:v", "hvc1"]
     args += ["-movflags", "+faststart", "-f", "mp4", dst]
     return args
 
@@ -1382,7 +1396,7 @@ def estimate_eta(duration, pct, speed):
         剩余视频时长 = 总时长 × (100 - 百分比) / 100
         剩余墙钟时间 = 剩余视频时长 / 速度
     取不到速度时退回按百分比线性外推（仅粗略估计）。无足够信息时返回 None。"""
-    if not duration or duration <= 0 or pct <= 0:
+    if not duration or duration <= 0 or pct < 0:
         return None
     sp = 0.0
     if speed:
@@ -1390,8 +1404,12 @@ def estimate_eta(duration, pct, speed):
         if m:
             sp = float(m.group(1))
     if sp > 0:
+        # 有速度就能算：剩余视频时长（含 0% 时 = 全片）÷ 速度
         rem_video = duration * (100 - pct) / 100.0
         return max(0.0, rem_video / sp)
+    if pct <= 0:
+        # 既没速度、又还没进度，无法估计
+        return None
     # 无速度：用已用时间反推总耗时（百分比占比），误差较大
     return max(0.0, duration * (100 - pct) / pct)
 
@@ -1972,15 +1990,21 @@ def build_encode_tab(parent, app=None):
         for iid in jobs:
             set_cell(iid, "status", "排队中")
         mode_txt = {"640": "640p（最长边 640；已 ≤640 的跳过）",
-                    "hd": "高清（原分辨率 crf18）",
+                    "hd": "高清（原分辨率，画质优先）",
                     "custom": "自定义",
                     MODE_REMUX: "极速转封装（不重编码，-c copy）"}[settings["mode"]]
+        if settings["mode"] == "hd":
+            q_txt = f"质量 {HD_CRF}（高清固定）"
+        elif settings["mode"] == "640":
+            q_txt = "质量 按编码器默认"
+        else:
+            q_txt = f"质量 {settings['quality']}"
         if settings["mode"] == MODE_REMUX:
             log(f"模式：{mode_txt}　并发：{settings['concurrency']}　"
                 f"共 {len(jobs)} 个文件（只换容器，不烧字幕）")
         else:
             log(f"模式：{mode_txt}　编码：{CODEC_LABELS[settings['codec']]}　"
-                f"质量 crf{settings['quality']}　preset {settings['preset']}　"
+                f"{q_txt}　preset {settings['preset']}　"
                 f"并发：{settings['concurrency']}　硬烧字幕：{'开' if settings['burn_sub'] else '关'}　"
                 f"共 {len(jobs)} 个文件")
 
@@ -2083,7 +2107,8 @@ def build_encode_tab(parent, app=None):
                                   (" 保留RPU" if plan.get("keep_dv") else " RPU将丢失"))
                     ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
                                    f"（{CODEC_LABELS[plan['codec']]} / {plan['enc']} / "
-                                   f"crf{plan['quality']} / preset {plan['preset']} / {size_txt} / "
+                                   f"{quality_tag(plan['enc'], plan['quality'])} / "
+                                   f"preset {plan['preset']} / {size_txt} / "
                                    f"{depth} {cx}{hdr_tag}{vfr_tag}{dv_tag}）"))
                 ui(lambda: set_cell(iid, "status", "压制中 0%"))
                 ui(lambda: state["progress"].__setitem__(iid, 0))
