@@ -40,8 +40,8 @@ VIDEO_EXTS = (".mp4", ".flv", ".ts", ".mkv", ".mov", ".avi", ".wmv", ".m4v",
               ".webm", ".m2ts", ".mts", ".mpg", ".mpeg", ".3gp", ".rmvb",
               ".rm", ".vob", ".f4v", ".asf", ".ogv")
 
-# 本程序自己的输出名：xxx.crf24.mp4 / xxx.crf24_1.mp4
-OUTPUT_NAME_RE = re.compile(r"\.crf\d+(?:_\d+)?\.mp4$", re.I)
+# 本程序自己的输出名：xxx.crf24.mp4 / xxx.crf24_1.mp4 / xxx.640p_crf24.mp4
+OUTPUT_NAME_RE = re.compile(r"\.(?:[0-9]+p_)?crf[0-9]+(?:_[0-9]+)?\.mp4$", re.I)
 
 CODEC_AV1 = "av1"
 CODEC_HEVC = "hevc"
@@ -1058,13 +1058,17 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
     return args
 
 
-def output_name(src, quality, remux=False):
+def output_name(src, quality, remux=False, mode=None):
     stem = os.path.splitext(os.path.basename(src))[0]
-    # 源本身就是我们压出来的成品（xxx.crf24.mp4 / xxx.crf24_1.mp4）时去掉后缀，避免 crf24.crf24 叠名字
-    stem = re.sub(r"(?:\.crf\d+(?:_\d+)?)+$", "", stem) or stem
+    # 源本身就是我们压出来的成品（xxx.crf24.mp4 / xxx.640p_crf24.mp4 / xxx.crf24_1.mp4）
+    # 时去掉后缀，避免 crf24.crf24 这种叠名字
+    stem = re.sub(r"(?:\.(?:[0-9]+p_)?crf[0-9]+(?:_[0-9]+)?)+$", "", stem, flags=re.I) or stem
     if remux:
         # 极速转封装：原文件名.mp4（对应 %%~na.mp4），不带 crf 后缀
         return f"{stem}.mp4"
+    if mode == "640":
+        # 640p 模式带上分辨率标记，和原分辨率的成品区分开：原名.640p_crf24.mp4
+        return f"{stem}.640p_crf{quality}.mp4"
     return f"{stem}.crf{quality}.mp4"
 
 
@@ -2172,7 +2176,8 @@ def build_encode_tab(parent, app=None):
                     ui(refresh_progress)
                     return
                 dst = os.path.join(out_dir,
-                                   output_name(src, plan["quality"], plan.get("remux", False)))
+                                   output_name(src, plan["quality"], plan.get("remux", False),
+                                               settings["mode"]))
                 if os.path.exists(dst):
                     dst = str(get_unique_path(Path(dst)))
                 dw, dh = display_size(info)
