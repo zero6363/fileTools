@@ -12,6 +12,7 @@ __pycache__/
 # 运行期生成的状态与配置（删掉会恢复默认）
 toolbox_window.json
 compressor_config.json
+ffmpeg_config.json
 
 # 迁移前的旧版本代码，不纳入版本库
 /old/

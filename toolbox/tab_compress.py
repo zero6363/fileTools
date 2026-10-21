@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑬ 图片压缩（移植自 image_compressor）
+"""⑯ 图片压缩（移植自 image_compressor）
 mozjpeg 静态二进制随包分发（bin/mozjpeg/），Pillow(libjpeg-turbo) 为备选编码器"""
 import json
 import logging
@@ -17,7 +17,7 @@ from .common import (APP_TITLE, _module_available, clean_path, clear_log,
                      make_log_panel, make_tip, run_task)
 
 
-# ⑬ 图片压缩（移植自 image_compressor）
+# ⑯ 图片压缩（移植自 image_compressor）
 # mozjpeg 静态二进制随包分发（bin/mozjpeg/），Pillow(libjpeg-turbo) 为备选编码器
 # ============================================================
 
@@ -724,7 +724,7 @@ class CompressOptionsDialog(tk.Toplevel):
 # ============================================================
 
 
-# ⑬ 图片压缩标签页 UI
+# ⑯ 图片压缩标签页 UI
 # ============================================================
 
 def build_compress_tab(parent, app=None):

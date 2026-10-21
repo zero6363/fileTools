@@ -555,25 +555,39 @@ def build_seq_rename_tab(parent, app=None):
             return
         clear_log(text_log)
         success, fail = execute_seq_plan(preview_plan, log)
-        # 用实际结果刷新列表（失败/跳过的文件保持原名）
-        renamed = dict(preview_plan)
-        refreshed = []
-        for f in file_list:
-            nf = renamed.get(f, f)
-            refreshed.append(nf if os.path.exists(nf) else f)
-        file_list[:] = refreshed
-        file_list.sort(key=natural_key)
-        refresh_list()
-        clear_preview()
-        messagebox.showinfo("执行完成", f"成功 {success} 个，失败/跳过 {fail} 个")
+        if fail == 0:
+            # 全部改名成功：列表里剩下的都是改完的路径，留着没意义，直接清空
+            file_list.clear()
+            clear_preview()
+            refresh_list()
+            log(f"全部成功（{success} 个），列表已自动清空")
+            messagebox.showinfo("执行完成", f"成功 {success} 个，无失败项，列表已自动清空")
+        else:
+            # 有失败/跳过：保留列表（失败项保持原名），方便修正后重试
+            renamed = dict(preview_plan)
+            refreshed = []
+            for f in file_list:
+                nf = renamed.get(f, f)
+                refreshed.append(nf if os.path.exists(nf) else f)
+            file_list[:] = refreshed
+            file_list.sort(key=natural_key)
+            refresh_list()
+            clear_preview()
+            messagebox.showinfo("执行完成",
+                                f"成功 {success} 个，失败/跳过 {fail} 个\n"
+                                f"（失败项保留在列表里，可修正后重试）")
 
     ttk.Button(frame_run, text="预览重命名结果", command=do_preview).pack(side=tk.LEFT, padx=8)
     ttk.Button(frame_run, text="执行重命名", command=do_execute).pack(side=tk.LEFT, padx=8)
 
+    # 注册拖放：拖入文件/文件夹直接加入列表（修复⑥序号重命名无法拖入的问题）
+    if app is not None:
+        app.register_drop_handler(parent, add_paths)
+
 
 
 def build_trim_tab(parent, app=None):
-    """⑦ 文件名删除：按位置删除文件名中的字符（可选文件/文件夹，从前/从后）"""
+    """⑨ 文件名删除：按位置删除文件名中的字符（可选文件/文件夹，从前/从后）"""
     parent.grid_rowconfigure(2, weight=1)
     parent.grid_rowconfigure(7, weight=1)
     make_tip(parent, 0, "把文件或文件夹拖到下方列表（也可点按钮添加），按位置删除文件名中的字符："
@@ -760,7 +774,6 @@ def build_trim_tab(parent, app=None):
     ttk.Button(frame_run, text="预览重命名结果", command=do_preview).pack(side=tk.LEFT, padx=8)
     ttk.Button(frame_run, text="执行重命名", command=do_execute).pack(side=tk.LEFT, padx=8)
 
-    if app is not None:
-        app.register_drop_handler(parent, add_paths)
+    # 注册拖放：拖入文件/文件夹直接加入列表
     if app is not None:
         app.register_drop_handler(parent, add_paths)

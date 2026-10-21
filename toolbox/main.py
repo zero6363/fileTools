@@ -15,29 +15,34 @@
   ⑥ 序号重命名    <- 新增：拖入文件/文件夹，遍历读取，数值化自然排序（9 在 10 前面），
                       支持【全部重命名为序号 001/002…】和【前加序号 001-原文件名】，
                       可勾选【仅处理文件夹】只重命名子文件夹
-  ⑦ 视频横竖屏    <- 新增：识别指定文件夹下的视频是横屏还是竖屏，分别移动到
+  ⑦ 视频常用压制  <- 新增：调用 FFmpeg 批量压制（NVENC 优先 / 无则 QSV / 再退软件），
+                      AV1 / H.265 自由选，内嵌字幕硬烧（复刻 ShanaEncoder 样式），
+                      成功后源文件归档到 success/
+  ⑧ 视频横竖屏    <- 新增：识别指定文件夹下的视频是横屏还是竖屏，分别移动到
                       「横屏」「竖屏」子文件夹；不处理子文件夹，纯读容器头极速
-  ⑧ 文件名删除    <- 新增：按位置删除文件名中的字符（可选文件/文件夹、第几位开始、
+  ⑨ 文件名删除    <- 新增：按位置删除文件名中的字符（可选文件/文件夹、第几位开始、
                       删几个字、从前/从后），拖入列表读取，预览后执行
-  ⑨ 图片生成MD    <- 记录md.py
-  ⑩ TXT转图片     <- txt2img.py
-  ⑪ TXT合并       <- txt合并.py
-  ⑫ TXT重命名     <- txt重命名.py
-  ⑬ WebP转JPG     <- webp2jpg.py
-  ⑭ 加密包分类    <- zipTestPsw.py
-  ⑮ 图片压缩      <- image_compressor（D:/code/pigc）：mozjpeg 无损优化 + libjpeg-turbo 备选
-  ⑯ ReSoBackup备份 <- ReSoBackup-main（Go 项目，Python 重实现）：RS 纠删码分片 + AES-256-GCM
+  ⑩ 图片生成MD    <- 记录md.py
+  ⑪ TXT转图片     <- txt2img.py
+  ⑫ TXT合并       <- txt合并.py
+  ⑬ TXT重命名     <- txt重命名.py
+  ⑭ WebP转JPG     <- webp2jpg.py
+  ⑮ 加密包分类    <- zipTestPsw.py
+  ⑯ 图片压缩      <- image_compressor（D:/code/pigc）：mozjpeg 无损优化 + libjpeg-turbo 备选
+  ⑰ ReSoBackup备份 <- ReSoBackup-main（Go 项目，Python 重实现）：RS 纠删码分片 + AES-256-GCM
 
 模块划分：
   common.py         通用基础设施 + 拖放支持
-  tab_grouping.py   ①②③   tab_live.py ④   tab_rename.py ⑤⑥⑧
-  tab_video.py ⑦          tab_docs.py ⑨⑩⑪⑫
-  tab_media.py ⑬⑭         tab_compress.py ⑮  tab_rsbackup.py ⑯
+  tab_grouping.py   ①②③   tab_live.py ④   tab_rename.py ⑤⑥⑨
+  tab_encode.py ⑦         tab_video.py ⑧
+  tab_docs.py ⑩⑪⑫⑬       tab_media.py ⑭⑮
+  tab_compress.py ⑯       tab_rsbackup.py ⑰
+  （⑦ tab_encode.py 依赖外部 FFmpeg）
 
 所有涉及文件移动/重命名的操作均防覆盖：同名跳过或自动改名，两阶段重命名，绝不丢失数据。
 依赖（按需安装，缺失时对应标签页会在运行时提示）：
   pip install pillow chardet pycryptodome
-  pip install pyzipper rarfile py7zr   # ⑪ 加密包分类增强（zip 用标准库即可识别）
+  pip install pyzipper rarfile py7zr   # ⑮ 加密包分类增强（zip 用标准库即可识别）
 """
 import os
 import sys
@@ -67,6 +72,7 @@ from .tab_docs import (build_md_tab, build_merge_tab, build_txt2img_tab,
                        build_txt_rename_tab)
 from .tab_media import build_webp_tab, build_zip_tab
 from .tab_compress import build_compress_tab
+from .tab_encode import build_encode_tab
 from .tab_rsbackup import build_rsbackup_tab
 
 
@@ -190,6 +196,7 @@ class ToolboxApp:
         self.tool_frames = []
         self.nav_items = []  # [(button, frame, title), ...]
         self._drop_handlers = {}  # {frame: handler} 各工具页注册的拖放处理器
+        self._show_handlers = {}  # {frame: handler} 各工具页注册的「切换到该页时」回调
         self._current_index = 0
         builders = [
             ("① 文件分组", build_group_tab),
@@ -198,21 +205,22 @@ class ToolboxApp:
             ("④ 实况图分组", build_live_tab),
             ("⑤ 文件名添加路径", build_rename_tab),
             ("⑥ 序号重命名", build_seq_rename_tab),
-            ("⑦ 视频横竖屏", build_video_tab),
-            ("⑧ 文件名删除", build_trim_tab),
-            ("⑨ 图片生成MD", build_md_tab),
-            ("⑩ TXT转图片", build_txt2img_tab),
-            ("⑪ TXT合并", build_merge_tab),
-            ("⑫ TXT重命名", build_txt_rename_tab),
-            ("⑬ WebP转JPG", build_webp_tab),
-            ("⑭ 加密包分类", build_zip_tab),
-            ("⑮ 图片压缩", build_compress_tab),
-            ("⑯ ReSoBackup备份", build_rsbackup_tab),
+            ("⑦ 视频常用压制", build_encode_tab),
+            ("⑧ 视频横竖屏", build_video_tab),
+            ("⑨ 文件名删除", build_trim_tab),
+            ("⑩ 图片生成MD", build_md_tab),
+            ("⑪ TXT转图片", build_txt2img_tab),
+            ("⑫ TXT合并", build_merge_tab),
+            ("⑬ TXT重命名", build_txt_rename_tab),
+            ("⑭ WebP转JPG", build_webp_tab),
+            ("⑮ 加密包分类", build_zip_tab),
+            ("⑯ 图片压缩", build_compress_tab),
+            ("⑰ ReSoBackup备份", build_rsbackup_tab),
         ]
         for index, (title, builder) in enumerate(builders):
             frame = ttk.Frame(content, padding=8)
             if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
-                            build_compress_tab, build_rsbackup_tab):
+                            build_compress_tab, build_rsbackup_tab, build_encode_tab):
                 builder(frame, self)
             else:
                 builder(frame)
@@ -238,6 +246,10 @@ class ToolboxApp:
         """由支持拖放的工具页注册处理器（按页面分发，互不干扰）"""
         self._drop_handlers[frame] = handler
 
+    def register_show_handler(self, frame, handler):
+        """由工具页注册「切换到该页」回调（用于打开页面时才检测依赖，不拖慢启动）"""
+        self._show_handlers[frame] = handler
+
     def _on_files_dropped(self, files):
         """拖放回调：分发给当前可见工具页的处理器（经队列在正常事件循环中执行）"""
         try:
@@ -249,7 +261,7 @@ class ToolboxApp:
         if handler:
             handler(paths)
         else:
-            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑬图片压缩）")
+            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑦视频常用压制 / ⑧视频横竖屏 / ⑯图片压缩）")
 
     def show_tool(self, index):
         """切换到指定工具：隐藏其他页，显示对应页，并高亮菜单按钮"""
@@ -266,6 +278,12 @@ class ToolboxApp:
             else:
                 btn.config(bg="#f2f2f2", fg="#333333", font=("Microsoft YaHei", 10))
         self.status.config(text=f"当前工具：{current_title}")
+        handler = self._show_handlers.get(frame)
+        if handler:
+            try:
+                handler()
+            except Exception:
+                pass
 
     def _check_deps(self):
         missing, optional = check_dependencies()
@@ -277,7 +295,7 @@ class ToolboxApp:
             lines.append("请运行：pip install " + " ".join(p for p, _ in missing))
             if optional:
                 lines.append("")
-                lines.append("可选增强（⑪ 加密包分类）：pip install " + " ".join(optional))
+                lines.append("可选增强（⑮ 加密包分类）：pip install " + " ".join(optional))
             self.status.config(text="部分依赖缺失，详见弹出提示")
             messagebox.showwarning("缺少依赖", "\n".join(lines))
         else:
@@ -321,9 +339,9 @@ class ToolboxApp:
 def check_dependencies():
     missing = []
     if not _module_available("PIL"):
-        missing.append(("pillow", "⑦ TXT转图片 / ⑩ WebP转JPG"))
+        missing.append(("pillow", "⑪ TXT转图片 / ⑭ WebP转JPG"))
     if not _module_available("chardet"):
-        missing.append(("chardet", "⑦ TXT转图片（缺失时使用内置编码猜测，功能仍可用）"))
+        missing.append(("chardet", "⑪ TXT转图片（缺失时使用内置编码猜测，功能仍可用）"))
     optional = []
     for mod in ("pyzipper", "rarfile", "py7zr"):
         if not _module_available(mod):

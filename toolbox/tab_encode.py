@@ -1,0 +1,1795 @@
+# -*- coding: utf-8 -*-
+"""⑦ 视频常用压制 —— FFmpeg 硬件编码（NVENC 优先 / 无则 QSV）+ 内嵌字幕硬烧 + 自动归档
+
+压制参数参考 ShanaEncoder 的常用设置：
+    AV1  (NVENC)   -preset p1      -cq 36
+    H.265(NVENC)   -preset p4      -cq 29
+    H.265(QSV)     -preset medium  -global_quality 24
+
+字幕样式同样复刻 ShanaEncoder：微软雅黑 / 字号 15 / 轮廓 2 / 阴影 2 /
+左右边距 10 / 底边距 20 / 强制 ASS 样式 / 居中底部；
+滤镜顺序固定为「字幕在前、旋转在后」（-noautorotate + transpose）。
+
+文件归档：压制成功把源文件移到 success/，失败移到 error/；
+输出命名 原文件名.crf<质量值>.mp4。
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import tkinter as tk
+import traceback
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+from .common import (clean_path, clear_log, get_unique_path, make_check,
+                     make_log_panel, make_num_box, make_tip, natural_key)
+
+# ============================================================
+# 常量
+# ============================================================
+
+VIDEO_EXTS = (".mp4", ".flv", ".ts", ".mkv", ".mov", ".avi", ".wmv", ".m4v",
+              ".webm", ".m2ts", ".mts", ".mpg", ".mpeg", ".3gp", ".rmvb",
+              ".rm", ".vob", ".f4v", ".asf", ".ogv")
+
+# 本程序自己的输出名：xxx.crf24.mp4 / xxx.crf24_1.mp4
+OUTPUT_NAME_RE = re.compile(r"\.crf\d+(?:_\d+)?\.mp4$", re.I)
+
+CODEC_AV1 = "av1"
+CODEC_HEVC = "hevc"
+CODEC_LABELS = {CODEC_AV1: "AV1", CODEC_HEVC: "H.265 (HEVC)"}
+
+# 参考 ShanaEncoder：AV1(NVENC) cq36 / AV1(QSV) gq34，
+# H.265(NVENC) cq29 / H.265(QSV) gq24
+DEFAULT_QUALITY = {CODEC_AV1: 36, CODEC_HEVC: 29}   # 初始值，探测到编码器后按 default_quality() 覆盖
+HD_CRF = 18                  # 高清模式：原分辨率，AV1 / H.265 都用 crf/cq 18
+SIXFORTY_EDGE = 640          # 640p 模式：最长边限制 640
+MODE_REMUX = "copy"          # 极速转封装：不解码重编码，-c copy 直接换容器成 mp4（flv/mkv/ts… → mp4）
+
+# ShanaEncoder 字幕样式（强制 ASS 样式）
+SUB_FORCE_STYLE = ("FontName=Microsoft YaHei,FontSize=15,Outline=2,Shadow=2,"
+                   "MarginL=10,MarginR=10,MarginV=20,Alignment=2")
+
+NVENC_PRESETS = ["p1", "p2", "p3", "p4", "p5", "p6", "p7"]
+QSV_PRESETS = ["veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
+X265_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast",
+                "medium", "slow", "slower", "veryslow"]
+SVT_PRESETS = [str(i) for i in range(0, 14)]
+# libaom 用 -cpu-used 控制速度（0 最慢最好，8 最快）；rav1e 用 -speed（0 最慢最好，10 最快）
+AOM_CPU_USED = [str(i) for i in range(0, 9)]
+RAV1E_SPEEDS = [str(i) for i in range(0, 11, 2)]
+
+# mp4 里可以直接 copy 的音频编码，其余转 AAC
+MP4_AUDIO_OK = {"aac", "mp3", "mp2", "ac3", "eac3", "alac"}
+
+# 位图字幕无法硬烧（PGS/VobSub 等），只能跳过
+TEXT_SUB_CODECS = {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt",
+                   "text", "microdvd", "subviewer", "subviewer1", "jacosub",
+                   "sami", "realtext", "stl", "vplayer", "pjs", "mpl2",
+                   "eia_608", "eia_708", "dvb_teletext"}
+
+_ENCODER_CHAIN = {
+    CODEC_AV1: ("av1_nvenc", "av1_qsv", "libsvtav1", "libaom-av1", "librav1e"),
+    CODEC_HEVC: ("hevc_nvenc", "hevc_qsv", "libx265"),
+}
+
+_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
+
+def _base_dir():
+    """exe 所在目录（打包后）或项目根目录（源码运行）"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+FFMPEG_CONFIG_PATH = os.path.join(_base_dir(), "ffmpeg_config.json")
+
+
+# ============================================================
+# FFmpeg 定位与检测
+# ============================================================
+
+def _run(cmd, timeout=30, cwd=None):
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          timeout=timeout, cwd=cwd, creationflags=_NO_WINDOW)
+
+
+def load_ffmpeg_hint():
+    """读取上次手动指定的 ffmpeg 路径"""
+    try:
+        with open(FFMPEG_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return str(json.load(f).get("ffmpeg", "") or "")
+    except Exception:
+        return ""
+
+
+def save_ffmpeg_hint(path):
+    try:
+        with open(FFMPEG_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"ffmpeg": path}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _exe_pair(dir_path):
+    """在目录里成对找 ffmpeg / ffprobe"""
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        ff = os.path.join(dir_path, name)
+        if os.path.isfile(ff):
+            stem = name.rsplit(".", 1)[0]
+            fp = os.path.join(dir_path, stem.replace("ffmpeg", "ffprobe") +
+                              (".exe" if name.endswith(".exe") else ""))
+            return os.path.abspath(ff), (os.path.abspath(fp) if os.path.isfile(fp) else "")
+    return None, None
+
+
+def _search_roots():
+    """ffmpeg 可能的存放位置：exe 目录 / 打包解压目录 / 程序目录"""
+    roots = [_base_dir()]
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        roots.append(meipass)
+    dirs = []
+    for root in roots:
+        dirs += [root, os.path.join(root, "bin", "ffmpeg"), os.path.join(root, "ffmpeg")]
+    return dirs
+
+
+def locate_ffmpeg(hint=""):
+    """按「手动指定 → 程序目录 → bin/ffmpeg → PATH」找 ffmpeg，返回 (ffmpeg, ffprobe)"""
+    dirs = []
+    hint = ((hint or "").strip().strip('"')
+            or load_ffmpeg_hint())          # 没传就用手动保存过的路径
+    if hint:
+        dirs.append(hint if os.path.isdir(hint) else os.path.dirname(hint))
+    dirs += _search_roots()
+
+    for d in dirs:
+        if not d:
+            continue
+        ff, fp = _exe_pair(d)
+        if ff:
+            if not fp:      # ffprobe 不在同目录时退回 PATH
+                fp = shutil.which("ffprobe") or ""
+            return ff, fp
+
+    for name in ("ffmpeg", "ffmpeg.exe"):
+        p = shutil.which(name)
+        if p:
+            ff, fp = _exe_pair(os.path.dirname(p))
+            return ff, fp or (shutil.which("ffprobe") or "")
+    return None, None
+
+
+_DR_SUPPORT = None
+
+
+def supports_display_rotation(ffmpeg):
+    """ffmpeg 是否支持 -display_rotation（6.x 起；老版本只能退回 -noautorotate）"""
+    global _DR_SUPPORT
+    if _DR_SUPPORT is not None:
+        return _DR_SUPPORT
+    try:
+        r = _run([ffmpeg, "-hide_banner", "-v", "error", "-display_rotation", "0",
+                  "-f", "lavfi", "-i", "color=black:s=64x64:d=0.1", "-f", "null", "-"],
+                 timeout=40)
+        _DR_SUPPORT = r.returncode == 0
+    except Exception:
+        _DR_SUPPORT = False
+    return _DR_SUPPORT
+
+
+def ffmpeg_version(ffmpeg):
+    try:
+        r = _run([ffmpeg, "-hide_banner", "-version"], timeout=20)
+        out = (r.stdout or b"").decode("utf-8", "ignore").splitlines()
+        return out[0].strip() if out else ""
+    except Exception:
+        return ""
+
+
+def ffmpeg_ready():
+    """启动时快速检测：返回 (是否可用, 提示文本)"""
+    ff, fp = locate_ffmpeg(load_ffmpeg_hint())
+    if not ff:
+        return False, "未找到 ffmpeg"
+    if not fp:
+        return False, "找到 ffmpeg，但同目录缺少 ffprobe"
+    return True, ffmpeg_version(ff)
+
+
+def list_encoder_text(ffmpeg):
+    try:
+        r = _run([ffmpeg, "-hide_banner", "-encoders"], timeout=25)
+        return (r.stdout or b"").decode("utf-8", "ignore")
+    except Exception:
+        return ""
+
+
+def encoder_works(ffmpeg, enc):
+    """真跑 0.2 秒黑帧：列出编码器 ≠ 真的能用（没显卡 / 驱动旧都会失败）"""
+    try:
+        r = _run([ffmpeg, "-hide_banner", "-v", "error", "-f", "lavfi",
+                  "-i", "color=black:s=256x256:d=0.2", "-c:v", enc,
+                  "-f", "null", "-"], timeout=60)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def detect_encoders(ffmpeg, log=None):
+    """探测可用编码器：每个编码格式按 NVENC → QSV → 软件 的顺序找第一个真能跑的。
+    返回 {'av1': 编码器名|None, 'hevc': 编码器名|None, 'detail': {...}}"""
+    text = list_encoder_text(ffmpeg)
+    result = {"detail": {}}
+    for codec, chain in _ENCODER_CHAIN.items():
+        picked = None
+        for enc in chain:
+            if enc not in text:
+                result["detail"][enc] = "未编译"
+                continue
+            if log:
+                log(f"  检测编码器 {enc} ...")
+            ok = encoder_works(ffmpeg, enc)
+            result["detail"][enc] = "可用" if ok else "不可用"
+            if ok:
+                picked = enc
+                break
+        result[codec] = picked
+    return result
+
+
+def is_hardware(enc):
+    """NVENC / QSV 算硬件编码，lib* 是 CPU 软件编码"""
+    return bool(enc) and (enc.endswith("_nvenc") or enc.endswith("_qsv"))
+
+
+def encoder_label(enc):
+    if not enc:
+        return "无"
+    if enc.endswith("_nvenc"):
+        return f"NVENC（{enc}）"
+    if enc.endswith("_qsv"):
+        return f"QSV（{enc}）"
+    return f"软件（{enc}）"
+
+
+def preset_values(enc):
+    if not enc:
+        return ["无"]
+    if enc.endswith("_nvenc"):
+        return NVENC_PRESETS
+    if enc.endswith("_qsv"):
+        return QSV_PRESETS
+    if enc == "libsvtav1":
+        return SVT_PRESETS
+    if enc == "libaom-av1":
+        return AOM_CPU_USED
+    if enc == "librav1e":
+        return RAV1E_SPEEDS
+    return X265_PRESETS
+
+
+def default_preset(enc, codec):
+    """参考 ShanaEncoder 的默认 preset"""
+    if not enc:
+        return "无"
+    if enc.endswith("_nvenc"):
+        return "p1" if codec == CODEC_AV1 else "p4"
+    if enc.endswith("_qsv"):
+        return "medium"
+    if enc == "libsvtav1":
+        return "8"          # SVT-AV1：数字越大越快
+    if enc == "libaom-av1":
+        return "6"
+    if enc == "librav1e":
+        return "8"
+    return "medium"
+
+
+def best_preset(enc):
+    """最高画质那一档（也最慢）：
+        QSV veryslow ／ libx265 veryslow
+        SVT-AV1 0 ／ libaom cpu-used 0 ／ rav1e speed 0
+        NVENC p7（注意：NVENC preset 语义相反，p1 最快最差、p7 最慢最好）"""
+    if not enc:
+        return "无"
+    if enc.endswith("_nvenc"):
+        return "p7"
+    if enc.endswith("_qsv"):
+        return "veryslow"
+    if enc == "libsvtav1":
+        return "0"
+    if enc == "libaom-av1":
+        return "0"
+    if enc == "librav1e":
+        return "0"
+    return "veryslow"
+
+
+def default_quality(enc, codec):
+    """参考 ShanaEncoder 的默认质量（QSV 与 NVENC 的取值不同）：
+        Intel QSV：AV1 global_quality 34 / H.265 global_quality 24
+        NVIDIA NVENC：AV1 cq 36 / H.265 cq 29
+        软件编码沿用 NVENC 的数值（crf 体系接近）"""
+    if codec == CODEC_AV1:
+        return 34 if (enc or "").endswith("_qsv") else 36
+    return 24 if (enc or "").endswith("_qsv") else 29
+
+
+# ============================================================
+# 媒体信息探测
+# ============================================================
+
+def _to_float(v, default=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(v, default=0):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_ratio(v):
+    """avg_frame_rate 形如 24000/1001"""
+    try:
+        num, _, den = str(v).partition("/")
+        den_f = float(den) if den else 1.0
+        return round(float(num) / den_f, 3) if den_f else 0.0
+    except Exception:
+        return 0.0
+
+
+def probe_media(ffprobe, path):
+    """用 ffprobe 读视频信息；失败返回 None。"""
+    if not ffprobe:
+        return None
+    try:
+        r = _run([ffprobe, "-v", "error", "-print_format", "json",
+                  "-show_streams", "-show_format", path], timeout=60)
+        data = json.loads((r.stdout or b"").decode("utf-8", "ignore") or "{}")
+    except Exception:
+        return None
+
+    streams = data.get("streams") or []
+    vstream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    if not vstream:
+        return None
+    astreams = [s for s in streams if s.get("codec_type") == "audio"]
+    subs = []
+    for s in streams:
+        if s.get("codec_type") != "subtitle":
+            continue
+        tags = s.get("tags") or {}
+        disp = s.get("disposition") or {}
+        subs.append({
+            "index": _to_int(s.get("index")),
+            "codec": (s.get("codec_name") or "").lower(),
+            "lang": (tags.get("language") or "").lower(),
+            "title": tags.get("title") or "",
+            "default": bool(disp.get("default")),
+            "forced": bool(disp.get("forced")),
+        })
+
+    width = _to_int(vstream.get("width"))
+    height = _to_int(vstream.get("height"))
+    pix_fmt = (vstream.get("pix_fmt") or "").lower()
+    bits = _to_int(vstream.get("bits_per_raw_sample"))
+    if not bits:
+        m = re.search(r"p(\d{2})(?:le|be)?$|yuv4\d\dp(\d{1,2})", pix_fmt)
+        if m:
+            bits = int(next(g for g in m.groups() if g))
+        elif "10" in pix_fmt:
+            bits = 10
+        elif "12" in pix_fmt:
+            bits = 12
+        else:
+            bits = 8
+
+    # 旋转：ffprobe 的 side_data rotation（手机竖拍常见 -90）
+    rotation = 0
+    for sd in vstream.get("side_data_list") or []:
+        if "rotation" in sd:
+            rotation = _to_int(sd.get("rotation"))
+            break
+    tags = vstream.get("tags") or {}
+    if not rotation and tags.get("rotate"):
+        rotation = _to_int(tags.get("rotate"))
+    rotation = rotation % 360
+    if rotation > 180:
+        rotation -= 360
+
+    color_trc = (vstream.get("color_transfer") or "").lower()
+    hdr = color_trc in ("smpte2084", "arib-std-b67")
+
+    fmt = data.get("format") or {}
+    duration = _to_float(fmt.get("duration")) or _to_float(vstream.get("duration"))
+
+    return {
+        "width": width,
+        "height": height,
+        "duration": duration,
+        "vcodec": (vstream.get("codec_name") or "?").lower(),
+        "pix_fmt": pix_fmt,
+        "bit_depth": bits,
+        "hdr": hdr,
+        "rotation": rotation,
+        "fps": _parse_ratio(vstream.get("avg_frame_rate")),
+        "subs": subs,
+        "has_audio": bool(astreams),
+        "audio_codec": (astreams[0].get("codec_name") or "").lower() if astreams else "",
+        # 逐条音轨的编码（顺序与 -map 0:a? 映射出的输出轨一致），用于逐轨决定 copy / 转 AAC
+        "audio_codecs": [(s.get("codec_name") or "").lower() for s in astreams],
+        "audio_all_ok": all((s.get("codec_name") or "").lower() in MP4_AUDIO_OK
+                            for s in astreams) if astreams else True,
+        "color_primaries": vstream.get("color_primaries") or "",
+        "color_trc": vstream.get("color_transfer") or "",
+        "color_space": vstream.get("color_space") or "",
+    }
+
+
+def display_size(info):
+    """按旋转后的显示方向返回 (宽, 高)"""
+    w, h = info["width"], info["height"]
+    if info["rotation"] in (90, -90, 270, -270):
+        return h, w
+    return w, h
+
+
+# ============================================================
+# 参数计算
+# ============================================================
+
+def _even(n):
+    n = int(round(n))
+    return max(2, n - (n % 2))
+
+
+def calc_target_size(width, height, long_edge):
+    """最长边限制到 long_edge（不放大）；返回 (宽, 高) 或 None"""
+    if width <= 0 or height <= 0:
+        return None
+    if max(width, height) <= long_edge:
+        return None
+    edge = long_edge if long_edge % 2 == 0 else long_edge - 1
+    if width >= height:                     # 横屏：限宽
+        return edge, _even(height * edge / width)
+    return _even(width * edge / height), edge   # 竖屏：限高
+
+
+def rotation_filter(rotation):
+    """旋转滤镜（实测与 ffmpeg autorotate 完全一致）"""
+    if rotation in (90, -270):
+        return "transpose=2"
+    if rotation in (-90, 270):
+        return "transpose=1"
+    if abs(rotation) == 180:
+        return "hflip,vflip"
+    return ""
+
+
+def pick_subtitle(info):
+    """挑一条要硬烧的字幕：优先中文 → 默认轨 → 第一条"""
+    subs = info.get("subs") or []
+    text_subs = [s for s in subs if s["codec"] in TEXT_SUB_CODECS]
+    if not text_subs:
+        return None
+    zh_keys = ("zh", "chi", "zho", "cn", "chs", "cht", "sc", "tc")
+
+    def is_zh(s):
+        return (s["lang"] in zh_keys or s["lang"].startswith("zh")
+                or any(k in s["title"] for k in ("中文", "简体", "繁体", "中字", "chs", "cht")))
+
+    for s in text_subs:
+        if is_zh(s):
+            return s
+    for s in text_subs:
+        if s["default"]:
+            return s
+    return text_subs[0]
+
+
+def extract_subtitle(ffmpeg, src, sub_index, work_dir):
+    """把内嵌字幕导成 .ass（工作目录内的相对文件名，避免滤镜里转义盘符）"""
+    out_name = "sub.ass"
+    out_path = os.path.join(work_dir, out_name)
+    if os.path.exists(out_path):
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+    try:
+        _run([ffmpeg, "-y", "-v", "error", "-i", src,
+              "-map", f"0:{sub_index}", "-c:s", "ass", out_name],
+             timeout=300, cwd=work_dir)
+    except Exception:
+        return None
+    if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+        return out_name
+    return None
+
+
+def video_encode_args(enc, codec, quality, preset, ten_bit):
+    """按编码器生成视频参数（cq / global_quality / crf 三种质量体系）"""
+    args = ["-c:v", enc]
+    pix = "p010le" if ten_bit else "yuv420p"
+    if enc.endswith("_nvenc"):
+        # ShanaEncoder 同款：VBR + cq，b:v 0 表示纯质量模式
+        args += ["-preset", str(preset), "-rc", "vbr",
+                 "-cq", str(quality), "-b:v", "0"]
+        if codec == CODEC_HEVC:
+            args += ["-profile:v", "main10" if ten_bit else "main"]
+        args += ["-pix_fmt", pix]
+    elif enc.endswith("_qsv"):
+        args += ["-preset", str(preset), "-global_quality", str(quality)]
+        if codec == CODEC_HEVC:
+            args += ["-profile:v", "main10" if ten_bit else "main"]
+        # QSV 只吃 nv12 / p010le，喂 yuv420p 会多打印一条自动转换警告
+        args += ["-pix_fmt", "p010le" if ten_bit else "nv12"]
+    elif enc == "libsvtav1":
+        args += ["-preset", str(preset), "-crf", str(quality),
+                 "-pix_fmt", "yuv420p10le" if ten_bit else "yuv420p"]
+    elif enc == "libaom-av1":
+        # libaom 不看 -preset，速度由 -cpu-used 控制（0 最慢最好）
+        cpu = str(preset) if str(preset).isdigit() else "6"
+        args += ["-cpu-used", cpu, "-crf", str(quality), "-b:v", "0",
+                 "-pix_fmt", "yuv420p10le" if ten_bit else "yuv420p"]
+    elif enc == "librav1e":
+        # rav1e 的速度参数是 -speed（0 最慢最好）
+        spd = str(preset) if str(preset).isdigit() else "8"
+        args += ["-speed", spd, "-qp", str(quality),
+                 "-pix_fmt", "yuv420p10le" if ten_bit else "yuv420p"]
+    else:   # libx265
+        args += ["-preset", str(preset), "-crf", str(quality),
+                 "-profile:v", "main10" if ten_bit else "main",
+                 "-pix_fmt", "yuv420p10le" if ten_bit else "yuv420p"]
+    return args
+
+
+def sub_style(width, height):
+    """按最终画面尺寸算字幕样式：竖屏 / 小画幅自动缩字号 + 智能换行，保证一行放得下、不超出屏幕。
+
+    字号以 640 宽时 15px 为基准按比例缩放（12–26 封顶），左右边距取宽度 2%、
+    下边距取高度 3%，描边阴影随字号走。"""
+    w = max(1, int(width))
+    h = max(1, int(height))
+    size = max(12, min(26, round(w * 15 / 640)))
+    mlr = max(6, min(40, round(w * 0.02)))
+    mv = max(10, min(60, round(h * 0.03)))
+    edge = max(1, min(3, round(size / 7)))
+    return (f"FontName=Microsoft YaHei,FontSize={size},Outline={edge},Shadow={edge},"
+            f"MarginL={mlr},MarginR={mlr},MarginV={mv},Alignment=2,WrapStyle=0")
+
+
+def build_filters(info, target, sub_name):
+    """滤镜顺序：旋转 → 缩放 → 字幕。
+
+    字幕必须放最后，渲染在「旋转、缩放之后」的最终画面上。放前面的话：
+      · 手机竖拍视频是像素横存 + rotation 标记，字幕会跟着画面一起转 90°，
+        文字长度方向变成竖直方向，直接超出屏幕；
+      · 640p 缩放会把提前烧好的字一起缩成看不清的小字。
+    放最后则按最终画幅排版，字号还能跟着画幅自适应。"""
+    filters = []
+    rot = rotation_filter(info["rotation"])
+    if rot:
+        filters.append(rot)
+    if target:
+        # 缩放算法显式用 bicubic：ffmpeg scale 默认也是 bicubic（SWS_BICUBIC），
+        # 这里写明确与 ShanaEncoder 默认缩放滤镜对齐，避免不同 ffmpeg 版本/滤镜链默认差异。
+        filters.append(f"scale={target[0]}:{target[1]}:flags=bicubic")
+    if sub_name:
+        dw, dh = display_size(info)
+        fw, fh = target if target else (dw, dh)
+        filters.append(f"subtitles={sub_name}:force_style='{sub_style(fw, fh)}'")
+    return filters
+
+
+# ============================================================
+# 压制任务
+# ============================================================
+
+def resolve_plan(settings, info):
+    """按「模式 + 编码格式」算出（编码器、质量、preset、目标尺寸）。
+    编码格式在三种模式下都可以自由选 AV1 / H.265；质量与 preset 由模式决定：
+      640p  → 该编码器的默认质量（QSV 34/24，NVENC 36/29）
+      高清  → 固定 crf/cq 18，保持原分辨率
+      自定义 → 用界面里填的质量与 preset"""
+    mode = settings["mode"]
+    codec = settings["codec"]
+    enc = settings["encoders"].get(codec)
+    if mode == MODE_REMUX:
+        # 极速转封装：不挑编码器、不缩放、不动质量，只 -c copy 换容器
+        return {"codec": None, "enc": None, "quality": None,
+                "preset": None, "target": None, "remux": True}
+    if mode == "640":
+        quality = default_quality(enc, codec)
+        preset = default_preset(enc, codec)
+        dw, dh = display_size(info)
+        target = calc_target_size(dw, dh, SIXFORTY_EDGE)
+    elif mode == "hd":
+        quality, preset, target = HD_CRF, best_preset(enc), None
+    else:
+        quality, preset, target = settings["quality"], settings["preset"], None
+    return {"codec": codec, "enc": enc, "quality": quality,
+            "preset": preset, "target": target}
+
+
+def build_command(settings, info, plan, src, dst, work_dir, sub_name,
+                  progress_to="pipe:1"):
+    ff = settings["ffmpeg"]
+    show_console = bool(settings.get("show_console"))
+    # 显示 ffmpeg 窗口时用 warning + 自带统计行；否则静默，只看我们解析的进度
+    level = "warning" if show_console else "error"
+    args = [ff, "-hide_banner", "-y", "-loglevel", level,
+            "-progress", progress_to]
+    if show_console:
+        args.append("-stats")
+    else:
+        args.append("-nostats")
+    if plan.get("remux"):
+        # 极速转封装：不解码、不重编码、不加任何滤镜，画质音质原样搬进 mp4
+        # （等价于 ffmpeg -i "%%a" -c copy -y "%%~na.mp4"，多了 faststart 便于在线播放）
+        args += ["-i", src, "-c", "copy", "-movflags", "+faststart", "-f", "mp4", dst]
+        return args
+    filters = build_filters(info, plan["target"], sub_name)
+    if info["rotation"]:
+        # 旋转由我们自己用 transpose 处理（滤镜顺序：字幕 → 旋转）。
+        # -display_rotation 0 让 ffmpeg 既不自动旋转、也不把旋转矩阵带到输出
+        # （否则输出会被播放器"二次旋转"）；老版本没有该参数时退回 -noautorotate。
+        if supports_display_rotation(ff):
+            args += ["-display_rotation", "0"]
+        else:
+            args += ["-noautorotate"]
+    args += ["-i", src, "-map", "0:v:0"]
+    if info["has_audio"]:
+        args += ["-map", "0:a?"]
+    if filters:
+        args += ["-vf", ",".join(filters)]
+    ten_bit = info["bit_depth"] > 8 or info["hdr"]
+    args += video_encode_args(plan["enc"], plan["codec"], plan["quality"],
+                              plan["preset"], ten_bit)
+    if info["hdr"]:
+        args += ["-color_primaries", info["color_primaries"] or "bt2020",
+                 "-color_trc", info["color_trc"] or "smpte2084",
+                 "-colorspace", info["color_space"] or "bt2020nc"]
+    if info["has_audio"]:
+        # 逐条音轨单独判断：能直接进 mp4 的原样 copy，装不下的只把那一条转 AAC 192k，
+        # 其余轨道不受影响（不再「一条不兼容就把所有轨道都转」）
+        codecs = info.get("audio_codecs") or []
+        if not codecs:
+            # 老数据没有逐轨信息，退回整体判断
+            args += ["-c:a", "copy"] if info.get("audio_all_ok", True) else \
+                    ["-c:a", "aac", "-b:a", "192k"]
+        else:
+            for i, ac in enumerate(codecs):
+                if ac in MP4_AUDIO_OK:
+                    args += [f"-c:a:{i}", "copy"]
+                else:
+                    args += [f"-c:a:{i}", "aac", f"-b:a:{i}", "192k"]
+    args += ["-movflags", "+faststart", "-f", "mp4", dst]
+    return args
+
+
+def output_name(src, quality, remux=False):
+    stem = os.path.splitext(os.path.basename(src))[0]
+    # 源本身就是我们压出来的成品（xxx.crf24.mp4 / xxx.crf24_1.mp4）时去掉后缀，避免 crf24.crf24 叠名字
+    stem = re.sub(r"(?:\.crf\d+(?:_\d+)?)+$", "", stem) or stem
+    if remux:
+        # 极速转封装：原文件名.mp4（对应 %%~na.mp4），不带 crf 后缀
+        return f"{stem}.mp4"
+    return f"{stem}.crf{quality}.mp4"
+
+
+ARCHIVE_DIRS = ("success", "error")
+
+
+def in_archive_dir(path):
+    """路径是否已经在 success/ 或 error/ 归档目录里（任意层级）"""
+    try:
+        parts = Path(os.path.abspath(path)).parts
+    except Exception:
+        return False
+    return any(p.lower() in ARCHIVE_DIRS for p in parts)
+
+
+def archive_tag(path):
+    """归档位置的可读写法：success/ 、error/success/ （最多两层）"""
+    parent = os.path.dirname(path)
+    parts = []
+    for _ in range(2):
+        name = os.path.basename(parent)
+        if name.lower() in ARCHIVE_DIRS:
+            parts.insert(0, name)
+            parent = os.path.dirname(parent)
+        else:
+            break
+    return ("/".join(parts) + "/") if parts else ""
+
+
+def archive_source(src, out_dir, ok):
+    """把源文件归档到 success/ 或 error/（同名自动加序号，绝不覆盖）
+
+    规则：
+      · 普通目录里的文件 → 移到 <输出目录>/success 或 /error；
+      · 已经在 error/ 里的文件再次压制成功 → 移到 error/success（重新救回来的分开放）；
+      · 已经在 error/ 里又失败 → 原地不动，不再套 error/error；
+      · 已经在 success/ 里再次成功 → 原地不动，不再套 success/success。
+    """
+    leaf = "success" if ok else "error"
+    parent = os.path.dirname(os.path.abspath(src))
+    if os.path.basename(parent).lower() == leaf:
+        return ""                 # 已经在这个结果的目录里，别再套一层
+    # 归档目录里「救回来」的文件（error/ 里这次压成功了）：就地归到该目录下的 success/，
+    # 即 error/success/，而不是跳到输出目录的顶层 success/（add_paths 里就是这样提示用户的）
+    base = parent if (ok and in_archive_dir(parent)) else out_dir
+    folder = os.path.join(base, leaf)
+    try:
+        os.makedirs(folder, exist_ok=True)
+        for _ in range(20):
+            dst = get_unique_path(Path(folder) / os.path.basename(src))
+            try:
+                shutil.move(src, str(dst))
+                return str(dst)
+            except FileExistsError:
+                continue
+            except OSError:
+                # Windows 下目标已存在会抛 OSError（不是 FileExistsError），换个名字重试
+                time.sleep(0.05)
+                continue
+        return ""
+    except Exception:
+        return ""
+
+
+def kill_process(proc):
+    """结束进程；带控制台窗口时是 cmd.exe 包着 ffmpeg，要连子进程一起结束"""
+    if not proc:
+        return
+    try:
+        if proc.poll() is not None:
+            return
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           creationflags=_NO_WINDOW)
+        if proc.poll() is None:
+            proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _quote_arg(a):
+    """给命令行参数加引号（ffmpeg 参数里可能有空格 / 中文路径）"""
+    a = str(a)
+    if a and not a.startswith('"'):
+        a = '"' + a + '"'
+    return a
+
+
+def console_cmdline(cmd, title="ffmpeg"):
+    """拼出「在独立控制台里先打印 ffmpeg 命令、再执行它」的命令行。
+
+    直接把整条命令交给 `cmd.exe /s /c`，不落地 .bat 文件：
+    命令行是按 Unicode 传给 cmd 的，中文路径不会像 UTF-8 批处理那样
+    被 cmd 按系统代码页（GBK）解码成乱码而整条命令失败。
+    """
+    line = " ".join(_quote_arg(a) for a in cmd)
+    t = re.sub(r'[&|<>^"]', " ", str(title))[:120]
+    # /v:on：用 !ERRORLEVEL! 取真实返回码（ffmpeg 打不开输入时返回 -2，
+    # 用 if errorlevel 1 判断会漏掉负数，窗口就不会停留）。
+    # set "RC=..." 必须带引号，否则值末尾会吃进一个空格，导致 "0 " 不等于 "0"，
+    # 成功的任务也会误报「出错」。
+    return ('cmd.exe /v:on /s /c "title ' + t +
+            ' & echo === ffmpeg 命令 === & echo ' + line +
+            ' & echo =================== & ' + line +
+            ' & set "RC=!ERRORLEVEL!" & if not "!RC!"=="0" (echo.'
+            ' & echo [ffmpeg 出错，返回码 !RC!，10 秒后关闭本窗口]'
+            ' & ping -n 11 127.0.0.1 >nul & exit /b !RC!)"')
+
+
+def _read_progress_file(path, offset, state):
+    """增量读取 -progress 文件，返回 (新 offset, 是否结束)"""
+    try:
+        with open(path, "rb") as f:
+            f.seek(offset)
+            data = f.read()
+    except OSError:
+        return offset, False
+    if not data:
+        return offset, False
+    offset += len(data)
+    done = False
+    for raw in data.decode("utf-8", "replace").splitlines():
+        line = raw.strip()
+        if not line or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        if k in ("out_time_us", "out_time_ms"):
+            state["us"] = _to_float(v)
+        elif k == "speed":
+            state["speed"] = v.strip()
+        elif k == "progress" and v.strip() == "end":
+            done = True
+    return offset, done
+
+
+def read_report_errors(path, limit=5):
+    """从 FFREPORT 生成的日志里挑出错误行（窗口模式下 stderr 归控制台，只能走后门）"""
+    lines = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                s = raw.strip()
+                if not s:
+                    continue
+                low = s.lower()
+                if s.startswith('"') or "ffmpeg.exe" in low:
+                    continue          # 跳过 ffmpeg 自己回显的命令行
+                if ("error" in low or "invalid" in low or "failed" in low
+                        or "not supported" in low):
+                    lines.append(s[:200])
+    except OSError:
+        return []
+    # 去掉重复的（ffmpeg 常把同一句打两遍）
+    uniq = []
+    for s in lines:
+        if s not in uniq:
+            uniq.append(s)
+    return uniq[-limit:]
+
+
+def run_encode(settings, info, plan, src, dst, work_dir, on_progress, stop_event,
+               running, on_cmd=None):
+    """跑一次 ffmpeg，返回 (成功?, 说明, 字幕说明)。on_progress(百分比, 速度) 会被高频调用。
+
+    on_cmd(命令行字符串) 在启动前回调一次，用来把实际执行的命令写进日志。"""
+    sub_name = None
+    sub_note = ""
+    # 极速转封装不解码，没法烧字幕（烧字幕必须重编码），直接跳过
+    if settings["burn_sub"] and not plan.get("remux"):
+        sub = pick_subtitle(info)
+        if sub is None:
+            sub_note = "无可用内嵌字幕（位图字幕不支持硬烧）"
+            if info["subs"]:
+                sub_note = "只有位图字幕（PGS/VobSub），无法硬烧"
+        else:
+            sub_name = extract_subtitle(settings["ffmpeg"], src, sub["index"], work_dir)
+            if sub_name is None:
+                sub_note = "字幕提取失败，已跳过硬烧"
+            else:
+                sub_note = f"硬烧第{sub['index']}条字幕"
+    show_console = bool(settings.get("show_console"))
+    prog_path = os.path.join(work_dir, "progress.txt") if show_console else "pipe:1"
+    report = os.path.join(work_dir, "ffmpeg-report.txt") if show_console else ""
+    tail = []
+    try:
+        cmd = build_command(settings, info, plan, src, dst,
+                            work_dir, sub_name, progress_to=prog_path)
+        if on_cmd:
+            on_cmd(cmd)
+        if show_console:
+            # 弹一个独立控制台窗口：先打印命令行，再跑 ffmpeg，进度从 progress.txt 轮询
+            line = console_cmdline(cmd, "ffmpeg - " + os.path.basename(dst))
+            env = dict(os.environ)
+            # 窗口模式下 stderr 归控制台，拿不到文字；用 FFREPORT 另存一份日志，
+            # 出错时把错误行写进运行日志，窗口关了也还能查
+            env["FFREPORT"] = "file=ffmpeg-report.txt:level=24"
+            # 注意：这里绝对不能传 stdin/stdout/stderr。只要传了任意一个，Python 就会
+            # 用 STARTF_USESTDHANDLES 把父进程（exe 没有控制台 → NULL）的句柄塞给子进程，
+            # ffmpeg 写状态信息失败会直接返回 1。不传，子进程才用新建控制台的句柄。
+            proc = subprocess.Popen(line, cwd=work_dir, env=env,
+                                    creationflags=subprocess.CREATE_NEW_CONSOLE)
+        else:
+            proc = subprocess.Popen(cmd, cwd=work_dir, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                    text=True, encoding="utf-8", errors="replace",
+                                    bufsize=1, creationflags=_NO_WINDOW)
+    except Exception as e:
+        return False, f"启动 ffmpeg 失败：{e}", sub_note
+
+    running.add(proc)
+    try:
+        duration = info["duration"] or 0
+
+        def emit(us, speed):
+            if duration > 0:
+                on_progress(max(0, min(100, int(us / 1e6 / duration * 100))), speed)
+            else:
+                on_progress(None, speed)
+
+        if show_console:
+            # 轮询进度文件（窗口模式下 stdout 归控制台，拿不到管道）
+            state = {"us": 0.0, "speed": ""}
+            offset = 0
+            last_key = (0.0, "")
+            while True:
+                offset, done = _read_progress_file(prog_path, offset, state)
+                key = (state["us"], state["speed"])
+                if key != last_key:
+                    last_key = key
+                    emit(state["us"], state["speed"])
+                if done:
+                    on_progress(100, "")
+                if stop_event.is_set():
+                    kill_process(proc)
+                    break
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.3)
+            if proc.poll() is None:
+                proc.wait()
+        else:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith(("out_time_us=", "out_time_ms=")):
+                    us = _to_float(line.split("=", 1)[1])
+                    if duration > 0:
+                        on_progress(max(0, min(100, int(us / 1e6 / duration * 100))), "")
+                elif line.startswith("speed="):
+                    on_progress(None, line.split("=", 1)[1].strip())
+                elif line == "progress=end":
+                    on_progress(100, "")
+                elif not re.match(r"^(frame|fps|bitrate|total_size|out_time|dup_frames|"
+                                  r"drop_frames|stream_\d|progress)=", line):
+                    tail.append(line)
+                    if len(tail) > 40:
+                        tail.pop(0)
+                if stop_event.is_set():
+                    kill_process(proc)
+                    break
+            proc.wait()
+    finally:
+        running.discard(proc)
+
+    if stop_event.is_set():
+        return False, "已取消", sub_note
+    if proc.returncode != 0:
+        rc = proc.returncode
+        if rc > 2 ** 31:          # Windows 返回码按无符号给出的，转回可读的负数
+            rc -= 2 ** 32
+        if tail:
+            detail = " | ".join(tail[-6:])
+        elif report and os.path.isfile(report):
+            detail = " | ".join(read_report_errors(report)) or "详见弹出的 ffmpeg 窗口"
+        elif show_console:
+            detail = "详见弹出的 ffmpeg 窗口"
+        else:
+            detail = "（无输出）"
+        return False, "ffmpeg 返回 %s：%s" % (rc, detail), sub_note
+    if not os.path.isfile(dst) or os.path.getsize(dst) == 0:
+        return False, "输出文件为空", sub_note
+    return True, "", sub_note
+
+
+# ============================================================
+# 界面
+# ============================================================
+
+COLS = (
+    ("name", "文件", 300),
+    ("dur", "时长", 76),
+    ("res", "分辨率", 100),
+    ("codec", "编码", 170),
+    ("sub", "字幕", 90),
+    ("status", "状态", 190),
+)
+
+
+def fmt_duration(sec):
+    if not sec or sec <= 0:
+        return "—"
+    sec = int(sec)
+    h, m, s = sec // 3600, sec % 3600 // 60, sec % 60
+    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def collect_videos(paths):
+    """把拖入/选择的路径展开成视频文件列表（文件夹递归），按自然排序并去重。
+
+    会跳过 success/ error/ 归档目录（含之前跑出来的成品），避免把已经压好的文件
+    再压一遍、或者把归档目录挤成 success/success/error/error。"""
+    files = []
+    for p in paths:
+        p = clean_path(p)
+        if not p:
+            continue
+        if os.path.isdir(p):
+            for root, dirs, names in os.walk(p):
+                # 不进入归档目录
+                dirs[:] = [d for d in dirs if d.lower() not in ARCHIVE_DIRS]
+                dirs.sort(key=natural_key)
+                for name in sorted(names, key=natural_key):
+                    if not name.lower().endswith(VIDEO_EXTS):
+                        continue
+                    if OUTPUT_NAME_RE.search(name):
+                        continue      # 以前压出来的 xxx.crf24.mp4 不再当源
+                    files.append(os.path.abspath(os.path.join(root, name)))
+        elif os.path.isfile(p) and p.lower().endswith(VIDEO_EXTS):
+            files.append(os.path.abspath(p))
+    seen = set()
+    out = []
+    for f in files:
+        key = f.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f)
+    return out
+
+
+def build_encode_tab(parent, app=None):
+    parent.grid_columnconfigure(3, weight=1)
+    parent.grid_rowconfigure(7, weight=1)
+
+    state = {
+        "ffmpeg": "",
+        "ffprobe": "",
+        "encoders": {},
+        "items": {},          # iid -> {...}
+        "running": False,
+        "stop": threading.Event(),
+        "procs": set(),
+        "seq": 0,
+        "checked": False,
+        "warned_missing": False,
+        "codec_touched": False,   # 用户是否手动改过编码格式（改过就不再自动切）
+        "progress": {},       # iid -> 当前百分比（用于总进度条）
+        "total": 0,
+        "ok": 0,
+        "fail": 0,
+        "cancel": 0,
+        "skip": 0,
+    }
+    probe_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="probe")
+
+    def ui(fn):
+        try:
+            parent.after(0, fn)
+        except Exception:
+            pass
+
+    # ---------------- 顶部说明 ----------------
+    make_tip(parent, 0, "批量压制：640p（最长边 640，不放大；最长边已 ≤640 的直接跳过不压）/ "
+                        "高清（原分辨率 crf18）/ 自定义；编码格式三种模式都能自由选 AV1 或 H.265。\n"
+                        "极速转封装：不重编码，直接 -c copy 把 flv / mkv / ts 等换成 mp4（秒级完成，"
+                        "画质音质完全不变，不烧字幕）。\n"
+                        "质量与 preset 按「模式 + 编码格式」自动套用（QSV：AV1 34 / H.265 24；"
+                        "NVENC：AV1 36 / H.265 29），编码器按 NVENC → QSV → 软件 自动选择。\n"
+                        "可硬烧内嵌字幕（微软雅黑 15 / 轮廓 2 / 阴影 2 / 边距 10·20，居中底部，"
+                        "滤镜顺序：字幕在前、旋转在后）；成功归档 success/，失败归档 error/，"
+                        "error/ 里救回来的归到 error/success/。",
+             colspan=4)
+
+    # ---------------- FFmpeg 路径 ----------------
+    ff_row = ttk.LabelFrame(parent, text=" FFmpeg ", padding=6)
+    ff_row.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
+    ff_row.grid_columnconfigure(1, weight=1)
+    ttk.Label(ff_row, text="程序路径：").grid(row=0, column=0, sticky="w", padx=(2, 4))
+    var_ff = tk.StringVar()
+    ent_ff = ttk.Entry(ff_row, textvariable=var_ff)
+    ent_ff.grid(row=0, column=1, sticky="ew", padx=4)
+
+    lbl_ff = ttk.Label(ff_row, text="检测中…", foreground="#666666")
+    lbl_ff.grid(row=0, column=4, sticky="w", padx=6)
+
+    def _pick_ff():
+        p = filedialog.askopenfilename(
+            title="选择 ffmpeg.exe", filetypes=[("ffmpeg", "ffmpeg.exe"), ("所有文件", "*.*")])
+        if not p:
+            return
+        var_ff.set(p)
+        save_ffmpeg_hint(p)
+        apply_ffmpeg()
+
+    ttk.Button(ff_row, text="浏览…", width=8, command=_pick_ff).grid(row=0, column=2, padx=2)
+    btn_redetect = ttk.Button(ff_row, text="重新检测", width=10)
+    btn_redetect.grid(row=0, column=3, padx=2)
+
+    # ---------------- 模式 ----------------
+    mode_row = ttk.LabelFrame(parent, text=" 压制模式 ", padding=6)
+    mode_row.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
+    var_mode = tk.StringVar(value="640")
+    for i, (val, text) in enumerate((("640", "640p（最长边 640，不放大）"),
+                                     ("hd", "高清（保持原分辨率，crf18）"),
+                                     ("custom", "自定义"))):
+        ttk.Radiobutton(mode_row, text=text, value=val, variable=var_mode,
+                        command=lambda: refresh_mode_ui()).grid(row=0, column=i, sticky="w", padx=(4, 18))
+    ttk.Radiobutton(mode_row, text="极速转封装（flv / mkv / ts 等 → mp4，不重编码）",
+                    value=MODE_REMUX, variable=var_mode,
+                    command=lambda: refresh_mode_ui()).grid(row=1, column=0, columnspan=3,
+                                                            sticky="w", padx=4, pady=(4, 0))
+    ttk.Label(mode_row, text="编码格式、质量、preset 在下一行；质量与 preset 随「模式 + 编码格式」自动填好"
+                             "（高清模式 = 画质优先，固定用最慢那档；极速转封装不编码，这两项无效）",
+              foreground="#666666").grid(row=2, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
+
+    # ---------------- 编码参数 ----------------
+    custom_row = ttk.LabelFrame(parent, text=" 编码参数 ", padding=6)
+    custom_row.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
+    ttk.Label(custom_row, text="编码格式：").grid(row=0, column=0, sticky="w", padx=4)
+    var_codec = tk.StringVar(value=CODEC_LABELS[CODEC_AV1])
+    cbo_codec = ttk.Combobox(custom_row, textvariable=var_codec, width=14, state="readonly",
+                             values=[CODEC_LABELS[CODEC_AV1], CODEC_LABELS[CODEC_HEVC]])
+    cbo_codec.grid(row=0, column=1, sticky="w", padx=(0, 14))
+
+    ttk.Label(custom_row, text="质量 CRF/CQ：").grid(row=0, column=2, sticky="w", padx=4)
+    var_quality = tk.StringVar(value=str(DEFAULT_QUALITY[CODEC_AV1]))
+    sp_quality = ttk.Spinbox(custom_row, from_=1, to=51, width=6, textvariable=var_quality)
+    sp_quality.grid(row=0, column=3, sticky="w", padx=(0, 14))
+
+    ttk.Label(custom_row, text="速度 preset：").grid(row=0, column=4, sticky="w", padx=4)
+    var_preset = tk.StringVar(value="p1")
+    cbo_preset = ttk.Combobox(custom_row, textvariable=var_preset, width=12, state="readonly",
+                              values=NVENC_PRESETS)
+    cbo_preset.grid(row=0, column=5, sticky="w")
+
+    lbl_enc = ttk.Label(custom_row, text="编码器：检测中…", foreground="#1a6b1a")
+    lbl_enc.grid(row=1, column=0, columnspan=6, sticky="w", padx=4, pady=(6, 0))
+
+    # ---------------- 字幕 ----------------
+    sub_row = ttk.LabelFrame(parent, text=" 字幕与声音 ", padding=6)
+    sub_row.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
+    var_burn = make_check(sub_row, "硬烧内嵌字幕（优先中文 / 默认轨）", default=True,
+                          row=0, column=0)
+    ttk.Label(sub_row, text="微软雅黑 · 字号/边距按画幅自适应 · 居中底部 · 智能换行不超出屏幕",
+              foreground="#666666").grid(row=0, column=1, sticky="w", padx=12)
+    ttk.Label(sub_row, text="多条音轨逐条判断：能 copy 的原样复制，装不下的那一条单独转 AAC 192k",
+              foreground="#666666").grid(row=0, column=2, sticky="w", padx=12)
+
+    # ---------------- 并发与输出 ----------------
+    opt_row = ttk.Frame(parent)
+    opt_row.grid(row=5, column=0, columnspan=4, sticky="ew", padx=8, pady=2)
+    ttk.Label(opt_row, text="并发数：").pack(side=tk.LEFT, padx=(4, 2))
+    box_conc, var_conc = make_num_box(opt_row, 4, 1, 16, width=4)
+    box_conc.pack(side=tk.LEFT)
+    ttk.Label(opt_row, text="输出目录：").pack(side=tk.LEFT, padx=(10, 2))
+    var_outdir = tk.StringVar()
+    ttk.Entry(opt_row, textvariable=var_outdir, width=26).pack(side=tk.LEFT)
+    ttk.Button(opt_row, text="浏览…", width=8,
+               command=lambda: var_outdir.set(filedialog.askdirectory(title="选择输出目录") or
+                                              var_outdir.get())).pack(side=tk.LEFT, padx=4)
+    ttk.Label(opt_row, text="留空 = 源目录",
+              foreground="#666666").pack(side=tk.LEFT, padx=4)
+    var_console = tk.BooleanVar(value=False)
+    ttk.Checkbutton(opt_row, text="显示 ffmpeg 窗口（看它自己的进度条）",
+                    variable=var_console).pack(side=tk.LEFT, padx=(12, 4))
+
+    # ---------------- 文件列表 ----------------
+    list_bar = ttk.Frame(parent)
+    list_bar.grid(row=6, column=0, columnspan=4, sticky="ew", padx=8, pady=(6, 2))
+    lbl_count = ttk.Label(list_bar, text="共 0 个文件")
+    lbl_count.pack(side=tk.LEFT, padx=4)
+
+    def _add_files():
+        paths = filedialog.askopenfilenames(
+            title="选择视频",
+            filetypes=[("视频文件", "*.mp4 *.flv *.ts *.mkv *.mov *.avi *.wmv *.m4v "
+                                   "*.webm *.m2ts *.mts *.mpg *.mpeg *.3gp *.rmvb *.vob *.f4v"),
+                       ("所有文件", "*.*")])
+        if paths:
+            add_paths(list(paths))
+
+    def _add_folder():
+        d = filedialog.askdirectory(title="选择视频文件夹")
+        if d:
+            add_paths([d])
+
+    ttk.Button(list_bar, text="添加文件", command=_add_files).pack(side=tk.LEFT, padx=3)
+    ttk.Button(list_bar, text="添加文件夹", command=_add_folder).pack(side=tk.LEFT, padx=3)
+    ttk.Button(list_bar, text="移除选中", command=lambda: remove_selected()).pack(side=tk.LEFT, padx=3)
+    ttk.Button(list_bar, text="清空列表", command=lambda: clear_list()).pack(side=tk.LEFT, padx=3)
+    ttk.Label(list_bar, text="可把视频 / 文件夹直接拖进窗口",
+              foreground="#666666").pack(side=tk.LEFT, padx=10)
+
+    tree_frame = ttk.Frame(parent)
+    tree_frame.grid(row=7, column=0, columnspan=4, sticky="nsew", padx=8, pady=2)
+    tree_frame.grid_rowconfigure(0, weight=1)
+    tree_frame.grid_columnconfigure(0, weight=1)
+    tree = ttk.Treeview(tree_frame, columns=[c[0] for c in COLS], show="headings",
+                        selectmode="extended", height=7)
+    for key, title, width in COLS:
+        tree.heading(key, text=title)
+        tree.column(key, width=width, minwidth=60, stretch=(key in ("name", "status")))
+    vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+    tree.configure(yscrollcommand=vsb.set)
+    tree.grid(row=0, column=0, sticky="nsew")
+    vsb.grid(row=0, column=1, sticky="ns")
+
+    # ---------------- 按钮 + 总进度 ----------------
+    btn_row = ttk.Frame(parent)
+    btn_row.grid(row=8, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
+    btn_start = tk.Button(btn_row, text="开始压制", bg="#2f6bff", fg="white",
+                          activebackground="#2455cc", activeforeground="white",
+                          font=("Microsoft YaHei", 10, "bold"), padx=18, pady=4,
+                          cursor="hand2", command=lambda: start_batch())
+    btn_start.pack(side=tk.LEFT, padx=4)
+    btn_stop = tk.Button(btn_row, text="停止", state=tk.DISABLED, padx=16, pady=4,
+                         command=lambda: (state["stop"].set(),
+                                          log("正在停止：已启动的 ffmpeg 会被结束…")))
+    btn_stop.pack(side=tk.LEFT, padx=4)
+
+    bar_prog = ttk.Progressbar(btn_row, orient=tk.HORIZONTAL, mode="determinate",
+                               length=300, maximum=1, value=0)
+    bar_prog.pack(side=tk.LEFT, padx=(18, 8))
+    lbl_prog = ttk.Label(btn_row, text="未开始", foreground="#444444")
+    lbl_prog.pack(side=tk.LEFT)
+
+    text_log, log = make_log_panel(parent, 9, colspan=4, height=7)
+
+    # ============================================================
+    # 列表操作
+    # ============================================================
+
+    def item_cells(it):
+        return [it["cells"].get(k, "") for k, _t, _w in COLS]
+
+    def set_cell(iid, key, value):
+        it = state["items"].get(iid)
+        if not it:
+            return
+        it["cells"][key] = value
+        try:
+            tree.item(iid, values=item_cells(it))
+        except Exception:
+            pass
+
+    def refresh_count():
+        lbl_count.config(text=f"共 {len(state['items'])} 个文件")
+
+    def add_paths(paths):
+        files = collect_videos(paths)
+        if not files:
+            log("没有找到支持的视频文件（" + " ".join(VIDEO_EXTS) + "）")
+            return
+        for f in files:
+            if any(it["path"].lower() == f.lower() for it in state["items"].values()):
+                continue
+            state["seq"] += 1
+            iid = f"v{state['seq']}"
+            state["items"][iid] = {
+                "path": f,
+                "info": None,
+                "plan": None,
+                "cells": {"name": os.path.basename(f), "dur": "…", "res": "…",
+                          "codec": "…", "sub": "…", "status": "读取信息…"},
+            }
+            tree.insert("", tk.END, iid=iid, values=item_cells(state["items"][iid]))
+            queue_probe(iid)
+        refresh_count()
+        log(f"已添加 {len(files)} 个视频，正在后台读取信息…")
+        in_arch = [f for f in files if in_archive_dir(os.path.dirname(f))]
+        if in_arch:
+            log(f"注意：其中 {len(in_arch)} 个文件在 success/ 或 error/ 归档目录里，"
+                f"会就地处理：输出写到同一目录，成功后再归到该目录下的 success/，"
+                f"失败留在 error/（不会再套 error/error）。")
+
+    def remove_selected():
+        for iid in tree.selection():
+            it = state["items"].pop(iid, None)
+            if it:
+                tree.delete(iid)
+        refresh_count()
+
+    def clear_list():
+        if state["running"]:
+            messagebox.showwarning("提示", "正在压制，请先停止。")
+            return
+        for iid in list(state["items"]):
+            tree.delete(iid)
+        state["items"].clear()
+        refresh_count()
+
+    # ============================================================
+    # 信息探测（多线程，不阻塞 GUI）
+    # ============================================================
+
+    def fill_info(iid, info):
+        it = state["items"].get(iid)
+        if not it:
+            return
+        it["info"] = info
+        if not info:
+            it["cells"].update({"dur": "—", "res": "—", "codec": "读取失败",
+                                "sub": "—", "status": "无法读取信息"})
+            tree.item(iid, values=item_cells(it))
+            return
+        dw, dh = display_size(info)
+        bits = f"{info['bit_depth']}bit"
+        codec_txt = f"{info['vcodec']} {bits}" + (" HDR" if info["hdr"] else "")
+        subs = info["subs"]
+        if not subs:
+            sub_txt = "无"
+        else:
+            langs = ",".join(s["lang"] or "?" for s in subs[:2])
+            sub_txt = f"{len(subs)}条 {langs}"
+        it["cells"].update({
+            "dur": fmt_duration(info["duration"]),
+            "res": f"{dw}x{dh}" + (" ↻" if info["rotation"] else ""),
+            "codec": codec_txt,
+            "sub": sub_txt,
+            "status": "待压制",
+        })
+        tree.item(iid, values=item_cells(it))
+
+    def queue_probe(iid):
+        path = state["items"][iid]["path"]
+
+        def work():
+            ff, fp = state["ffmpeg"], state["ffprobe"]
+            if not ff:
+                ff, fp = locate_ffmpeg(load_ffmpeg_hint())
+            info = probe_media(fp, path) if fp else None
+            ui(lambda: fill_info(iid, info))
+
+        probe_pool.submit(work)
+
+    # ============================================================
+    # FFmpeg / 编码器检测
+    # ============================================================
+
+    def apply_ffmpeg():
+        """定位 ffmpeg 并在后台探测编码器"""
+        ff, fp = locate_ffmpeg(clean_path(var_ff.get()))
+        state["ffmpeg"], state["ffprobe"] = ff, fp
+        if not ff:
+            lbl_ff.config(text="✗ 未找到 ffmpeg", foreground="#b00020")
+            lbl_enc.config(text="编码器：未检测（先配置 ffmpeg）", foreground="#b00020")
+            log("未找到 ffmpeg：请把 ffmpeg.exe 放到程序目录 / bin\\ffmpeg，"
+                "或点『浏览…』手动指定（选 ffmpeg.exe 即可，同目录需有 ffprobe.exe）。")
+            if not state["warned_missing"]:
+                state["warned_missing"] = True
+                messagebox.showwarning(
+                    "未找到 FFmpeg",
+                    "「视频常用压制」需要 FFmpeg（ffmpeg.exe + ffprobe.exe）。\n\n"
+                    "补救方法（任选其一）：\n"
+                    "  1. 把 ffmpeg.exe、ffprobe.exe 放到本程序同目录；\n"
+                    "  2. 放到 程序目录\\bin\\ffmpeg\\ 下；\n"
+                    "  3. 把 ffmpeg 加入系统 PATH；\n"
+                    "  4. 点本页『浏览…』手动指定 ffmpeg.exe。\n\n"
+                    "下载：https://www.gyan.dev/ffmpeg/builds/（release-full，"
+                    "解压后 bin 目录里就是这两个 exe）")
+            return
+        var_ff.set(ff)
+        ver = ffmpeg_version(ff)
+        lbl_ff.config(text=("✓ " + ver.replace("ffmpeg version ", "v").split(" Copyright")[0][:46]
+                            if ver else "✓ 已找到 ffmpeg"), foreground="#1a6b1a")
+        lbl_enc.config(text="编码器：检测中…", foreground="#666666")
+        log(f"FFmpeg：{ff}")
+        if ver:
+            log("  " + ver[:120])
+        if not fp:
+            log("  警告：同目录未找到 ffprobe.exe，无法读取视频信息与字幕。")
+
+        def work():
+            try:
+                enc = detect_encoders(ff, log=lambda m: ui(lambda m=m: log(m)))
+            except Exception:
+                tb = traceback.format_exc()
+                ui(lambda: log("编码器检测失败：\n" + tb))
+                ui(lambda: lbl_enc.config(text="编码器：检测失败", foreground="#b00020"))
+                return
+            ui(lambda: apply_encoders(enc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def apply_encoders(enc):
+        state["encoders"] = enc
+        parts = []
+        any_sw = False
+        for codec in (CODEC_AV1, CODEC_HEVC):
+            e = enc.get(codec)
+            parts.append(f"{CODEC_LABELS[codec]} → {encoder_label(e)}")
+            if e and not is_hardware(e):
+                any_sw = True
+        lbl_enc.config(text="编码器：" + "；".join(parts),
+                       foreground="#b35c00" if any_sw else "#1a6b1a")
+        for codec in (CODEC_AV1, CODEC_HEVC):
+            e = enc.get(codec)
+            if not e:
+                log(f"  警告：{CODEC_LABELS[codec]} 没有可用编码器（NVENC/QSV/软件都不可用）")
+            elif not is_hardware(e):
+                log(f"  提示：{CODEC_LABELS[codec]} 只能用 CPU 软件编码（{e}），速度慢很多；"
+                    f"想跑硬件编码请换另一种编码格式")
+        # 本机 AV1 没有硬件编码（多数 Intel 核显都不支持 AV1 编码）、而 H.265 有硬件时，
+        # 默认把编码格式切到 H.265，避免 640p 默认模式掉进慢速 CPU 编码
+        if (not is_hardware(enc.get(CODEC_AV1)) and is_hardware(enc.get(CODEC_HEVC))
+                and not state["codec_touched"] and current_codec() == CODEC_AV1):
+            var_codec.set(CODEC_LABELS[CODEC_HEVC])
+            log("  已自动把编码格式切到 H.265（本机 AV1 没有硬件编码器）；"
+                "仍想用 AV1 软件编码可在下拉框里改回来")
+        refresh_mode_ui()
+
+    def ensure_encoders():
+        """开始压制前确保编码器已探测（在后台线程里调用，阻塞无妨）"""
+        if state["encoders"]:
+            return state["encoders"]
+        ff = state["ffmpeg"] or locate_ffmpeg(load_ffmpeg_hint())[0]
+        if not ff:
+            raise RuntimeError("未找到 ffmpeg，无法压制")
+        enc = detect_encoders(ff, log=lambda m: ui(lambda m=m: log(m)))
+        ui(lambda: apply_encoders(enc))
+        return enc
+
+    # ============================================================
+    # 模式联动
+    # ============================================================
+
+    def current_codec():
+        for k, v in CODEC_LABELS.items():
+            if v == var_codec.get():
+                return k
+        return CODEC_AV1
+
+    def refresh_presets(codec, keep=False):
+        enc = state["encoders"].get(codec)
+        values = preset_values(enc)
+        cbo_preset.config(values=values)
+        cur = var_preset.get()
+        if keep and cur in values:
+            return
+        var_preset.set(default_preset(enc, codec))
+
+    def refresh_mode_ui():
+        """模式或编码格式变化后：编码格式始终可选；质量与 preset 按「模式 + 编码格式」自动填。
+        只有自定义模式才允许手动改质量 / preset。"""
+        codec = current_codec()
+        refresh_presets(codec, keep=True)
+        mode = var_mode.get()
+        enc = state["encoders"].get(codec)
+        if mode == "custom":
+            sp_quality.config(state="normal")
+            cbo_preset.config(state="readonly")
+            return
+        if mode == MODE_REMUX:
+            # 极速转封装不编码：质量 / preset / 编码器都无意义，灰掉且不再改写
+            sp_quality.config(state="disabled")
+            cbo_preset.config(state="disabled")
+            return
+        quality = HD_CRF if mode == "hd" else default_quality(enc, codec)
+        var_quality.set(str(quality))
+        # 高清模式 = 画质优先，速度预设固定用「最好那一档」（最慢）
+        var_preset.set(best_preset(enc) if mode == "hd" else default_preset(enc, codec))
+        sp_quality.config(state="disabled")
+        cbo_preset.config(state="disabled")
+
+    def on_codec_change(_e=None):
+        state["codec_touched"] = True
+        refresh_mode_ui()
+
+    cbo_codec.bind("<<ComboboxSelected>>", on_codec_change)
+    btn_redetect.config(command=apply_ffmpeg)
+
+    # ============================================================
+    # 开始 / 停止
+    # ============================================================
+
+    def collect_settings():
+        mode = var_mode.get()
+        codec = current_codec()
+        try:
+            quality = int(str(var_quality.get()).strip())
+        except ValueError:
+            quality = default_quality(state["encoders"].get(codec), codec)
+        quality = max(0, min(63, quality))
+        try:
+            conc = max(1, min(16, int(str(var_conc.get()).strip())))
+        except ValueError:
+            conc = 4
+        return {
+            "mode": mode,
+            "codec": codec,
+            "quality": quality,
+            "preset": var_preset.get().strip(),
+            "burn_sub": bool(var_burn.get()),
+            "show_console": bool(var_console.get()),
+            "concurrency": conc,
+            "out_dir": clean_path(var_outdir.get()),
+        }
+
+    def reset_progress(total):
+        state["progress"].clear()
+        state["total"] = total
+        state["ok"] = state["fail"] = state["cancel"] = state["skip"] = 0
+        refresh_progress()
+
+    def refresh_progress():
+        total = state["total"]
+        done = state["ok"] + state["fail"] + state["cancel"] + state["skip"]
+        running = sum(state["progress"].values()) / 100.0
+        bar_prog.config(maximum=max(1, total), value=min(total, done + running))
+        if not total:
+            lbl_prog.config(text="未开始")
+            return
+        txt = f"已完成 {done}/{total}"
+        if state["ok"]:
+            txt += f" · 成功 {state['ok']}"
+        if state["fail"]:
+            txt += f" · 失败 {state['fail']}"
+        if state["cancel"]:
+            txt += f" · 取消 {state['cancel']}"
+        if state["skip"]:
+            txt += f" · 跳过 {state['skip']}"
+        lbl_prog.config(text=txt)
+
+    def start_batch():
+        if state["running"]:
+            return
+        if not state["items"]:
+            messagebox.showwarning("提示", "请先添加要压制的视频。")
+            return
+        settings = collect_settings()
+        clear_log(text_log)
+        state["stop"].clear()
+        # 开始前过滤一遍：列表是之前拍的快照，文件可能已被上一轮压制的归档动作移走
+        jobs = []
+        for iid, it in list(state["items"].items()):
+            if os.path.isfile(it["path"]):
+                jobs.append(iid)
+            else:
+                tree.delete(iid)
+                state["items"].pop(iid, None)
+                log(f"已从列表移除（文件已不存在，可能上次压制已归档）：{it['path']}")
+        refresh_count()
+        if not jobs:
+            messagebox.showwarning("提示", "列表里的文件都已经不在了（可能上次压制已归档），请重新添加。")
+            return
+        state["running"] = True
+        btn_stop.config(state=tk.NORMAL)
+        btn_start.config(state=tk.DISABLED)
+        reset_progress(len(jobs))
+        for iid in jobs:
+            set_cell(iid, "status", "排队中")
+        mode_txt = {"640": "640p（最长边 640；已 ≤640 的跳过）",
+                    "hd": "高清（原分辨率 crf18）",
+                    "custom": "自定义",
+                    MODE_REMUX: "极速转封装（不重编码，-c copy）"}[settings["mode"]]
+        if settings["mode"] == MODE_REMUX:
+            log(f"模式：{mode_txt}　并发：{settings['concurrency']}　"
+                f"共 {len(jobs)} 个文件（只换容器，不烧字幕）")
+        else:
+            log(f"模式：{mode_txt}　编码：{CODEC_LABELS[settings['codec']]}　"
+                f"质量 crf{settings['quality']}　preset {settings['preset']}　"
+                f"并发：{settings['concurrency']}　硬烧字幕：{'开' if settings['burn_sub'] else '关'}　"
+                f"共 {len(jobs)} 个文件")
+
+        def work():
+            try:
+                enc = ensure_encoders()
+            except Exception as e:
+                ui(lambda: log(f"错误：{e}"))
+                ui(lambda: finish_batch(0, 0, 0, 0))
+                return
+            settings["ffmpeg"] = state["ffmpeg"]
+            settings["encoders"] = enc
+            ok_n = fail_n = cancel_n = skip_n = 0
+
+            def one(iid):
+                nonlocal ok_n, fail_n, cancel_n, skip_n
+                if state["stop"].is_set():
+                    ui(lambda: set_cell(iid, "status", "已取消"))
+                    cancel_n += 1
+                    state["cancel"] += 1
+                    ui(refresh_progress)
+                    return
+                it = state["items"].get(iid)
+                if not it:
+                    return
+                src = it["path"]
+                if not os.path.isfile(src):
+                    # 列表是开始前拍的快照，文件可能已被上一轮压制的归档动作移走
+                    fail_n += 1
+                    state["fail"] += 1
+                    ui(lambda: set_cell(iid, "status", "失败：文件已不存在"))
+                    ui(lambda: log(f"  ✗ 文件已不存在（可能已被上一次压制归档或移动）：{src}"))
+                    ui(refresh_progress)
+                    return
+                info = it["info"] or probe_media(state["ffprobe"], src)
+                if not info:
+                    # 读不到视频信息：有 ffprobe 说明文件本身有问题，按失败归档
+                    out_dir0 = settings["out_dir"] or os.path.dirname(src)
+                    archived = archive_source(src, out_dir0, False) if state["ffprobe"] else ""
+                    fail_n += 1
+                    state["fail"] += 1
+                    ui(lambda: set_cell(iid, "status", "失败：读不到视频信息"))
+                    ui(lambda: log(f"  ✗ 读不到视频信息：{os.path.basename(src)}"
+                                   + (f"（已移到 {archive_tag(archived)}）" if archived else "")))
+                    ui(refresh_progress)
+                    return
+                plan = resolve_plan(settings, info)
+                if not plan.get("remux") and not plan["enc"]:
+                    ui(lambda: set_cell(iid, "status", f"失败：没有可用的 {CODEC_LABELS[plan['codec']]} 编码器"))
+                    fail_n += 1
+                    state["fail"] += 1
+                    ui(refresh_progress)
+                    return
+                # 640p 模式：最长边本来就不超过 640 的直接跳过（既不放大，也不浪费时间再压一遍）
+                if settings["mode"] == "640":
+                    dw0, dh0 = display_size(info)
+                    if max(dw0, dh0) <= SIXFORTY_EDGE:
+                        skip_n += 1
+                        state["skip"] += 1
+                        state["progress"].pop(iid, None)
+                        ui(lambda: set_cell(iid, "status", f"跳过：已 ≤640p（{dw0}x{dh0}）"))
+                        ui(lambda: log(f"  ⊘ 跳过：{os.path.basename(src)}"
+                                       f"（{dw0}x{dh0}，最长边已 ≤640，无需压制，源文件保持原位）"))
+                        ui(refresh_progress)
+                        return
+                out_dir = settings["out_dir"] or os.path.dirname(src)
+                try:
+                    os.makedirs(out_dir, exist_ok=True)
+                except Exception:
+                    ui(lambda: set_cell(iid, "status", "失败：输出目录不可写"))
+                    fail_n += 1
+                    state["fail"] += 1
+                    ui(refresh_progress)
+                    return
+                dst = os.path.join(out_dir,
+                                   output_name(src, plan["quality"], plan.get("remux", False)))
+                if os.path.exists(dst):
+                    dst = str(get_unique_path(Path(dst)))
+                dw, dh = display_size(info)
+                size_txt = (f"{plan['target'][0]}x{plan['target'][1]}" if plan["target"]
+                            else f"{dw}x{dh}")
+                if plan.get("remux"):
+                    ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
+                                   f"（极速转封装：-c copy，不重编码，画质音质不变）"))
+                else:
+                    ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
+                                   f"（{CODEC_LABELS[plan['codec']]} / {plan['enc']} / "
+                                   f"crf{plan['quality']} / preset {plan['preset']} / {size_txt} / "
+                                   f"{'10bit' if info['bit_depth'] > 8 or info['hdr'] else '8bit'}）"))
+                ui(lambda: set_cell(iid, "status", "压制中 0%"))
+                ui(lambda: state["progress"].__setitem__(iid, 0))
+                work_dir = tempfile.mkdtemp(prefix="vfx_")
+                last = {"t": 0.0, "pct": -1}
+
+                def on_progress(pct, speed):
+                    import time as _t
+                    now = _t.time()
+                    if pct is None:
+                        return
+                    if now - last["t"] < 0.4 and pct < 100:
+                        return
+                    last["t"] = now
+                    if pct != last["pct"]:
+                        last["pct"] = pct
+                        txt = f"压制中 {pct}%"
+                        if speed:
+                            txt += f" {speed}"
+
+                        def apply():
+                            set_cell(iid, "status", txt)
+                            state["progress"][iid] = pct
+                            refresh_progress()
+
+                        ui(apply)
+
+                def on_cmd(cmd):
+                    # 弹出 ffmpeg 窗口时，把实际执行的命令行也写进日志（可复制去手动跑）
+                    if settings.get("show_console"):
+                        line = subprocess.list2cmdline([str(c) for c in cmd])
+                        ui(lambda: log("  命令：" + line))
+
+                ok, msg, sub_note = run_encode(settings, info, plan, src, dst, work_dir,
+                                               on_progress, state["stop"], state["procs"],
+                                               on_cmd=on_cmd)
+                if sub_note:
+                    ui(lambda: log(f"  字幕：{sub_note}"))
+                try:
+                    shutil.rmtree(work_dir, ignore_errors=True)
+                except Exception:
+                    pass
+                if ok:
+                    archived = archive_source(src, out_dir, True)
+                    if archived:
+                        move_note = f"；源文件已移到 {archive_tag(archived)}"
+                    elif os.path.basename(os.path.dirname(src)).lower() == "success":
+                        move_note = "；源文件已在 success/ 里，保持原位"
+                    else:
+                        move_note = "；源文件移动失败"
+                    ok_n += 1
+                    state["ok"] += 1
+                    state["progress"].pop(iid, None)
+                    ui(lambda: set_cell(iid, "status", "完成 ✔"))
+                    ui(lambda: log(f"  ✔ 完成：{os.path.basename(dst)}{move_note}"))
+                    ui(refresh_progress)
+                elif state["stop"].is_set():
+                    try:
+                        os.remove(dst)
+                    except OSError:
+                        pass
+                    cancel_n += 1
+                    state["cancel"] += 1
+                    state["progress"].pop(iid, None)
+                    ui(lambda: set_cell(iid, "status", "已取消"))
+                    ui(refresh_progress)
+                else:
+                    try:
+                        os.remove(dst)
+                    except OSError:
+                        pass
+                    archived = archive_source(src, out_dir, False)
+                    fail_n += 1
+                    state["fail"] += 1
+                    state["progress"].pop(iid, None)
+                    ui(lambda: set_cell(iid, "status", "失败 ✗"))
+                    ui(lambda: log(f"  ✗ 失败：{os.path.basename(src)}：{msg}"
+                                   + (f"（源文件已移到 {archive_tag(archived)}）" if archived
+                                      else "（源文件已在 error/ 里，保持原位）"
+                                      if os.path.basename(os.path.dirname(src)).lower() == "error"
+                                      else "")))
+                    ui(refresh_progress)
+
+            with ThreadPoolExecutor(max_workers=settings["concurrency"]) as pool:
+                list(pool.map(one, jobs))
+            ui(lambda: finish_batch(ok_n, fail_n, cancel_n, skip_n))
+
+        def finish_batch(ok_n, fail_n, cancel_n, skip_n=0):
+            state["running"] = False
+            btn_stop.config(state=tk.DISABLED)
+            btn_start.config(state=tk.NORMAL)
+            state["progress"].clear()
+            refresh_progress()
+            # 已经归档（源文件不在原位）的条目从列表清掉，免得下次点开始又压一遍不存在的文件
+            gone = 0
+            for iid, it in list(state["items"].items()):
+                if not os.path.isfile(it["path"]):
+                    tree.delete(iid)
+                    state["items"].pop(iid, None)
+                    gone += 1
+            if gone:
+                refresh_count()
+                log(f"已归档的 {gone} 个条目已从列表移除（源文件在 success/ 或 error/ 里）。")
+            tail = f"，跳过 {skip_n}" if skip_n else ""
+            if state["stop"].is_set():
+                log(f"已停止：成功 {ok_n}，失败 {fail_n}，取消 {cancel_n}{tail}")
+            else:
+                log(f"全部结束：成功 {ok_n}，失败 {fail_n}，取消 {cancel_n}{tail}")
+            state["stop"].clear()
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    # 拖放（先把上次记住的 ffmpeg 路径显示出来）
+    var_ff.set(load_ffmpeg_hint())
+    if app is not None:
+        try:
+            app.register_drop_handler(parent, add_paths)
+        except Exception:
+            pass
+
+    # 依赖检测：只在打开本页时做（不拖慢程序启动）
+    def on_show():
+        if not state["checked"]:
+            state["checked"] = True
+            apply_ffmpeg()
+        else:
+            refresh_mode_ui()
+
+    if app is not None:
+        try:
+            app.register_show_handler(parent, on_show)
+        except Exception:
+            parent.after(150, on_show)
+    else:
+        parent.after(150, on_show)
+
+    refresh_mode_ui()
+    return state
