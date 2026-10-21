@@ -1068,7 +1068,31 @@ def output_name(src, quality, remux=False):
     return f"{stem}.crf{quality}.mp4"
 
 
-ARCHIVE_DIRS = ("success", "error")
+ARCHIVE_DIRS = ("success", "error", "oversize")
+OVERSIZE_DIR = "oversize"
+
+
+def fmt_size(n):
+    """字节数转可读体积：1536 → 1.5KB"""
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return "?"
+    if n <= 0:
+        return "0B"
+    for unit, scale in (("GB", 1024 ** 3), ("MB", 1024 ** 2), ("KB", 1024)):
+        if n >= scale:
+            v = n / scale
+            return f"{v:.1f}{unit}" if v < 100 else f"{v:.0f}{unit}"
+    return f"{n:.0f}B"
+
+
+def size_change(src_size, dst_size):
+    """返回 (涨跌百分比, 是否变大)。任一为 0 时返回 (None, False)。"""
+    if not src_size or not dst_size or src_size <= 0 or dst_size <= 0:
+        return None, False
+    pct = (dst_size - src_size) / float(src_size) * 100.0
+    return pct, pct > 0
 
 
 def in_archive_dir(path):
@@ -1094,6 +1118,47 @@ def archive_tag(path):
     return ("/".join(parts) + "/") if parts else ""
 
 
+def _move_into(path, folder):
+    """把文件移进 folder（同名自动加序号，绝不覆盖）；成功返回新路径，失败返回 ""。"""
+    try:
+        os.makedirs(folder, exist_ok=True)
+        for _ in range(20):
+            target = get_unique_path(Path(folder) / os.path.basename(path))
+            try:
+                shutil.move(path, str(target))
+                return str(target)
+            except FileExistsError:
+                continue
+            except OSError:
+                # Windows 下目标已存在会抛 OSError（不是 FileExistsError），换个名字重试
+                time.sleep(0.05)
+                continue
+        return ""
+    except Exception:
+        return ""
+
+
+def archive_oversize(src, dst, out_dir):
+    """成品比源还大：源文件与成品一起移到 <输出目录>/oversize/。
+
+    返回 (源文件去向, 成品去向)，失败为空串。源/成品已在 oversize/ 里则原地不动。"""
+    folder = os.path.join(out_dir, OVERSIZE_DIR)
+
+    def inside(p):
+        try:
+            return os.path.basename(os.path.dirname(os.path.abspath(p))).lower() == OVERSIZE_DIR
+        except Exception:
+            return False
+
+    dst_moved = ""
+    if dst and os.path.isfile(dst):
+        dst_moved = dst if inside(dst) else _move_into(dst, folder)
+    src_moved = ""
+    if src and os.path.isfile(src):
+        src_moved = src if inside(src) else _move_into(src, folder)
+    return src_moved, dst_moved
+
+
 def archive_source(src, out_dir, ok):
     """把源文件归档到 success/ 或 error/（同名自动加序号，绝不覆盖）
 
@@ -1109,24 +1174,10 @@ def archive_source(src, out_dir, ok):
         return ""                 # 已经在这个结果的目录里，别再套一层
     # 归档目录里「救回来」的文件（error/ 里这次压成功了）：就地归到该目录下的 success/，
     # 即 error/success/，而不是跳到输出目录的顶层 success/（add_paths 里就是这样提示用户的）
-    base = parent if (ok and in_archive_dir(parent)) else out_dir
+    base = parent if (ok and in_archive_dir(parent)
+                      and os.path.basename(parent).lower() != OVERSIZE_DIR) else out_dir
     folder = os.path.join(base, leaf)
-    try:
-        os.makedirs(folder, exist_ok=True)
-        for _ in range(20):
-            dst = get_unique_path(Path(folder) / os.path.basename(src))
-            try:
-                shutil.move(src, str(dst))
-                return str(dst)
-            except FileExistsError:
-                continue
-            except OSError:
-                # Windows 下目标已存在会抛 OSError（不是 FileExistsError），换个名字重试
-                time.sleep(0.05)
-                continue
-        return ""
-    except Exception:
-        return ""
+    return _move_into(src, folder)
 
 
 def kill_process(proc):
@@ -1365,7 +1416,7 @@ COLS = (
     ("fps", "帧率", 84),
     ("codec", "编码", 150),
     ("sub", "字幕", 90),
-    ("status", "状态", 220),
+    ("status", "状态", 300),
 )
 
 
@@ -1470,6 +1521,7 @@ def build_encode_tab(parent, app=None):
         "fail": 0,
         "cancel": 0,
         "skip": 0,
+        "grown": 0,           # 成品比源还大的个数（已归入 oversize/）
     }
     probe_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="probe")
 
@@ -1940,6 +1992,7 @@ def build_encode_tab(parent, app=None):
         state["progress"].clear()
         state["total"] = total
         state["ok"] = state["fail"] = state["cancel"] = state["skip"] = 0
+        state["grown"] = 0
         refresh_progress()
 
     def refresh_progress():
@@ -1959,6 +2012,8 @@ def build_encode_tab(parent, app=None):
             txt += f" · 取消 {state['cancel']}"
         if state["skip"]:
             txt += f" · 跳过 {state['skip']}"
+        if state["grown"]:
+            txt += f" · 变大 {state['grown']}"
         lbl_prog.config(text=txt)
 
     def start_batch():
@@ -2017,10 +2072,10 @@ def build_encode_tab(parent, app=None):
                 return
             settings["ffmpeg"] = state["ffmpeg"]
             settings["encoders"] = enc
-            ok_n = fail_n = cancel_n = skip_n = 0
+            ok_n = fail_n = cancel_n = skip_n = grown_n = 0
 
             def one(iid):
-                nonlocal ok_n, fail_n, cancel_n, skip_n
+                nonlocal ok_n, fail_n, cancel_n, skip_n, grown_n
                 if state["stop"].is_set():
                     ui(lambda: set_cell(iid, "status", "已取消"))
                     cancel_n += 1
@@ -2169,18 +2224,53 @@ def build_encode_tab(parent, app=None):
                 except Exception:
                     pass
                 if ok:
-                    archived = archive_source(src, out_dir, True)
-                    if archived:
-                        move_note = f"；源文件已移到 {archive_tag(archived)}"
-                    elif os.path.basename(os.path.dirname(src)).lower() == "success":
-                        move_note = "；源文件已在 success/ 里，保持原位"
+                    # 体积变化：成品 ÷ 源，涨跌百分比写进状态列
+                    try:
+                        src_size = os.path.getsize(src)
+                    except OSError:
+                        src_size = 0
+                    try:
+                        dst_size = os.path.getsize(dst)
+                    except OSError:
+                        dst_size = 0
+                    pct, grown = size_change(src_size, dst_size)
+                    if pct is None:
+                        delta_txt = ""
+                        size_note = ""
                     else:
-                        move_note = "；源文件移动失败"
+                        sizes = f"{fmt_size(src_size)}→{fmt_size(dst_size)}"
+                        if abs(pct) < 0.5:
+                            delta_txt = f" ±0%（{sizes}）"
+                            size_note = f"（体积 ±0%，{sizes}）"
+                        else:
+                            delta_txt = f" {'↑' if grown else '↓'}{abs(pct):.0f}%（{sizes}）"
+                            size_note = f"（体积 {'+' if grown else '-'}{abs(pct):.0f}%，{sizes}）"
+                    if grown:
+                        # 越压越大：源文件和成品都挪进 oversize/，方便一起删掉或重调参数
+                        src_new, dst_new = archive_oversize(src, dst, out_dir)
+                        grown_n += 1
+                        state["grown"] += 1
+                        moved_all = bool(src_new and dst_new)
+                        move_note = (f"；体积变大，源文件与成品已移到 {OVERSIZE_DIR}/"
+                                     if moved_all else
+                                     f"；体积变大，但移到 {OVERSIZE_DIR}/ 未完全成功")
+                        status_txt = f"完成 ✔{delta_txt} → {OVERSIZE_DIR}/"
+                        log_txt = f"  ✔ 完成{size_note}：{os.path.basename(dst)}{move_note}"
+                    else:
+                        archived = archive_source(src, out_dir, True)
+                        if archived:
+                            move_note = f"；源文件已移到 {archive_tag(archived)}"
+                        elif os.path.basename(os.path.dirname(src)).lower() == "success":
+                            move_note = "；源文件已在 success/ 里，保持原位"
+                        else:
+                            move_note = "；源文件移动失败"
+                        status_txt = f"完成 ✔{delta_txt}"
+                        log_txt = f"  ✔ 完成{size_note}：{os.path.basename(dst)}{move_note}"
                     ok_n += 1
                     state["ok"] += 1
                     state["progress"].pop(iid, None)
-                    ui(lambda: set_cell(iid, "status", "完成 ✔"))
-                    ui(lambda: log(f"  ✔ 完成：{os.path.basename(dst)}{move_note}"))
+                    ui(lambda iid=iid, t=status_txt: set_cell(iid, "status", t))
+                    ui(lambda t=log_txt: log(t))
                     ui(refresh_progress)
                 elif state["stop"].is_set():
                     try:
@@ -2227,29 +2317,26 @@ def build_encode_tab(parent, app=None):
                         ui(lambda iid=iid: set_cell(iid, "status", "失败：内部异常"))
                         ui(lambda bad=bad, tb=tb: log(f"  ✗ 内部异常：{bad}\n{tb}"))
                         ui(refresh_progress)
-            ui(lambda: finish_batch(ok_n, fail_n, cancel_n, skip_n))
+            ui(lambda: finish_batch(ok_n, fail_n, cancel_n, skip_n, grown_n))
 
-        def finish_batch(ok_n, fail_n, cancel_n, skip_n=0):
+        def finish_batch(ok_n, fail_n, cancel_n, skip_n=0, grown_n=0):
             state["running"] = False
             btn_stop.config(state=tk.DISABLED)
             btn_start.config(state=tk.NORMAL)
             state["progress"].clear()
             refresh_progress()
-            # 已经归档（源文件不在原位）的条目从列表清掉，免得下次点开始又压一遍不存在的文件
-            gone = 0
-            for iid, it in list(state["items"].items()):
-                if not os.path.isfile(it["path"]):
-                    tree.delete(iid)
-                    state["items"].pop(iid, None)
-                    gone += 1
-            if gone:
-                refresh_count()
-                log(f"已归档的 {gone} 个条目已从列表移除（源文件在 success/ 或 error/ 里）。")
+            # 完成后保留列表条目：状态列里要能看到「体积涨跌%」。
+            # 已归档（源文件不在原位）的条目会在下次点「开始」时自动清掉。
             tail = f"，跳过 {skip_n}" if skip_n else ""
             if state["stop"].is_set():
                 log(f"已停止：成功 {ok_n}，失败 {fail_n}，取消 {cancel_n}{tail}")
             else:
                 log(f"全部结束：成功 {ok_n}，失败 {fail_n}，取消 {cancel_n}{tail}")
+            summary = f"总结：已完成 {ok_n}，失败 {fail_n}，变大 {grown_n} 个"
+            if grown_n:
+                summary += f"（体积变大的源文件与成品都归到了 {OVERSIZE_DIR}/）"
+            log(summary)
+            lbl_prog.config(text=f"已完成 {ok_n}，失败 {fail_n}，变大 {grown_n} 个")
             state["stop"].clear()
 
         threading.Thread(target=work, daemon=True).start()
