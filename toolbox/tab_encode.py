@@ -26,10 +26,10 @@ import tkinter as tk
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from .common import (clean_path, clear_log, get_unique_path, make_check,
-                     make_log_panel, make_num_box, make_tip, natural_key)
+from .common import (clean_path, clear_log, get_unique_path, make_logger,
+                     make_num_box, natural_key)
 
 # ============================================================
 # 常量
@@ -1144,7 +1144,7 @@ def collect_videos(paths):
 
 def build_encode_tab(parent, app=None):
     parent.grid_columnconfigure(3, weight=1)
-    parent.grid_rowconfigure(7, weight=1)
+    parent.grid_rowconfigure(3, weight=1)
 
     state = {
         "ffmpeg": "",
@@ -1173,23 +1173,11 @@ def build_encode_tab(parent, app=None):
         except Exception:
             pass
 
-    # ---------------- 顶部说明 ----------------
-    make_tip(parent, 0, "批量压制：640p（最长边 640，不放大；最长边已 ≤640 的直接跳过不压）/ "
-                        "高清（原分辨率 crf18）/ 自定义；编码格式三种模式都能自由选 AV1 或 H.265。\n"
-                        "极速转封装：不重编码，直接 -c copy 把 flv / mkv / ts 等换成 mp4（秒级完成，"
-                        "画质音质完全不变，不烧字幕）。\n"
-                        "质量与 preset 按「模式 + 编码格式」自动套用（QSV：AV1 34 / H.265 24；"
-                        "NVENC：AV1 36 / H.265 29），编码器按 NVENC → QSV → 软件 自动选择。\n"
-                        "可硬烧内嵌字幕（微软雅黑 15 / 轮廓 2 / 阴影 2 / 边距 10·20，居中底部，"
-                        "滤镜顺序：字幕在前、旋转在后）；成功归档 success/，失败归档 error/，"
-                        "error/ 里救回来的归到 error/success/。",
-             colspan=4)
-
-    # ---------------- FFmpeg 路径 ----------------
-    ff_row = ttk.LabelFrame(parent, text=" FFmpeg ", padding=6)
-    ff_row.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
+    # ---------------- 顶部：FFmpeg 路径（紧凑单行，去掉大段说明） ----------------
+    ff_row = ttk.Frame(parent)
+    ff_row.grid(row=0, column=0, columnspan=4, sticky="ew", padx=8, pady=(6, 2))
     ff_row.grid_columnconfigure(1, weight=1)
-    ttk.Label(ff_row, text="程序路径：").grid(row=0, column=0, sticky="w", padx=(2, 4))
+    ttk.Label(ff_row, text="FFmpeg：").grid(row=0, column=0, sticky="w", padx=(2, 4))
     var_ff = tk.StringVar()
     ent_ff = ttk.Entry(ff_row, textvariable=var_ff)
     ent_ff.grid(row=0, column=1, sticky="ew", padx=4)
@@ -1206,81 +1194,72 @@ def build_encode_tab(parent, app=None):
         save_ffmpeg_hint(p)
         apply_ffmpeg()
 
-    ttk.Button(ff_row, text="浏览…", width=8, command=_pick_ff).grid(row=0, column=2, padx=2)
-    btn_redetect = ttk.Button(ff_row, text="重新检测", width=10)
+    ttk.Button(ff_row, text="浏览…", width=7, command=_pick_ff).grid(row=0, column=2, padx=2)
+    btn_redetect = ttk.Button(ff_row, text="重新检测", width=9)
     btn_redetect.grid(row=0, column=3, padx=2)
 
-    # ---------------- 模式 ----------------
-    mode_row = ttk.LabelFrame(parent, text=" 压制模式 ", padding=6)
-    mode_row.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
+    # ---------------- 压制设置（模式 + 编码参数 + 选项，紧凑几行） ----------------
+    settings_box = ttk.LabelFrame(parent, text=" 压制设置 ", padding=(6, 4))
+    settings_box.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 4))
+
+    # 第 1 行：模式
+    mode_line = ttk.Frame(settings_box)
+    mode_line.grid(row=0, column=0, columnspan=6, sticky="w")
     var_mode = tk.StringVar(value="640")
-    for i, (val, text) in enumerate((("640", "640p（最长边 640，不放大）"),
-                                     ("hd", "高清（保持原分辨率，crf18）"),
-                                     ("custom", "自定义"))):
-        ttk.Radiobutton(mode_row, text=text, value=val, variable=var_mode,
-                        command=lambda: refresh_mode_ui()).grid(row=0, column=i, sticky="w", padx=(4, 18))
-    ttk.Radiobutton(mode_row, text="极速转封装（flv / mkv / ts 等 → mp4，不重编码）",
-                    value=MODE_REMUX, variable=var_mode,
-                    command=lambda: refresh_mode_ui()).grid(row=1, column=0, columnspan=3,
-                                                            sticky="w", padx=4, pady=(4, 0))
-    ttk.Label(mode_row, text="编码格式、质量、preset 在下一行；质量与 preset 随「模式 + 编码格式」自动填好"
-                             "（高清模式 = 画质优先，固定用最慢那档；极速转封装不编码，这两项无效）",
-              foreground="#666666").grid(row=2, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
+    for i, (val, text) in enumerate((("640", "640p（最长边 640）"),
+                                     ("hd", "高清（原分辨率）"),
+                                     ("custom", "自定义"),
+                                     (MODE_REMUX, "极速转封装（-c copy）"))):
+        ttk.Radiobutton(mode_line, text=text, value=val, variable=var_mode,
+                        command=lambda: refresh_mode_ui()).pack(side=tk.LEFT, padx=(4, 14))
 
-    # ---------------- 编码参数 ----------------
-    custom_row = ttk.LabelFrame(parent, text=" 编码参数 ", padding=6)
-    custom_row.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
-    ttk.Label(custom_row, text="编码格式：").grid(row=0, column=0, sticky="w", padx=4)
+    # 第 2 行：编码格式 / 质量 / preset / 并发
+    param_line = ttk.Frame(settings_box)
+    param_line.grid(row=1, column=0, columnspan=6, sticky="w", pady=(4, 0))
+    ttk.Label(param_line, text="编码格式：").pack(side=tk.LEFT, padx=(4, 2))
     var_codec = tk.StringVar(value=CODEC_LABELS[CODEC_AV1])
-    cbo_codec = ttk.Combobox(custom_row, textvariable=var_codec, width=14, state="readonly",
+    cbo_codec = ttk.Combobox(param_line, textvariable=var_codec, width=12, state="readonly",
                              values=[CODEC_LABELS[CODEC_AV1], CODEC_LABELS[CODEC_HEVC]])
-    cbo_codec.grid(row=0, column=1, sticky="w", padx=(0, 14))
+    cbo_codec.pack(side=tk.LEFT, padx=(0, 12))
 
-    ttk.Label(custom_row, text="质量 CRF/CQ：").grid(row=0, column=2, sticky="w", padx=4)
+    ttk.Label(param_line, text="质量：").pack(side=tk.LEFT, padx=(0, 2))
     var_quality = tk.StringVar(value=str(DEFAULT_QUALITY[CODEC_AV1]))
-    sp_quality = ttk.Spinbox(custom_row, from_=1, to=51, width=6, textvariable=var_quality)
-    sp_quality.grid(row=0, column=3, sticky="w", padx=(0, 14))
+    sp_quality = ttk.Spinbox(param_line, from_=1, to=51, width=5, textvariable=var_quality)
+    sp_quality.pack(side=tk.LEFT, padx=(0, 12))
 
-    ttk.Label(custom_row, text="速度 preset：").grid(row=0, column=4, sticky="w", padx=4)
+    ttk.Label(param_line, text="preset：").pack(side=tk.LEFT, padx=(0, 2))
     var_preset = tk.StringVar(value="p1")
-    cbo_preset = ttk.Combobox(custom_row, textvariable=var_preset, width=12, state="readonly",
+    cbo_preset = ttk.Combobox(param_line, textvariable=var_preset, width=10, state="readonly",
                               values=NVENC_PRESETS)
-    cbo_preset.grid(row=0, column=5, sticky="w")
+    cbo_preset.pack(side=tk.LEFT, padx=(0, 12))
 
-    lbl_enc = ttk.Label(custom_row, text="编码器：检测中…", foreground="#1a6b1a")
-    lbl_enc.grid(row=1, column=0, columnspan=6, sticky="w", padx=4, pady=(6, 0))
-
-    # ---------------- 字幕 ----------------
-    sub_row = ttk.LabelFrame(parent, text=" 字幕与声音 ", padding=6)
-    sub_row.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
-    var_burn = make_check(sub_row, "硬烧内嵌字幕（优先中文 / 默认轨）", default=True,
-                          row=0, column=0)
-    ttk.Label(sub_row, text="微软雅黑 · 字号/边距按画幅自适应 · 居中底部 · 智能换行不超出屏幕",
-              foreground="#666666").grid(row=0, column=1, sticky="w", padx=12)
-    ttk.Label(sub_row, text="多条音轨逐条判断：能 copy 的原样复制，装不下的那一条单独转 AAC 192k",
-              foreground="#666666").grid(row=0, column=2, sticky="w", padx=12)
-
-    # ---------------- 并发与输出 ----------------
-    opt_row = ttk.Frame(parent)
-    opt_row.grid(row=5, column=0, columnspan=4, sticky="ew", padx=8, pady=2)
-    ttk.Label(opt_row, text="并发数：").pack(side=tk.LEFT, padx=(4, 2))
-    box_conc, var_conc = make_num_box(opt_row, 4, 1, 16, width=4)
+    ttk.Label(param_line, text="并发：").pack(side=tk.LEFT, padx=(0, 2))
+    box_conc, var_conc = make_num_box(param_line, 4, 1, 16, width=3)
     box_conc.pack(side=tk.LEFT)
-    ttk.Label(opt_row, text="输出目录：").pack(side=tk.LEFT, padx=(10, 2))
+
+    # 第 3 行：输出目录 / 硬烧字幕 / 显示 ffmpeg 窗口
+    opt_line = ttk.Frame(settings_box)
+    opt_line.grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
+    ttk.Label(opt_line, text="输出目录：").pack(side=tk.LEFT, padx=(4, 2))
     var_outdir = tk.StringVar()
-    ttk.Entry(opt_row, textvariable=var_outdir, width=26).pack(side=tk.LEFT)
-    ttk.Button(opt_row, text="浏览…", width=8,
+    ttk.Entry(opt_line, textvariable=var_outdir, width=24).pack(side=tk.LEFT)
+    ttk.Button(opt_line, text="浏览…", width=7,
                command=lambda: var_outdir.set(filedialog.askdirectory(title="选择输出目录") or
-                                              var_outdir.get())).pack(side=tk.LEFT, padx=4)
-    ttk.Label(opt_row, text="留空 = 源目录",
-              foreground="#666666").pack(side=tk.LEFT, padx=4)
+                                              var_outdir.get())).pack(side=tk.LEFT, padx=3)
+    ttk.Label(opt_line, text="留空=源目录", foreground="#666666").pack(side=tk.LEFT, padx=(0, 10))
+
+    var_burn = tk.BooleanVar(value=True)
+    ttk.Checkbutton(opt_line, text="硬烧字幕", variable=var_burn).pack(side=tk.LEFT, padx=(0, 10))
     var_console = tk.BooleanVar(value=False)
-    ttk.Checkbutton(opt_row, text="显示 ffmpeg 窗口（看它自己的进度条）",
-                    variable=var_console).pack(side=tk.LEFT, padx=(12, 4))
+    ttk.Checkbutton(opt_line, text="显示 ffmpeg 窗口", variable=var_console).pack(side=tk.LEFT)
+
+    # 第 4 行：编码器状态（一行小字）
+    lbl_enc = ttk.Label(settings_box, text="编码器：检测中…", foreground="#1a6b1a")
+    lbl_enc.grid(row=3, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
 
     # ---------------- 文件列表 ----------------
     list_bar = ttk.Frame(parent)
-    list_bar.grid(row=6, column=0, columnspan=4, sticky="ew", padx=8, pady=(6, 2))
+    list_bar.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=(4, 2))
     lbl_count = ttk.Label(list_bar, text="共 0 个文件")
     lbl_count.pack(side=tk.LEFT, padx=4)
 
@@ -1302,15 +1281,15 @@ def build_encode_tab(parent, app=None):
     ttk.Button(list_bar, text="添加文件夹", command=_add_folder).pack(side=tk.LEFT, padx=3)
     ttk.Button(list_bar, text="移除选中", command=lambda: remove_selected()).pack(side=tk.LEFT, padx=3)
     ttk.Button(list_bar, text="清空列表", command=lambda: clear_list()).pack(side=tk.LEFT, padx=3)
-    ttk.Label(list_bar, text="可把视频 / 文件夹直接拖进窗口",
-              foreground="#666666").pack(side=tk.LEFT, padx=10)
+    ttk.Label(list_bar, text="可拖放视频/文件夹",
+              foreground="#666666").pack(side=tk.LEFT, padx=8)
 
     tree_frame = ttk.Frame(parent)
-    tree_frame.grid(row=7, column=0, columnspan=4, sticky="nsew", padx=8, pady=2)
+    tree_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=8, pady=2)
     tree_frame.grid_rowconfigure(0, weight=1)
     tree_frame.grid_columnconfigure(0, weight=1)
     tree = ttk.Treeview(tree_frame, columns=[c[0] for c in COLS], show="headings",
-                        selectmode="extended", height=7)
+                        selectmode="extended", height=10)
     for key, title, width in COLS:
         tree.heading(key, text=title)
         tree.column(key, width=width, minwidth=60, stretch=(key in ("name", "status")))
@@ -1321,7 +1300,7 @@ def build_encode_tab(parent, app=None):
 
     # ---------------- 按钮 + 总进度 ----------------
     btn_row = ttk.Frame(parent)
-    btn_row.grid(row=8, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
+    btn_row.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
     btn_start = tk.Button(btn_row, text="开始压制", bg="#2f6bff", fg="white",
                           activebackground="#2455cc", activeforeground="white",
                           font=("Microsoft YaHei", 10, "bold"), padx=18, pady=4,
@@ -1338,7 +1317,40 @@ def build_encode_tab(parent, app=None):
     lbl_prog = ttk.Label(btn_row, text="未开始", foreground="#444444")
     lbl_prog.pack(side=tk.LEFT)
 
-    text_log, log = make_log_panel(parent, 9, colspan=4, height=7)
+    # ---------------- 运行日志（可折叠，默认收起，把空间让给文件列表） ----------------
+    log_wrap = ttk.Frame(parent)
+    log_wrap.grid(row=5, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 6))
+    log_wrap.grid_columnconfigure(0, weight=1)
+
+    log_head = ttk.Frame(log_wrap)
+    log_head.grid(row=0, column=0, sticky="ew")
+    var_log_open = tk.BooleanVar(value=False)
+    btn_log_toggle = ttk.Button(log_head, text="▸ 运行日志", width=11)
+    btn_log_toggle.pack(side=tk.LEFT)
+    ttk.Button(log_head, text="清空", width=6,
+               command=lambda: clear_log(text_log)).pack(side=tk.LEFT, padx=6)
+
+    log_body = ttk.Frame(log_wrap)
+    log_body.grid(row=1, column=0, sticky="nsew", pady=(2, 0))
+    log_body.grid_rowconfigure(0, weight=1)
+    log_body.grid_columnconfigure(0, weight=1)
+    text_log = scrolledtext.ScrolledText(log_body, height=10, state="disabled", wrap=tk.WORD,
+                                         font=("Consolas", 9))
+    text_log.grid(row=0, column=0, sticky="nsew")
+    log = make_logger(text_log)
+
+    def toggle_log():
+        if var_log_open.get():
+            log_body.grid_remove()
+            btn_log_toggle.config(text="▸ 运行日志")
+            var_log_open.set(False)
+        else:
+            log_body.grid()
+            btn_log_toggle.config(text="▾ 运行日志")
+            var_log_open.set(True)
+
+    btn_log_toggle.config(command=toggle_log)
+    log_body.grid_remove()   # 默认收起
 
     # ============================================================
     # 列表操作
