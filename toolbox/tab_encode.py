@@ -353,6 +353,49 @@ def _parse_ratio(v):
         return 0.0
 
 
+def _chroma_of(pix_fmt):
+    """从 ffmpeg 像素格式名解析色度：4:2:0 / 4:2:2 / 4:4:4 / 灰阶。"""
+    pf = (pix_fmt or "").lower()
+    if "444" in pf:
+        return 444
+    if "422" in pf:
+        return 422
+    if "400" in pf or "gray" in pf:
+        return 400
+    return 420
+
+
+def _parse_master_display(sd):
+    """把 ffprobe 的 Mastering display metadata 转成 x265 -master_display 字符串。
+       ffprobe 给的 xy 是 "n/50000"、亮度是 "n/10000"，正好对应 x265 的整数刻度，取分子即可。"""
+    try:
+        def _frac(v):
+            v = str(v).strip()
+            if "/" in v:
+                return int(v.split("/")[0])
+            return int(float(v))
+        rx, ry = _frac(sd.get("red_x")), _frac(sd.get("red_y"))
+        gx, gy = _frac(sd.get("green_x")), _frac(sd.get("green_y"))
+        bx, by = _frac(sd.get("blue_x")), _frac(sd.get("blue_y"))
+        wx, wy = _frac(sd.get("white_point_x")), _frac(sd.get("white_point_y"))
+        lmax, lmin = _frac(sd.get("max_luminance")), _frac(sd.get("min_luminance"))
+        if None not in (rx, ry, gx, gy, bx, by, wx, wy, lmax, lmin):
+            return (f"G({gx},{gy})B({bx},{by})R({rx},{ry})"
+                    f"WP({wx},{wy})L({lmax},{lmin})")
+    except Exception:
+        pass
+    return None
+
+
+def _parse_max_cll(sd):
+    """把 ffprobe 的 Content light level metadata 转成 x265 -max_cll 字符串（"max,avg"）。"""
+    try:
+        mc, ma = int(sd.get("max_content")), int(sd.get("max_average"))
+        return f"{mc},{ma}"
+    except Exception:
+        return None
+
+
 def probe_media(ffprobe, path):
     """用 ffprobe 读视频信息；失败返回 None。"""
     if not ffprobe:
@@ -387,6 +430,7 @@ def probe_media(ffprobe, path):
     width = _to_int(vstream.get("width"))
     height = _to_int(vstream.get("height"))
     pix_fmt = (vstream.get("pix_fmt") or "").lower()
+    chroma = _chroma_of(pix_fmt)
     bits = _to_int(vstream.get("bits_per_raw_sample"))
     if not bits:
         m = re.search(r"p(\d{2})(?:le|be)?$|yuv4\d\dp(\d{1,2})", pix_fmt)
@@ -412,6 +456,17 @@ def probe_media(ffprobe, path):
     if rotation > 180:
         rotation -= 360
 
+    # HDR10 静态元数据（母版显示色域 + 内容亮度），libx265 可原样写回；
+    # 取不到就留空（软/硬件编码都不强求）。
+    master_display = None
+    max_cll = None
+    for sd in vstream.get("side_data_list") or []:
+        st = sd.get("side_data_type", "")
+        if st == "Mastering display metadata" and master_display is None:
+            master_display = _parse_master_display(sd)
+        elif st == "Content light level metadata" and max_cll is None:
+            max_cll = _parse_max_cll(sd)
+
     color_trc = (vstream.get("color_transfer") or "").lower()
     hdr = color_trc in ("smpte2084", "arib-std-b67")
 
@@ -425,7 +480,10 @@ def probe_media(ffprobe, path):
         "vcodec": (vstream.get("codec_name") or "?").lower(),
         "pix_fmt": pix_fmt,
         "bit_depth": bits,
+        "chroma": chroma,
         "hdr": hdr,
+        "master_display": master_display,
+        "max_cll": max_cll,
         "rotation": rotation,
         "fps": _parse_ratio(vstream.get("avg_frame_rate")),
         "subs": subs,
@@ -522,40 +580,60 @@ def extract_subtitle(ffmpeg, src, sub_index, work_dir):
     return None
 
 
-def video_encode_args(enc, codec, quality, preset, ten_bit):
-    """按编码器生成视频参数（cq / global_quality / crf 三种质量体系）"""
+def select_pix_fmt(info, mode, enc):
+    """按模式与编码器决定输出像素格式：
+        640p（最长边 640，输出短边 360 → 俗称 360p）→ 一律 8bit 4:2:0，不保留高位深；
+        高清 / 自定义 → 保留源的色度（420/422/444）与位深（8/10bit），传出与传入一致。
+      硬件编码器（NVENC / QSV）只稳定支持 4:2:0，强制 420；软件编码器完整保留源色度。"""
+    if mode == "640":
+        return "nv12" if enc.endswith("_qsv") else "yuv420p"
+    is_10 = info["bit_depth"] > 8 or info["hdr"]
+    if enc.endswith("_nvenc") or enc.endswith("_qsv"):
+        # 硬件只做 4:2:0
+        if enc.endswith("_qsv"):
+            return "p010le" if is_10 else "nv12"
+        return "p010le" if is_10 else "yuv420p"
+    chroma = info.get("chroma", 420)
+    base = "yuv{}p".format(chroma)
+    if is_10:
+        base += "10le"
+    return base
+
+
+def video_encode_args(enc, codec, quality, preset, pix_fmt):
+    """按编码器生成视频参数（cq / global_quality / crf 三种质量体系）。
+       pix_fmt 由 select_pix_fmt 决定（保留源色度与位深；640p 强制 8bit 4:2:0）。"""
     args = ["-c:v", enc]
-    pix = "p010le" if ten_bit else "yuv420p"
     if enc.endswith("_nvenc"):
         # ShanaEncoder 同款：VBR + cq，b:v 0 表示纯质量模式
         args += ["-preset", str(preset), "-rc", "vbr",
                  "-cq", str(quality), "-b:v", "0"]
         if codec == CODEC_HEVC:
-            args += ["-profile:v", "main10" if ten_bit else "main"]
-        args += ["-pix_fmt", pix]
+            args += ["-profile:v", "main10" if "10" in pix_fmt else "main"]
+        args += ["-pix_fmt", pix_fmt]
     elif enc.endswith("_qsv"):
         args += ["-preset", str(preset), "-global_quality", str(quality)]
         if codec == CODEC_HEVC:
-            args += ["-profile:v", "main10" if ten_bit else "main"]
+            args += ["-profile:v", "main10" if "10" in pix_fmt else "main"]
         # QSV 只吃 nv12 / p010le，喂 yuv420p 会多打印一条自动转换警告
-        args += ["-pix_fmt", "p010le" if ten_bit else "nv12"]
+        args += ["-pix_fmt", pix_fmt]
     elif enc == "libsvtav1":
         args += ["-preset", str(preset), "-crf", str(quality),
-                 "-pix_fmt", "yuv420p10le" if ten_bit else "yuv420p"]
+                 "-pix_fmt", pix_fmt]
     elif enc == "libaom-av1":
         # libaom 不看 -preset，速度由 -cpu-used 控制（0 最慢最好）
         cpu = str(preset) if str(preset).isdigit() else "6"
         args += ["-cpu-used", cpu, "-crf", str(quality), "-b:v", "0",
-                 "-pix_fmt", "yuv420p10le" if ten_bit else "yuv420p"]
+                 "-pix_fmt", pix_fmt]
     elif enc == "librav1e":
         # rav1e 的速度参数是 -speed（0 最慢最好）
         spd = str(preset) if str(preset).isdigit() else "8"
         args += ["-speed", spd, "-qp", str(quality),
-                 "-pix_fmt", "yuv420p10le" if ten_bit else "yuv420p"]
+                 "-pix_fmt", pix_fmt]
     else:   # libx265
         args += ["-preset", str(preset), "-crf", str(quality),
-                 "-profile:v", "main10" if ten_bit else "main",
-                 "-pix_fmt", "yuv420p10le" if ten_bit else "yuv420p"]
+                 # profile 由 libx265 按 pix_fmt 自动选（main / main10 / main422-10 / main444-10 …）
+                 "-pix_fmt", pix_fmt]
     return args
 
 
@@ -658,13 +736,21 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
         args += ["-map", "0:a?"]
     if filters:
         args += ["-vf", ",".join(filters)]
-    ten_bit = info["bit_depth"] > 8 or info["hdr"]
+    pix_fmt = select_pix_fmt(info, settings["mode"], plan["enc"])
     args += video_encode_args(plan["enc"], plan["codec"], plan["quality"],
-                              plan["preset"], ten_bit)
-    if info["hdr"]:
+                              plan["preset"], pix_fmt)
+    # 只在真正输出 10bit 时才写 HDR 色彩标签（640p 强制 8bit 不写，否则 SDR 内容会被误标 HDR）
+    if info["hdr"] and "10" in pix_fmt:
         args += ["-color_primaries", info["color_primaries"] or "bt2020",
                  "-color_trc", info["color_trc"] or "smpte2084",
                  "-colorspace", info["color_space"] or "bt2020nc"]
+    # HDR10 静态元数据：仅 libx265 可靠写回（NVENC/QSV/AV1 不支持该参数），
+    # 且只在输出 10bit 时附带；取不到就跳过（不影响压制成功）
+    if plan["enc"] == "libx265":
+        if info.get("master_display") and "10" in pix_fmt:
+            args += ["-master_display", info["master_display"]]
+        if info.get("max_cll") and "10" in pix_fmt:
+            args += ["-max_cll", info["max_cll"]]
     if info["has_audio"]:
         # 逐条音轨单独判断：能直接进 mp4 的原样 copy，装不下的只把那一条转 AAC 192k，
         # 其余轨道不受影响（不再「一条不兼容就把所有轨道都转」）
@@ -1311,8 +1397,10 @@ def build_encode_tab(parent, app=None):
             tree.item(iid, values=item_cells(it))
             return
         dw, dh = display_size(info)
+        cx = {420: "420", 422: "422", 444: "444", 400: "灰"}.get(
+            info.get("chroma", 420), str(info.get("chroma", 420)))
         bits = f"{info['bit_depth']}bit"
-        codec_txt = f"{info['vcodec']} {bits}" + (" HDR" if info["hdr"] else "")
+        codec_txt = f"{info['vcodec']} {bits} {cx}" + (" HDR" if info["hdr"] else "")
         subs = info["subs"]
         if not subs:
             sub_txt = "无"
@@ -1651,10 +1739,14 @@ def build_encode_tab(parent, app=None):
                     ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
                                    f"（极速转封装：-c copy，不重编码，画质音质不变）"))
                 else:
+                    cx = {420: "4:2:0", 422: "4:2:2", 444: "4:4:4", 400: "灰阶"}.get(
+                        info.get("chroma", 420), str(info.get("chroma", 420)))
+                    depth = "10bit" if "10" in pix_fmt else "8bit"
+                    hdr_tag = " HDR" if info["hdr"] else ""
                     ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
                                    f"（{CODEC_LABELS[plan['codec']]} / {plan['enc']} / "
                                    f"crf{plan['quality']} / preset {plan['preset']} / {size_txt} / "
-                                   f"{'10bit' if info['bit_depth'] > 8 or info['hdr'] else '8bit'}）"))
+                                   f"{depth} {cx}{hdr_tag}）"))
                 ui(lambda: set_cell(iid, "status", "压制中 0%"))
                 ui(lambda: state["progress"].__setitem__(iid, 0))
                 work_dir = tempfile.mkdtemp(prefix="vfx_")
