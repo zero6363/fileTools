@@ -24,7 +24,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -1762,6 +1762,10 @@ def build_encode_tab(parent, app=None):
                 else:
                     cx = {420: "4:2:0", 422: "4:2:2", 444: "4:4:4", 400: "灰阶"}.get(
                         info.get("chroma", 420), str(info.get("chroma", 420)))
+                    # 写日志前必须自己算一次 pix_fmt（build_command 内部也调用同一个
+                    # select_pix_fmt，两处参数一致、结果相同）。之前漏了这行会抛
+                    # NameError，把 worker 线程直接打死 → 列表永远停在「排队中」。
+                    pix_fmt = select_pix_fmt(info, settings["mode"], plan["enc"])
                     depth = "10bit" if "10" in pix_fmt else "8bit"
                     hdr_tag = " HDR" if info["hdr"] else ""
                     ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
@@ -1867,8 +1871,24 @@ def build_encode_tab(parent, app=None):
                                       else "")))
                     ui(refresh_progress)
 
+            # 逐个收集结果：任一文件内部异常只把它自己标记失败，绝不让整个批次线程
+            # 静默崩掉（否则所有行会永远停在「排队中」，按钮状态也会卡死）。
             with ThreadPoolExecutor(max_workers=settings["concurrency"]) as pool:
-                list(pool.map(one, jobs))
+                futures = {pool.submit(one, iid): iid for iid in jobs}
+                for fut in as_completed(futures):
+                    iid = futures[fut]
+                    try:
+                        fut.result()
+                    except Exception:
+                        tb = traceback.format_exc()
+                        it = state["items"].get(iid) or {}
+                        bad = os.path.basename(str(it.get("path", "")))
+                        fail_n += 1
+                        state["fail"] += 1
+                        state["progress"].pop(iid, None)
+                        ui(lambda iid=iid: set_cell(iid, "status", "失败：内部异常"))
+                        ui(lambda bad=bad, tb=tb: log(f"  ✗ 内部异常：{bad}\n{tb}"))
+                        ui(refresh_progress)
             ui(lambda: finish_batch(ok_n, fail_n, cancel_n, skip_n))
 
         def finish_batch(ok_n, fail_n, cancel_n, skip_n=0):
