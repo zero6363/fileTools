@@ -473,6 +473,15 @@ def probe_media(ffprobe, path):
     fmt = data.get("format") or {}
     duration = _to_float(fmt.get("duration")) or _to_float(vstream.get("duration"))
 
+    # CFR / VFR 判断：ffprobe 的 r_frame_rate 是「最大/基准帧率」，avg_frame_rate 是平均帧率。
+    # 两者相差 >1% 视为可变帧率（手机录制的 VFR 常见 r 远大于 avg，例如 r=120、avg≈27）。
+    # 恒帧率（含 29.97 这种 NTSC 取整）差异通常在 0.1% 以内，不会被误判。
+    avg_fps = _parse_ratio(vstream.get("avg_frame_rate"))
+    r_fps = _parse_ratio(vstream.get("r_frame_rate"))
+    vfr = False
+    if r_fps > 0 and avg_fps > 0:
+        vfr = abs(r_fps - avg_fps) / max(r_fps, avg_fps) > 0.01
+
     return {
         "width": width,
         "height": height,
@@ -485,7 +494,9 @@ def probe_media(ffprobe, path):
         "master_display": master_display,
         "max_cll": max_cll,
         "rotation": rotation,
-        "fps": _parse_ratio(vstream.get("avg_frame_rate")),
+        "fps": avg_fps,
+        "r_fps": r_fps,
+        "vfr": vfr,
         "subs": subs,
         "has_audio": bool(astreams),
         "audio_codec": (astreams[0].get("codec_name") or "").lower() if astreams else "",
@@ -765,6 +776,10 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
                     args += [f"-c:a:{i}", "copy"]
                 else:
                     args += [f"-c:a:{i}", "aac", f"-b:a:{i}", "192k"]
+    if info.get("vfr"):
+        # 源是可变帧率（VFR）：显式透传时间戳，保证压制后仍是 VFR，
+        # 不被 muxer 按平均帧率重采样成恒定帧率（CFR）。CFR 源不加，保持原时间戳。
+        args += ["-fps_mode", "passthrough"]
     args += ["-movflags", "+faststart", "-f", "mp4", dst]
     return args
 
@@ -1070,12 +1085,13 @@ def run_encode(settings, info, plan, src, dst, work_dir, on_progress, stop_event
 # ============================================================
 
 COLS = (
-    ("name", "文件", 300),
+    ("name", "文件", 290),
     ("dur", "时长", 76),
     ("res", "分辨率", 100),
+    ("fps", "帧率", 84),
     ("codec", "编码", 150),
     ("sub", "字幕", 90),
-    ("status", "状态", 250),
+    ("status", "状态", 220),
 )
 
 
@@ -1085,6 +1101,18 @@ def fmt_duration(sec):
     sec = int(sec)
     h, m, s = sec // 3600, sec % 3600 // 60, sec % 60
     return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def fps_label(info):
+    """列表里的帧率文本：`30 CFR` / `29.97 CFR` / `27.11 VFR`"""
+    fps = info.get("fps") or 0
+    if fps <= 0:
+        return "—"
+    if abs(fps - round(fps)) < 0.01:
+        num = str(int(round(fps)))
+    else:
+        num = f"{fps:.2f}".rstrip("0").rstrip(".")
+    return f"{num} {'VFR' if info.get('vfr') else 'CFR'}"
 
 
 def estimate_eta(duration, pct, speed):
@@ -1387,7 +1415,7 @@ def build_encode_tab(parent, app=None):
                 "info": None,
                 "plan": None,
                 "cells": {"name": os.path.basename(f), "dur": "…", "res": "…",
-                          "codec": "…", "sub": "…", "status": "读取信息…"},
+                          "fps": "…", "codec": "…", "sub": "…", "status": "读取信息…"},
             }
             tree.insert("", tk.END, iid=iid, values=item_cells(state["items"][iid]))
             queue_probe(iid)
@@ -1425,7 +1453,7 @@ def build_encode_tab(parent, app=None):
             return
         it["info"] = info
         if not info:
-            it["cells"].update({"dur": "—", "res": "—", "codec": "读取失败",
+            it["cells"].update({"dur": "—", "res": "—", "fps": "—", "codec": "读取失败",
                                 "sub": "—", "status": "无法读取信息"})
             tree.item(iid, values=item_cells(it))
             return
@@ -1443,6 +1471,7 @@ def build_encode_tab(parent, app=None):
         it["cells"].update({
             "dur": fmt_duration(info["duration"]),
             "res": f"{dw}x{dh}" + (" ↻" if info["rotation"] else ""),
+            "fps": fps_label(info),
             "codec": codec_txt,
             "sub": sub_txt,
             "status": "待压制",
@@ -1780,10 +1809,11 @@ def build_encode_tab(parent, app=None):
                     pix_fmt = select_pix_fmt(info, settings["mode"], plan["enc"])
                     depth = "10bit" if "10" in pix_fmt else "8bit"
                     hdr_tag = " HDR" if info["hdr"] else ""
+                    vfr_tag = " VFR" if info.get("vfr") else ""
                     ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
                                    f"（{CODEC_LABELS[plan['codec']]} / {plan['enc']} / "
                                    f"crf{plan['quality']} / preset {plan['preset']} / {size_txt} / "
-                                   f"{depth} {cx}{hdr_tag}）"))
+                                   f"{depth} {cx}{hdr_tag}{vfr_tag}）"))
                 ui(lambda: set_cell(iid, "status", "压制中 0%"))
                 ui(lambda: state["progress"].__setitem__(iid, 0))
                 work_dir = tempfile.mkdtemp(prefix="vfx_")
