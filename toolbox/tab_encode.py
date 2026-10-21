@@ -13,6 +13,7 @@
 文件归档：压制成功把源文件移到 success/，失败移到 error/；
 输出命名 原文件名.crf<质量值>.mp4。
 """
+import ctypes
 import json
 import os
 import re
@@ -88,6 +89,130 @@ def _base_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+# ============================================================
+# MediaInfo（可选）：优先用它的 FrameRate_Mode 精确判断 CFR / VFR
+#   · 打包时 MediaInfo.dll + LIBCURL.DLL 一起放进 bin/mediainfo 并随 exe 解压到 _MEIPASS
+#   · 找不到 DLL 时自动回退 ffprobe（比例 + 逐包 PTS）判断，功能不受影响
+# ============================================================
+_MI_LOCK = threading.Lock()
+_MI_DLL = None
+_MI_TRIED = False
+
+
+def _mediainfo_dll_path():
+    roots = [_base_dir()]
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        roots.append(meipass)
+    for root in roots:
+        for rel in (("bin", "mediainfo", "MediaInfo.dll"), ("MediaInfo.dll",)):
+            p = os.path.join(root, *rel)
+            if os.path.isfile(p):
+                return p
+    return ""
+
+
+def _load_mediainfo():
+    """懒加载 MediaInfo.dll，返回可用句柄；不可用返回 None"""
+    global _MI_DLL, _MI_TRIED
+    with _MI_LOCK:
+        if _MI_TRIED:
+            return _MI_DLL
+        _MI_TRIED = True
+        path = _mediainfo_dll_path()
+        if not path:
+            return None
+        try:
+            d = os.path.dirname(path)
+            # 让 MediaInfo.dll 的依赖（LIBCURL.DLL 等）能从同目录加载
+            try:
+                os.add_dll_directory(d)
+            except Exception:
+                pass
+            lib = ctypes.WinDLL(path)
+            lib.MediaInfo_New.restype = ctypes.c_void_p
+            lib.MediaInfo_Open.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+            lib.MediaInfo_Open.restype = ctypes.c_size_t
+            lib.MediaInfo_Get.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                                          ctypes.c_wchar_p, ctypes.c_int, ctypes.c_int]
+            lib.MediaInfo_Get.restype = ctypes.c_wchar_p
+            lib.MediaInfo_Close.argtypes = [ctypes.c_void_p]
+            lib.MediaInfo_Delete.argtypes = [ctypes.c_void_p]
+            _MI_DLL = lib
+        except Exception:
+            _MI_DLL = None
+        return _MI_DLL
+
+
+def _mediainfo_dll_mode(path):
+    """用 MediaInfo.dll 读 FrameRate_Mode：返回 'VFR' / 'CFR'；失败返回 None。"""
+    lib = _load_mediainfo()
+    if not lib:
+        return None
+    h = None
+    try:
+        h = lib.MediaInfo_New()
+        if not h or not lib.MediaInfo_Open(h, path):
+            return None
+        v = lib.MediaInfo_Get(h, 1, 0, "FrameRate_Mode", 1, 0)   # Stream_Video=1, Info_Text=1
+        if not v:
+            return None
+        u = v.strip().upper()
+        if "VFR" in u or "VARIABLE" in u:
+            return "VFR"
+        if "CFR" in u or "CONSTANT" in u:
+            return "CFR"
+        return None
+    except Exception:
+        return None
+    finally:
+        if h:
+            try:
+                lib.MediaInfo_Close(h)
+                lib.MediaInfo_Delete(h)
+            except Exception:
+                pass
+
+
+def _mediainfo_cli_path():
+    """找 MediaInfo 命令行版（可选；放进 bin/mediainfo 或 exe 同目录即启用）"""
+    roots = [_base_dir()]
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        roots.append(meipass)
+    for root in roots:
+        for rel in (("bin", "mediainfo", "MediaInfo.exe"), ("MediaInfo.exe",)):
+            p = os.path.join(root, *rel)
+            if os.path.isfile(p):
+                return p
+    return ""
+
+
+def mediainfo_cli_frame_rate_mode(path):
+    """用 MediaInfo.exe --Inform 读 FrameRate_Mode；没有 CLI 或失败返回 None。"""
+    exe = _mediainfo_cli_path()
+    if not exe:
+        return None
+    try:
+        r = _run([exe, "--Inform=Video;%FrameRate_Mode%", path], timeout=30)
+        u = (r.stdout or b"").decode("utf-8", "ignore").strip().upper()
+        if "VFR" in u or "VARIABLE" in u:
+            return "VFR"
+        if "CFR" in u or "CONSTANT" in u:
+            return "CFR"
+    except Exception:
+        pass
+    return None
+
+
+def mediainfo_frame_rate_mode(path):
+    """MediaInfo 的 FrameRate_Mode：优先 DLL，其次 CLI，都不可用返回 None（由 ffprobe 兜底）。"""
+    mode = _mediainfo_dll_mode(path)
+    if mode is not None:
+        return mode
+    return mediainfo_cli_frame_rate_mode(path)
 
 
 FFMPEG_CONFIG_PATH = os.path.join(_base_dir(), "ffmpeg_config.json")
@@ -520,9 +645,12 @@ def probe_media(ffprobe, path):
     vfr = False
     if r_fps > 0 and avg_fps > 0:
         vfr = abs(r_fps - avg_fps) / max(r_fps, avg_fps) > 0.01
-    if not vfr:
-        # r/avg 很接近时仍可能是小幅 VFR（如 28.571~30fps、平均 29.97），
-        # 再用逐包 PTS 间隔方差复核，避免把这类手机视频误判成 CFR。
+    # 优先用 MediaInfo 的 FrameRate_Mode（与 MediaInfo 里显示的一致）；
+    # 没带 DLL 时回退 ffprobe：先看 r/avg，再用逐包 PTS 方差复核小幅 VFR。
+    mi_mode = mediainfo_frame_rate_mode(path)
+    if mi_mode is not None:
+        vfr = mi_mode == "VFR"
+    elif not vfr:
         pts_vfr = _detect_vfr_by_pts(ffprobe, path)
         if pts_vfr is not None:
             vfr = pts_vfr
