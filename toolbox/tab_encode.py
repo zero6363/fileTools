@@ -950,7 +950,7 @@ def resolve_plan(settings, info):
                 "preset": None, "target": None, "remux": True}
     # 杜比视界：RPU 只能由 libx265 写回（QSV/NVENC/AV1 一律丢弃），
     # 所以在保留 DV 的前提下把编码器换成软件 x265（编 H.265 时）。
-    keep_dv = bool(settings.get("keep_dv", True)) and bool(info.get("dovi"))
+    keep_dv = bool(settings.get("keep_dv", False)) and bool(info.get("dovi"))
     if keep_dv and codec == CODEC_HEVC and supports_libx265_dovi(settings.get("ffmpeg")):
         enc = "libx265"
     else:
@@ -1608,8 +1608,8 @@ def build_encode_tab(parent, app=None):
 
     var_burn = tk.BooleanVar(value=True)
     ttk.Checkbutton(opt_line, text="硬烧字幕", variable=var_burn).pack(side=tk.LEFT, padx=(0, 10))
-    var_keepdv = tk.BooleanVar(value=True)
-    ttk.Checkbutton(opt_line, text="保留杜比视界", variable=var_keepdv).pack(side=tk.LEFT, padx=(0, 10))
+    var_keepdv = tk.BooleanVar(value=False)
+    ttk.Checkbutton(opt_line, text="保留杜比视界（很慢）", variable=var_keepdv).pack(side=tk.LEFT, padx=(0, 10))
     var_console = tk.BooleanVar(value=False)
     ttk.Checkbutton(opt_line, text="显示 ffmpeg 窗口", variable=var_console).pack(side=tk.LEFT)
 
@@ -2062,6 +2062,16 @@ def build_encode_tab(parent, app=None):
                 f"{q_txt}　preset {settings['preset']}　"
                 f"并发：{settings['concurrency']}　硬烧字幕：{'开' if settings['burn_sub'] else '关'}　"
                 f"共 {len(jobs)} 个文件")
+        # 列表里有杜比视界视频、但没勾「保留杜比视界」时提示一句，避免压完才发现 RPU 没保住
+        if settings["mode"] != MODE_REMUX and not settings.get("keep_dv"):
+            dv_n = 0
+            for iid in jobs:
+                it = state["items"].get(iid) or {}
+                if (it.get("info") or {}).get("dovi"):
+                    dv_n += 1
+            if dv_n:
+                log(f"提示：{dv_n} 个杜比视界视频将丢失 RPU（软件 x265 保留会明显变慢，"
+                    f"需要时勾选「保留杜比视界（很慢）」）")
 
         def work():
             try:
@@ -2159,7 +2169,7 @@ def build_encode_tab(parent, app=None):
                     dv_tag = ""
                     if info.get("dovi"):
                         dv_tag = (" " + dv_label(info) +
-                                  (" 保留RPU" if plan.get("keep_dv") else " RPU将丢失"))
+                                  (" 保留RPU" if plan.get("keep_dv") else " RPU未保留"))
                     ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
                                    f"（{CODEC_LABELS[plan['codec']]} / {plan['enc']} / "
                                    f"{quality_tag(plan['enc'], plan['quality'])} / "
