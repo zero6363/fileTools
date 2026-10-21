@@ -295,6 +295,7 @@ def locate_ffmpeg(hint=""):
 
 
 _DR_SUPPORT = None
+_DV_SUPPORT = None
 
 
 def supports_display_rotation(ffmpeg):
@@ -310,6 +311,34 @@ def supports_display_rotation(ffmpeg):
     except Exception:
         _DR_SUPPORT = False
     return _DR_SUPPORT
+
+
+def supports_libx265_dovi(ffmpeg):
+    """libx265 是否支持杜比视界 RPU 编码（需 x265 ≥3.5 且 -dolbyvision 选项存在）。
+
+    注意：x265 写 RPU 还要求开启 HRD/VBV，参数在 video_encode_args 里一并给。"""
+    global _DV_SUPPORT
+    if _DV_SUPPORT is not None:
+        return _DV_SUPPORT
+    try:
+        r = _run([ffmpeg, "-hide_banner", "-h", "encoder=libx265"], timeout=30)
+        out = (r.stdout or b"").decode("utf-8", "ignore")
+        _DV_SUPPORT = "-dolbyvision" in out
+    except Exception:
+        _DV_SUPPORT = False
+    return _DV_SUPPORT
+
+
+def dv_label(info):
+    """杜比视界的简短标识，如 DV8.4（profile 8 + 兼容 id 4=HLG）；不是 DV 返回空串。"""
+    dv = (info or {}).get("dovi") or {}
+    if not dv:
+        return ""
+    prof = dv.get("profile") or 0
+    compat = dv.get("bl_compat") or 0
+    if prof and compat:
+        return f"DV{prof}.{compat}"
+    return f"DV{prof}" if prof else "DV"
 
 
 def ffmpeg_version(ffmpeg):
@@ -624,12 +653,21 @@ def probe_media(ffprobe, path):
     # 取不到就留空（软/硬件编码都不强求）。
     master_display = None
     max_cll = None
+    # 杜比视界（Dolby Vision）：ffprobe 把 dvcC/dvvC 配置盒报成 DOVI configuration record。
+    # profile 8.4 = HLG 兼容（手机 HDR 视频常见），8.1 = HDR10 兼容。
+    dovi = None
     for sd in vstream.get("side_data_list") or []:
         st = sd.get("side_data_type", "")
         if st == "Mastering display metadata" and master_display is None:
             master_display = _parse_master_display(sd)
         elif st == "Content light level metadata" and max_cll is None:
             max_cll = _parse_max_cll(sd)
+        elif st == "DOVI configuration record" and dovi is None:
+            dovi = {
+                "profile": _to_int(sd.get("dv_profile")),
+                "level": _to_int(sd.get("dv_level")),
+                "bl_compat": _to_int(sd.get("dv_bl_signal_compatibility_id")),
+            }
 
     color_trc = (vstream.get("color_transfer") or "").lower()
     hdr = color_trc in ("smpte2084", "arib-std-b67")
@@ -666,6 +704,7 @@ def probe_media(ffprobe, path):
         "hdr": hdr,
         "master_display": master_display,
         "max_cll": max_cll,
+        "dovi": dovi,
         "rotation": rotation,
         "fps": avg_fps,
         "r_fps": r_fps,
@@ -764,11 +803,14 @@ def extract_subtitle(ffmpeg, src, sub_index, work_dir):
     return None
 
 
-def select_pix_fmt(info, mode, enc):
+def select_pix_fmt(info, mode, enc, keep_dv=False):
     """按模式与编码器决定输出像素格式：
         640p（最长边 640，输出短边 360 → 俗称 360p）→ 一律 8bit 4:2:0，不保留高位深；
         高清 / 自定义 → 保留源的色度（420/422/444）与位深（8/10bit），传出与传入一致。
-      硬件编码器（NVENC / QSV）只稳定支持 4:2:0，强制 420；软件编码器完整保留源色度。"""
+      硬件编码器（NVENC / QSV）只稳定支持 4:2:0，强制 420；软件编码器完整保留源色度。
+      杜比视界（保留 DV 时）：Profile 8 规定 BL 必须是 10bit 4:2:0，此时即使 640p 也输出 10bit。"""
+    if keep_dv and info.get("dovi"):
+        return "yuv420p10le"
     if mode == "640":
         return "nv12" if enc.endswith("_qsv") else "yuv420p"
     is_10 = info["bit_depth"] > 8 or info["hdr"]
@@ -784,9 +826,12 @@ def select_pix_fmt(info, mode, enc):
     return base
 
 
-def video_encode_args(enc, codec, quality, preset, pix_fmt):
+def video_encode_args(enc, codec, quality, preset, pix_fmt, dovi=None, keep_dv=False,
+                      dims=None):
     """按编码器生成视频参数（cq / global_quality / crf 三种质量体系）。
-       pix_fmt 由 select_pix_fmt 决定（保留源色度与位深；640p 强制 8bit 4:2:0）。"""
+       pix_fmt 由 select_pix_fmt 决定（保留源色度与位深；640p 强制 8bit 4:2:0）。
+       dovi / keep_dv：源是杜比视界且要保留元数据时，libx265 用 -dolbyvision 1 写回 RPU。
+       x265 的杜比视界必须开 HRD/VBV，否则报 "Dolby Vision requires VBV settings" 直接打不开编码器。"""
     args = ["-c:v", enc]
     if enc.endswith("_nvenc"):
         # ShanaEncoder 同款：VBR + cq，b:v 0 表示纯质量模式
@@ -818,7 +863,23 @@ def video_encode_args(enc, codec, quality, preset, pix_fmt):
         args += ["-preset", str(preset), "-crf", str(quality),
                  # profile 由 libx265 按 pix_fmt 自动选（main / main10 / main422-10 / main444-10 …）
                  "-pix_fmt", pix_fmt]
+        if dovi and keep_dv:
+            # 杜比视界：x265 直接读解码器给的 DOVI 帧元数据，把 RPU 写回码流（NAL 62）。
+            # 必须显式开 HRD + VBV，否则 x265 报 "Dolby Vision requires VBV settings" 拒绝启动。
+            # VBV 上限取得比较宽松（按像素率估算），正常 CRF 编码不会撞到，不影响画质。
+            vbv = _dv_vbv_kbps(*(dims or (1920, 1080, 30)))
+            args += ["-dolbyvision", "1",
+                     "-x265-params", f"hrd=1:vbv-maxrate={vbv}:vbv-bufsize={vbv * 2}"]
     return args
+
+
+def _dv_vbv_kbps(w, h, fps):
+    """按输出像素率估一个宽松的 VBV 上限（kbps），只用于满足 x265 的 DV/HRD 要求。"""
+    try:
+        rate = float(w) * float(h) * float(fps or 30) * 0.30 / 1000.0
+    except Exception:
+        rate = 20000.0
+    return int(max(3000, min(200000, round(rate))))
 
 
 def sub_style(width, height):
@@ -876,6 +937,13 @@ def resolve_plan(settings, info):
         # 极速转封装：不挑编码器、不缩放、不动质量，只 -c copy 换容器
         return {"codec": None, "enc": None, "quality": None,
                 "preset": None, "target": None, "remux": True}
+    # 杜比视界：RPU 只能由 libx265 写回（QSV/NVENC/AV1 一律丢弃），
+    # 所以在保留 DV 的前提下把编码器换成软件 x265（编 H.265 时）。
+    keep_dv = bool(settings.get("keep_dv", True)) and bool(info.get("dovi"))
+    if keep_dv and codec == CODEC_HEVC and supports_libx265_dovi(settings.get("ffmpeg")):
+        enc = "libx265"
+    else:
+        keep_dv = False
     if mode == "640":
         quality = default_quality(enc, codec)
         preset = default_preset(enc, codec)
@@ -886,7 +954,7 @@ def resolve_plan(settings, info):
     else:
         quality, preset, target = settings["quality"], settings["preset"], None
     return {"codec": codec, "enc": enc, "quality": quality,
-            "preset": preset, "target": target}
+            "preset": preset, "target": target, "keep_dv": keep_dv}
 
 
 def build_command(settings, info, plan, src, dst, work_dir, sub_name,
@@ -904,7 +972,12 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
     if plan.get("remux"):
         # 极速转封装：不解码、不重编码、不加任何滤镜，画质音质原样搬进 mp4
         # （等价于 ffmpeg -i "%%a" -c copy -y "%%~na.mp4"，多了 faststart 便于在线播放）
-        args += ["-i", src, "-c", "copy", "-movflags", "+faststart", "-f", "mp4", dst]
+        args += ["-i", src, "-c", "copy"]
+        if info.get("dovi"):
+            # RPU（NAL 62）本来就在码流里，-c copy 会原样带走；但 ffmpeg 默认不肯写
+            # dvcC/dvvC 配置盒（提示 Requires -strict unofficial），没有它播放器就不认 DV。
+            args += ["-strict", "unofficial", "-tag:v", "hvc1"]
+        args += ["-movflags", "+faststart", "-f", "mp4", dst]
         return args
     filters = build_filters(info, plan["target"], sub_name)
     if info["rotation"]:
@@ -920,9 +993,14 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
         args += ["-map", "0:a?"]
     if filters:
         args += ["-vf", ",".join(filters)]
-    pix_fmt = select_pix_fmt(info, settings["mode"], plan["enc"])
+    dw, dh = display_size(info)
+    fw, fh = plan["target"] if plan.get("target") else (dw, dh)
+    pix_fmt = select_pix_fmt(info, settings["mode"], plan["enc"],
+                             keep_dv=bool(plan.get("keep_dv")))
     args += video_encode_args(plan["enc"], plan["codec"], plan["quality"],
-                              plan["preset"], pix_fmt)
+                              plan["preset"], pix_fmt,
+                              dovi=info.get("dovi"), keep_dv=bool(plan.get("keep_dv")),
+                              dims=(fw, fh, info.get("fps") or 30))
     # 只在真正输出 10bit 时才写 HDR 色彩标签（640p 强制 8bit 不写，否则 SDR 内容会被误标 HDR）
     if info["hdr"] and "10" in pix_fmt:
         args += ["-color_primaries", info["color_primaries"] or "bt2020",
@@ -953,10 +1031,15 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
         # 源是可变帧率（VFR）：显式透传时间戳，保证压制后仍是 VFR，
         # 不被 muxer 按平均帧率重采样成恒定帧率（CFR）。CFR 源不加，保持原时间戳。
         args += ["-fps_mode", "passthrough"]
-        # QSV / NVENC 默认会按固定帧时长重排时间戳，只给 passthrough 仍会输出准 CFR；
-        # 指定更细的编码时间基后才能真正保留可变间隔（实测 QSV 1080p HLG：0.0333/0.035 均保留）。
-        if (plan["enc"] or "").endswith(("_qsv", "_nvenc")):
-            args += ["-enc_time_base", "1/90000"]
+        # 光有 passthrough 不够：编码器默认按「帧时长」量化时间基（libx265 也是），
+        # 小幅抖动（如 28.571~30fps）会被抹平成 CFR。给一个更细的编码时间基
+        # （90kHz，MPEG 标准时基）才能真正保留可变间隔。QSV/NVENC/libx265 都适用。
+        args += ["-enc_time_base", "1/90000"]
+    if plan.get("keep_dv"):
+        # x265 已把 RPU 写进码流，但 mp4 muxer 默认不写 dvcC/dvvC 配置盒
+        # （提示 Not writing 'dvcC'/'dvvC' box. Requires -strict unofficial），
+        # 没有它播放器只当普通 HDR 播，不会点亮杜比视界。
+        args += ["-strict", "unofficial", "-tag:v", "hvc1"]
     args += ["-movflags", "+faststart", "-f", "mp4", dst]
     return args
 
@@ -1455,6 +1538,8 @@ def build_encode_tab(parent, app=None):
 
     var_burn = tk.BooleanVar(value=True)
     ttk.Checkbutton(opt_line, text="硬烧字幕", variable=var_burn).pack(side=tk.LEFT, padx=(0, 10))
+    var_keepdv = tk.BooleanVar(value=True)
+    ttk.Checkbutton(opt_line, text="保留杜比视界", variable=var_keepdv).pack(side=tk.LEFT, padx=(0, 10))
     var_console = tk.BooleanVar(value=False)
     ttk.Checkbutton(opt_line, text="显示 ffmpeg 窗口", variable=var_console).pack(side=tk.LEFT)
 
@@ -1639,6 +1724,8 @@ def build_encode_tab(parent, app=None):
             info.get("chroma", 420), str(info.get("chroma", 420)))
         bits = f"{info['bit_depth']}bit"
         codec_txt = f"{info['vcodec']} {bits} {cx}" + (" HDR" if info["hdr"] else "")
+        if dv_label(info):
+            codec_txt += " " + dv_label(info)
         subs = info["subs"]
         if not subs:
             sub_txt = "无"
@@ -1825,6 +1912,7 @@ def build_encode_tab(parent, app=None):
             "quality": quality,
             "preset": var_preset.get().strip(),
             "burn_sub": bool(var_burn.get()),
+            "keep_dv": bool(var_keepdv.get()),
             "show_console": bool(var_console.get()),
             "concurrency": conc,
             "out_dir": clean_path(var_outdir.get()),
@@ -1975,22 +2063,28 @@ def build_encode_tab(parent, app=None):
                 size_txt = (f"{plan['target'][0]}x{plan['target'][1]}" if plan["target"]
                             else f"{dw}x{dh}")
                 if plan.get("remux"):
+                    dv_tag = f"，杜比视界 {dv_label(info)} 随码流保留" if info.get("dovi") else ""
                     ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
-                                   f"（极速转封装：-c copy，不重编码，画质音质不变）"))
+                                   f"（极速转封装：-c copy，不重编码，画质音质不变{dv_tag}）"))
                 else:
                     cx = {420: "4:2:0", 422: "4:2:2", 444: "4:4:4", 400: "灰阶"}.get(
                         info.get("chroma", 420), str(info.get("chroma", 420)))
                     # 写日志前必须自己算一次 pix_fmt（build_command 内部也调用同一个
                     # select_pix_fmt，两处参数一致、结果相同）。之前漏了这行会抛
                     # NameError，把 worker 线程直接打死 → 列表永远停在「排队中」。
-                    pix_fmt = select_pix_fmt(info, settings["mode"], plan["enc"])
+                    pix_fmt = select_pix_fmt(info, settings["mode"], plan["enc"],
+                                             keep_dv=bool(plan.get("keep_dv")))
                     depth = "10bit" if "10" in pix_fmt else "8bit"
                     hdr_tag = " HDR" if info["hdr"] else ""
                     vfr_tag = " VFR" if info.get("vfr") else ""
+                    dv_tag = ""
+                    if info.get("dovi"):
+                        dv_tag = (" " + dv_label(info) +
+                                  (" 保留RPU" if plan.get("keep_dv") else " RPU将丢失"))
                     ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
                                    f"（{CODEC_LABELS[plan['codec']]} / {plan['enc']} / "
                                    f"crf{plan['quality']} / preset {plan['preset']} / {size_txt} / "
-                                   f"{depth} {cx}{hdr_tag}{vfr_tag}）"))
+                                   f"{depth} {cx}{hdr_tag}{vfr_tag}{dv_tag}）"))
                 ui(lambda: set_cell(iid, "status", "压制中 0%"))
                 ui(lambda: state["progress"].__setitem__(iid, 0))
                 work_dir = tempfile.mkdtemp(prefix="vfx_")
