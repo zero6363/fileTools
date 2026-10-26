@@ -1,0 +1,121 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/common.py", "limit": 120}
+# -*- coding: utf-8 -*-
+"""通用基础设施：日志 / 后台任务 / 常用输入行 / Windows 文件拖放"""
+import queue
+import re
+import shutil
+import threading
+import traceback
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+
+from . import config
+from .theme import COLOR, FONTS
+
+APP_VERSION = "1.32"
+APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
+DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
+
+
+# ============================================================
+# Windows 文件拖放支持（自实现，替代第三方 windnd）
+# 修复两个崩溃点：
+#   1. windnd 用 GetWindowLongPtrA 不设 restype，64 位窗口过程指针被截断成
+#      负数，之后 CallWindowProcW 访问冲突直接闪退；
+#   2. 在窗口过程回调里直接操作 Tk 会触发 GIL 致命错误
+#      （PyEval_RestoreThread: thread state is NULL）。
+# 本实现：SetWindowSubclass 安全挂接；回调里只做纯 Python 入队；
+#         Tk 操作全部放回正常事件循环里轮询执行。
+# ============================================================
+
+_DROP_QUEUE = None
+_DROP_KEEPALIVE = []  # 防止回调对象被垃圾回收
+
+
+def install_drop_support(tk_window, handler):
+    """给窗口注册文件拖放。handler(paths) 只会在正常事件循环中被调用。
+    返回 True/False；非 Windows 或任何失败都安全返回 False。"""
+    global _DROP_QUEUE
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        if _DROP_QUEUE is None:
+            _DROP_QUEUE = queue.Queue()
+
+        user32 = ctypes.windll.user32
+        comctl32 = ctypes.windll.comctl32
+        shell32 = ctypes.windll.shell32
+
+        WM_DROPFILES = 0x0233
+
+        DragQueryFileW = shell32.DragQueryFileW
+        DragQueryFileW.restype = wintypes.UINT
+        DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT,
+                                   wintypes.LPWSTR, wintypes.UINT]
+        DragAcceptFiles = shell32.DragAcceptFiles
+        DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
+        DragFinish = shell32.DragFinish
+        DragFinish.argtypes = [wintypes.HANDLE]
+
+        SetWindowSubclass = comctl32.SetWindowSubclass
+        SetWindowSubclass.argtypes = [wintypes.HWND, ctypes.c_void_p,
+                                      ctypes.c_size_t, ctypes.c_size_t]
+        SetWindowSubclass.restype = wintypes.BOOL
+        DefSubclassProc = comctl32.DefSubclassProc
+        DefSubclassProc.restype = ctypes.c_ssize_t
+        DefSubclassProc.argtypes = [wintypes.HWND, wintypes.UINT,
+                                    ctypes.c_size_t, ctypes.c_ssize_t]
+
+        SUBCLASSPROC = ctypes.WINFUNCTYPE(
+            ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, ctypes.c_size_t,
+            ctypes.c_ssize_t, ctypes.c_size_t, ctypes.c_size_t)
+
+        def subclass_proc(h, msg, wp, lp, uid, refdata):
+            if msg == WM_DROPFILES:
+                try:
+                    count = DragQueryFileW(wp, 0xFFFFFFFF, None, 0)
+                    paths = []
+                    for i in range(count):
+                        need = DragQueryFileW(wp, i, None, 0)
+                        if not need:
+                            continue
+                        buf = ctypes.create_unicode_buffer(need + 1)
+                        DragQueryFileW(wp, i, buf, need + 1)
+                        paths.append(buf.value)
+                    DragFinish(wp)
+                    # 只做纯 Python 入队：绝不在窗口过程里操作 Tk
+                    _DROP_QUEUE.put(paths)
+                except Exception:
+                    pass
+                return 0
+            return DefSubclassProc(h, msg, wp, lp)
+
+        hwnd = tk_window.winfo_id()
+        proc_obj = SUBCLASSPROC(subclass_proc)
+        _DROP_KEEPALIVE.append(proc_obj)
+        if not SetWindowSubclass(hwnd, proc_obj, 1, 0):
+            return False
+        DragAcceptFiles(hwnd, True)
+
+        def poll():
+            try:
+                while True:
+                    paths = _DROP_QUEUE.get_nowait()
+                    try:
+                        handler(paths)
+                    except Exception:
+                        pass
+            except queue.Empty:
+                pass
+            tk_window.after(50, poll)
+
+        tk_window.after(50, poll)
+        return True
+    except Exception:
+        return False
+
+
+
+

@@ -15,8 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import messagebox
-from . import ui, ui as ttk
+from tkinter import messagebox, ttk
 
 from .common import (DEFAULT_IMAGE_FORMATS, clean_path, clear_log,
                      get_unique_path, make_check, make_entry_row, make_form,

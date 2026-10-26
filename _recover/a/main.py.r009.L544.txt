@@ -1,0 +1,100 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "limit": 99}
+# -*- coding: utf-8 -*-
+"""文件工具箱（合并版）· 主窗口
+=====================================
+将原先分散的多个小工具合并为一个 GUI 程序，点击左侧纵向菜单即可切换使用对应工具。
+
+标签页与原工具对应关系：
+  ① 文件分组      <- 分组.bat / 分组 - jpg.bat / 分组 -mp4.bat / 分组 -txt.bat / 分组年月.bat
+                    （四个"按数量"的 bat 已合并：后缀下拉可选（jpg/txt/mp4/*）也可自定义，
+                      * = 按图片格式分组（jpg/jpeg/png/gif/bmp/tiff/webp 可改），不会分组所有文件；
+                      每组数量可自定义，文件夹前缀默认随后缀自动变化；同时保留"按年月分组"模式）
+  ② 移动到根目录  <- move.bat（省略了原 bat 的自我删除；默认同名跳过，可选同名重命名移动）
+  ③ 删除空文件夹  <- 空文件夹删除.py
+  ④ 实况图分组    <- 实况分组-可视化.py
+  ⑤ 文件名添加路径 <- 重命名.py（把目录层级添加到文件名前）
+  ⑥ 序号重命名    <- 新增：拖入文件/文件夹，遍历读取，数值化自然排序（9 在 10 前面），
+                      支持【全部重命名为序号 001/002…】和【前加序号 001-原文件名】，
+                      可勾选【仅处理文件夹】只重命名子文件夹
+  ⑦ 视频常用压制  <- 新增：调用 FFmpeg 批量压制（NVENC 优先 / 无则 QSV / 再退软件），
+                      AV1 / H.265 自由选，内嵌字幕硬烧（复刻 ShanaEncoder 样式），
+                      成功后源文件归档到 success/
+  ⑧ 视频横竖屏    <- 新增：识别指定文件夹下的视频是横屏还是竖屏，分别移动到
+                      「横屏」「竖屏」子文件夹；不处理子文件夹，纯读容器头极速
+  ⑨ 文件名删除    <- 新增：按位置删除文件名中的字符（可选文件/文件夹、第几位开始、
+                      删几个字、从前/从后），拖入列表读取，预览后执行
+  ⑩ 图片生成MD    <- 记录md.py
+  ⑪ TXT转图片     <- txt2img.py
+  ⑫ TXT合并       <- txt合并.py
+  ⑬ TXT重命名     <- txt重命名.py
+  ⑭ WebP转JPG     <- webp2jpg.py
+  ⑮ 加密包分类    <- zipTestPsw.py
+  ⑯ 图片压缩      <- image_compressor（D:/code/pigc）：mozjpeg 无损优化 + libjpeg-turbo 备选
+  ⑰ ReSoBackup备份 <- ReSoBackup-main（Go 项目，Python 重实现）：RS 纠删码分片 + AES-256-GCM
+  ⑱ 文本翻译      <- 新增：拖入 txt/lrc/srt/ass/vtt 等文本文件，调用免费翻译接口
+                      （DeepL 免费网页版 / 谷歌免费接口 / MyMemory / LibreTranslate，
+                        一个失败自动切换下一个）翻译成中文；保留字幕序号与时间轴、
+                      LRC 时间标签，译文写回同名文件，原文件重命名为「原名.old」
+  ⑲ 硬盘哈希扫描  <- 新增：冷数据建档校验。数据库 filehash.db 直接建在
+                      扫描根目录下（一块盘/一个根目录一个库）。四种模式按
+                      「改不改库 × 算不算哈希」组合：快速建档 / 快速预检 /
+                      完整建档 / 完整检查；只读模式（预检、检查）扫出的差异
+                      清单可多选后「写入数据库」，底部可按 新增 / 更新 / 删除 /
+                      已计算 / 未计算 筛选，列表分页（默认 500 条/页可改）；
+                      扫描根可从下拉选已管理目录；管理弹窗里多选目录还能查重复
+                      文件、两个目录镜像比对；扫描过的目录记在
+                      toolbox_config.json 的 hashscan 分区里，可统一管理、跨库
+                      检索；「合并数据库」把子目录的库并进来，「用上级库」按上级
+                      库给子目录建库（两者都只动数据库、不读文件）
+
+模块划分：
+  common.py         通用基础设施 + 拖放支持
+  config.py         统一配置（toolbox_config.json，按 window/compress/ffmpeg/hashscan 分区，
+                    老版本分散的四个 json 首次启动自动并入）
+  tab_grouping.py   ①②③   tab_live.py ④   tab_rename.py ⑤⑥⑨
+  tab_encode.py ⑦         tab_video.py ⑧
+  tab_docs.py ⑩⑪⑫⑬       tab_media.py ⑭⑮
+  tab_compress.py ⑯       tab_rsbackup.py ⑰   tab_translate.py ⑱
+  tab_hashscan.py ⑲
+  （⑦ tab_encode.py 依赖外部 FFmpeg；⑱ 只需标准库 + 联网；⑲ 只需标准库）
+
+所有涉及文件移动/重命名的操作均防覆盖：同名跳过或自动改名，两阶段重命名，绝不丢失数据。
+依赖（按需安装，缺失时对应标签页会在运行时提示）：
+  pip install pillow chardet pycryptodome
+  pip install pyzipper rarfile py7zr   # ⑮ 加密包分类增强（zip 用标准库即可识别）
+"""
+import os
+import sys
+import traceback
+import tkinter as tk
+from tkinter import messagebox, ttk
+
+from .common import (APP_TITLE, _module_available, install_drop_support,
+                     load_window_config, restore_window_geometry,
+                     save_window_geometry)
+from .theme import apply_theme, COLOR, FONTS
+
+# 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）
+NAV_DEFAULT_WIDTH = 210
+NAV_MIN_WIDTH = 160
+NAV_MAX_WIDTH = 360
+from .tab_grouping import build_empty_tab, build_flatten_tab, build_group_tab
+from .tab_live import build_live_tab
+from .tab_rename import build_rename_tab, build_seq_rename_tab, build_trim_tab
+from .tab_video import build_video_tab
+from .tab_docs import (build_md_tab, build_merge_tab, build_txt2img_tab,
+                       build_txt_rename_tab)
+from .tab_media import build_webp_tab, build_zip_tab
+from .tab_compress import build_compress_tab
+from .tab_encode import build_encode_tab
+from .tab_rsbackup import build_rsbackup_tab
+from .tab_translate import build_translate_tab
+from .tab_hashscan import build_hash_tab
+
+
+# 主窗口
+# ============================================================
+
+class ToolboxApp:
+    def __init__(self, root):
+        self.root = root

@@ -1,0 +1,27 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "offset": 248, "limit": 26}
+                    # 暴露给自动化冒烟测试（不影响正常使用）
+                    self._hash_api = result
+            else:
+                builder(frame)
+            self.tool_frames.append(frame)
+            btn = tk.Button(
+                menu, text="  " + title, anchor="w", command=lambda i=index: self.show_tool(i),
+                bg=COLOR["nav_bg"], fg=COLOR["text_secondary"], relief=tk.FLAT,
+                activebackground=COLOR["surface_alt"], activeforeground=COLOR["text"],
+                font=FONTS["nav"], padx=10, pady=6, cursor="hand2",
+            )
+            btn._active = False
+
+            def _enter(e, b=btn):
+                if not b._active:
+                    b.configure(bg=COLOR["surface_alt"])
+
+            def _leave(e, b=btn):
+                if not b._active:
+                    b.configure(bg=COLOR["nav_bg"])
+
+            btn.bind("<Enter>", _enter)
+            btn.bind("<Leave>", _leave)
+            btn.pack(fill=tk.X, pady=1)
+            self.nav_items.append((btn, frame, title))
+

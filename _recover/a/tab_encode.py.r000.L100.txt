@@ -1,0 +1,19 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_encode.py", "offset": 1676, "limit": 18}
+    btn_row = ttk.Frame(parent)
+    btn_row.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
+    btn_start = tk.Button(btn_row, text="开始压制", bg="#2f6bff", fg="white",
+                          activebackground="#2455cc", activeforeground="white",
+                          font=("Microsoft YaHei", 10, "bold"), padx=18, pady=4,
+                          cursor="hand2", command=lambda: start_batch())
+    btn_start.pack(side=tk.LEFT, padx=4)
+    btn_stop = tk.Button(btn_row, text="停止", state=tk.DISABLED, padx=16, pady=4,
+                         command=lambda: (state["stop"].set(),
+                                          log("正在停止：已启动的 ffmpeg 会被结束…")))
+    btn_stop.pack(side=tk.LEFT, padx=4)
+
+    bar_prog = ttk.Progressbar(btn_row, orient=tk.HORIZONTAL, mode="determinate",
+                               length=300, maximum=1, value=0)
+    bar_prog.pack(side=tk.LEFT, padx=(18, 8))
+    lbl_prog = ttk.Label(btn_row, text="未开始", foreground="#444444")
+    lbl_prog.pack(side=tk.LEFT)
+

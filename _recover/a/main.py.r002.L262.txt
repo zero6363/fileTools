@@ -1,0 +1,17 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "offset": 299, "limit": 16}
+        except Exception:
+            return
+        frame = self.tool_frames[self._current_index]
+        handler = self._drop_handlers.get(frame)
+        if handler:
+            handler(paths)
+        else:
+            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑦视频常用压制 / "
+                                    "⑧视频横竖屏 / ⑯图片压缩 / ⑱文本翻译 / ⑲硬盘哈希扫描）")
+
+    def show_tool(self, index):
+        """切换到指定工具：隐藏其他页，显示对应页，并高亮菜单按钮"""
+        self._current_index = index
+        frame = self.tool_frames[index]
+        for i, f in enumerate(self.tool_frames):
+            if i != index:

@@ -1,0 +1,20 @@
+[
+ {
+  "old": "from . import config\nfrom .common import (APP_TITLE, _module_available, clean_path, clear_log,\n                     make_log_panel, make_tip, run_task)",
+  "new": "from . import config\nfrom .common import (APP_TITLE, _module_available, clean_path, clear_log,\n                     make_log_panel, make_tip, run_task)\nfrom .theme import COLOR",
+  "call_line": 174,
+  "replace_all": false
+ },
+ {
+  "old": "    btn_compress = tk.Button(frame_btn, text=\"一键压缩\", command=lambda: start_compress(),\n                             bg=\"#2f6bff\", fg=\"white\", activebackground=\"#2455cc\",\n                             activeforeground=\"white\", font=(\"Microsoft YaHei\", 10, \"bold\"),\n                             padx=12, pady=2, cursor=\"hand2\")",
+  "new": "    btn_compress = tk.Button(frame_btn, text=\"一键压缩\", command=lambda: start_compress(),\n                             bg=COLOR[\"accent\"], fg=COLOR[\"text_on_accent\"],\n                             disabledforeground=COLOR[\"text_on_accent\"],\n                             activebackground=COLOR[\"accent_active\"], activeforeground=COLOR[\"text_on_accent\"],\n                             font=(\"Microsoft YaHei\", 10, \"bold\"),\n                             padx=12, pady=2, cursor=\"hand2\")",
+  "call_line": 219,
+  "replace_all": false
+ },
+ {
+  "old": "        self.configure(bg=\"COLOR[\"surface_alt\"]\")",
+  "new": "        self.configure(bg=COLOR[\"surface_alt\"])",
+  "call_line": 223,
+  "replace_all": false
+ }
+]

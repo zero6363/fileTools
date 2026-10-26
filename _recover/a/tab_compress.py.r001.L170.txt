@@ -1,0 +1,4 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_compress.py", "offset": 15, "limit": 3}
+from . import config
+from .common import (APP_TITLE, _module_available, clean_path, clear_log,
+                     make_log_panel, make_tip, run_task)

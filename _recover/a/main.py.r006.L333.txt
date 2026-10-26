@@ -1,0 +1,43 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "offset": 140, "limit": 42}
+        menu_win = menu_canvas.create_window((0, 0), window=menu, anchor="nw")
+
+        def _menu_slack():
+            """可滚动余量 = 内容总高 - 视口高（<=0 表示全部按钮都放得下）"""
+            return menu.winfo_reqheight() - menu_canvas.winfo_height()
+
+        def _sync_menu_window(_e=None):
+            """同步嵌入画布的菜单窗口尺寸、滚动区、滚动条与滚动位置：
+            宽跟随画布、高 = 内容请求高（16 个按钮总高），滚动区 = 内容尺寸。
+            显式设置高度（而非放任自动跟踪）可避免个别环境下嵌入帧被画布高度
+            夹短，导致下方按钮被裁掉。最后还要：
+            1) 内容放得下时隐藏滚动条、并把视图钳制回顶部；
+            2) 内容放得下时画布会允许"越界滚动"（canvasy(0) 越出 0..slack），
+               表现为滚轮/缩放窗口后列表被推出视口、第一个按钮上方（或下方）
+               露出一块空白，这里统一钳回来。"""
+            w = menu_canvas.winfo_width()
+            h = menu.winfo_reqheight()
+            if w <= 1 or h <= 1:
+                return
+            menu_canvas.itemconfigure(menu_win, width=w, height=h)
+            menu_canvas.configure(scrollregion=(0, 0, w, h))
+            slack = max(0, _menu_slack())
+            # 滚动条只在真的需要滚动时出现，免得"看着能滚却只滚出空白"
+            if slack > 0:
+                if not menu_vsb.winfo_ismapped():
+                    # before= 保持原有打包顺序（滚动条在画布右侧），
+                    # 否则重新 pack 会排到画布之后、被 expand 的画布挤成 0 宽
+                    menu_vsb.pack(side=tk.RIGHT, fill=tk.Y, before=menu_canvas)
+            elif menu_vsb.winfo_ismapped():
+                menu_vsb.pack_forget()
+            offset = menu_canvas.canvasy(0)
+            if offset < 0 or offset > slack:
+                menu_canvas.yview_moveto(max(0, min(slack, offset)) / h)
+
+        menu.bind("<Configure>", _sync_menu_window)
+        menu_canvas.bind("<Configure>", _sync_menu_window)
+        root.after_idle(_sync_menu_window)
+        self._menu = menu
+
+        # 鼠标悬停左侧菜单时滚轮滚动菜单（全局监听 + 指针位置判断，
+        # 覆盖按钮/标题/空白各处；内容区滚轮不受影响）
+        def _on_menu_wheel(e):

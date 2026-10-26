@@ -1,0 +1,76 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_grouping.py", "limit": 75, "offset": 240}
+        total += n
+        if n == 0:
+            break
+    log(f"清理完成：共扫描 {rounds} 轮，删除 {total} 个空文件夹。")
+    return total
+
+
+# ============================================================
+
+
+def build_group_tab(parent):
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "按数量：按后缀分组（.jpg / .txt / .mp4，* = 按图片格式），每组数量可自定义；"
+                        "按年月：按修改时间归入 年-月 文件夹。同名文件自动跳过，不覆盖。",
+             colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+
+    form_label(form, 0, "分组方式：")
+    var_mode = tk.StringVar(value="按数量分组")
+    mode_box = ttk.Combobox(form, textvariable=var_mode, width=24, state="readonly",
+                            values=["按数量分组", "按年月分组（按修改时间）"])
+    mode_box.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=5)
+
+    var_src = make_path_row(form, 1, "源目录：", title="选择源目录")
+
+    # ---------- 按数量分组 ----------
+    suffix_label = form_label(form, 2, "文件后缀：")
+    var_suffix = tk.StringVar(value=".jpg")
+    suffix_box = ttk.Combobox(form, textvariable=var_suffix, width=14,
+                              values=[".jpg", ".gif", ".txt", ".mp4", "*"])
+    suffix_box.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=5)
+    suffix_note = form_note(form, 2, "可选常用后缀，也可自定义")
+
+    fmt_label = form_label(form, 3, "图片格式：")
+    var_img_formats = tk.StringVar(value=DEFAULT_IMAGE_FORMATS)
+    fmt_entry = ttk.Entry(form, textvariable=var_img_formats, width=40)
+    fmt_entry.grid(row=3, column=1, sticky="w", padx=(0, 6), pady=5)
+    fmt_note = form_note(form, 3, "* 时只处理这些图片格式，空格分隔")
+
+    per_label = form_label(form, 4, "每组数量：")
+    box_per, var_per = make_num_box(form, 1500, 1, 1000000, width=8, step=100)
+    box_per.grid(row=4, column=1, sticky="w", padx=(0, 6), pady=3)
+
+    prefix_label = form_label(form, 5, "文件夹前缀：")
+    var_prefix = tk.StringVar(value="jpg")
+    prefix_entry = ttk.Entry(form, textvariable=var_prefix, width=20)
+    prefix_entry.grid(row=5, column=1, sticky="w", padx=(0, 6), pady=5)
+    prefix_note = form_note(form, 5, "随后缀自动变化，可手动修改")
+
+    count_widgets = [suffix_label, suffix_box, suffix_note,
+                     fmt_label, fmt_entry, fmt_note,
+                     per_label, box_per, prefix_label, prefix_entry, prefix_note]
+
+    # ---------- 按年月分组 ----------
+    ym_label = form_label(form, 2, "图片格式：")
+    var_formats = tk.StringVar(value=DEFAULT_IMAGE_FORMATS)
+    ym_entry = ttk.Entry(form, textvariable=var_formats, width=40)
+    ym_entry.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=5)
+    ym_note = form_note(form, 2, "* = 所有格式；按修改时间生成 年-月 文件夹")
+    ym_widgets = [ym_label, ym_entry, ym_note]
+
+    def refresh_suffix_ui(*_args):
+        """后缀为 * / 空 时显示图片格式框并同步前缀；否则隐藏"""
+        var_prefix.set(prefix_from_suffix(var_suffix.get()))
+        if not var_mode.get().startswith("按数量"):
+            return
+        if var_suffix.get().strip() in ("", "*", "*.*"):
+            fmt_label.grid()
+            fmt_entry.grid()
+            fmt_note.grid()
+        else:
+            fmt_label.grid_remove()

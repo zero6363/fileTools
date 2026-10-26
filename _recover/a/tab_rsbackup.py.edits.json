@@ -1,0 +1,14 @@
+[
+ {
+  "old": "from .common import (clean_path, clear_log, form_label, form_note,\n                     get_unique_path, make_form, make_log_panel, make_num_row,\n                     make_tip, run_task)",
+  "new": "from .common import (clean_path, clear_log, form_label, form_note,\n                     get_unique_path, make_form, make_log_panel, make_num_row,\n                     make_tip, run_task)\nfrom .theme import COLOR",
+  "call_line": 152,
+  "replace_all": false
+ },
+ {
+  "old": "    btn_backup = tk.Button(frame_btn, text=\"开始备份\", command=lambda: do_backup(),\n                           bg=\"#2f6bff\", fg=\"white\", activebackground=\"#2455cc\",\n                           activeforeground=\"white\", font=(\"Microsoft YaHei\", 10, \"bold\"),\n                           padx=16, pady=4, cursor=\"hand2\")\n    btn_backup.pack(side=\"left\", padx=(0, 8))\n    btn_restore = tk.Button(frame_btn, text=\"开始恢复\", command=lambda: do_restore(),\n                            bg=\"#1a7f37\", fg=\"white\", activebackground=\"#15662b\",\n                            activeforeground=\"white\", font=(\"Microsoft YaHei\", 10, \"bold\"),\n                            padx=16, pady=4, cursor=\"hand2\")",
+  "new": "    btn_backup = tk.Button(frame_btn, text=\"开始备份\", command=lambda: do_backup(),\n                           bg=COLOR[\"accent\"], fg=COLOR[\"text_on_accent\"],\n                           disabledforeground=COLOR[\"text_on_accent\"],\n                           activebackground=COLOR[\"accent_active\"], activeforeground=COLOR[\"text_on_accent\"],\n                           font=(\"Microsoft YaHei\", 10, \"bold\"), padx=16, pady=4, cursor=\"hand2\")\n    btn_backup.pack(side=\"left\", padx=(0, 8))\n    btn_restore = tk.Button(frame_btn, text=\"开始恢复\", command=lambda: do_restore(),\n                            bg=COLOR[\"success\"], fg=COLOR[\"text_on_accent\"],\n                            disabledforeground=COLOR[\"text_on_accent\"],\n                            activebackground=COLOR[\"success_active\"], activeforeground=COLOR[\"text_on_accent\"],\n                            font=(\"Microsoft YaHei\", 10, \"bold\"), padx=16, pady=4, cursor=\"hand2\")",
+  "call_line": 155,
+  "replace_all": false
+ }
+]

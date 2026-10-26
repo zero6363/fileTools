@@ -1,0 +1,17 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_hashscan.py", "offset": 5094, "limit": 16}
+        ttk.Button(bottom, text="关闭", command=close).pack(side=tk.RIGHT)
+        ttk.Button(bottom, text="导出 CSV", command=export_csv).pack(
+            side=tk.RIGHT, padx=(0, 6))
+        btn_apply = tk.Button(bottom, text="写入数据库", bg="#0b8a3e", fg="white",
+                              activebackground="#086b30", activeforeground="white",
+                              font=("Microsoft YaHei", 9), padx=12, pady=2,
+                              cursor="hand2", command=apply_selected)
+        btn_apply.pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(bottom, text="勾选可写回", command=check_writable).pack(
+            side=tk.RIGHT, padx=(0, 6))
+        btn_time = tk.Button(bottom, text="统一修改时间", bg="#b06000", fg="white",
+                             activebackground="#8a4a00", activeforeground="white",
+                             font=("Microsoft YaHei", 9), padx=12, pady=2,
+                             cursor="hand2", command=apply_time)
+        btn_time.pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(bottom, text="勾选可对时", command=check_timediff).pack(

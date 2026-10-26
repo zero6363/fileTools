@@ -1,0 +1,9 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_hashscan.py", "offset": 62, "limit": 8}
+from . import config
+from .common import (clean_path, clear_log, form_label, form_note, make_form,
+                     make_logger, make_tip)
+
+DB_NAME = "filehash.db"
+LOG_NAME = "scan_log.txt"
+CHUNK = 1024 * 1024          # 哈希读取块大小 1MB
+SEARCH_LIMIT = 5000          # 搜索结果最多显示条数

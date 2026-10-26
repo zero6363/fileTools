@@ -1,0 +1,31 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_encode.py", "limit": 30, "offset": 1522}
+        "warned_missing": False,
+        "codec_touched": False,   # 用户是否手动改过编码格式（改过就不再自动切）
+        "progress": {},       # iid -> 当前百分比（用于总进度条）
+        "total": 0,
+        "ok": 0,
+        "fail": 0,
+        "cancel": 0,
+        "skip": 0,
+        "grown": 0,           # 成品比源还大的个数（已归入 oversize/）
+    }
+    probe_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="probe")
+
+    def ui(fn):
+        try:
+            parent.after(0, fn)
+        except Exception:
+            pass
+
+    # ---------------- 顶部：FFmpeg 路径（紧凑单行，去掉大段说明） ----------------
+    ff_row = ui.Frame(parent)
+    ff_row.grid(row=0, column=0, columnspan=4, sticky="ew", padx=8, pady=(6, 2))
+    ff_row.grid_columnconfigure(1, weight=1)
+    ui.Label(ff_row, text="FFmpeg：").grid(row=0, column=0, sticky="w", padx=(2, 4))
+    var_ff = tk.StringVar()
+    ent_ff = ttk.Entry(ff_row, textvariable=var_ff)
+    ent_ff.grid(row=0, column=1, sticky="ew", padx=4)
+
+    lbl_ff = ui.Label(ff_row, text="检测中…", foreground=COLOR["text_secondary"])
+    lbl_ff.grid(row=0, column=4, sticky="w", padx=6)
+

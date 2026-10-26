@@ -1,0 +1,19 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_hashscan.py", "offset": 2428, "limit": 18}
+    bar_list = ttk.Frame(tree_frame)
+    bar_list.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 3))
+    btn_apply = tk.Button(bar_list, text="写入数据库", bg="#0b8a3e", fg="white",
+                          disabledforeground="#e8f5ee",
+                          activebackground="#086b30", activeforeground="white",
+                          font=("Microsoft YaHei", 9), padx=12, pady=2,
+                          cursor="hand2")
+    btn_apply.pack(side=tk.LEFT)
+    btn_sel_all = ttk.Button(bar_list, text="全选本页", width=9, state=tk.DISABLED)
+    btn_sel_all.pack(side=tk.LEFT, padx=(8, 0))
+    btn_sel_none = ttk.Button(bar_list, text="全不选", width=7, state=tk.DISABLED)
+    btn_sel_none.pack(side=tk.LEFT, padx=(4, 0))
+    lbl_sel = ttk.Label(bar_list, text="", foreground="#444444")
+    lbl_sel.pack(side=tk.LEFT, padx=(10, 0))
+    lbl_hint = ttk.Label(bar_list, text="", foreground="#0b6b0b")
+    lbl_hint.pack(side=tk.LEFT, padx=(12, 0))
+
+    tree = ttk.Treeview(tree_frame, columns=[c[0] for c in COLS], show="headings",

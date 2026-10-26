@@ -1,0 +1,63 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "offset": 176, "limit": 62}
+        root.after_idle(_sync_menu_window)
+        self._menu = menu
+
+        # 鼠标悬停左侧菜单时滚轮滚动菜单（全局监听 + 指针位置判断，
+        # 覆盖按钮/标题/空白各处；内容区滚轮不受影响）
+        def _on_menu_wheel(e):
+            try:
+                x, y = e.x_root, e.y_root
+                nx, ny = nav.winfo_rootx(), nav.winfo_rooty()
+                if not (nx <= x <= nx + nav.winfo_width()
+                        and ny <= y <= ny + nav.winfo_height()):
+                    return
+            except Exception:
+                return
+            if not e.delta:
+                return
+            slack = _menu_slack()
+            if slack <= 0:
+                # 内容放得下：直接不滚（否则画布会越界，把列表推出视口露出空白）
+                return
+            step = max(1, menu_canvas.winfo_height() // 10)  # 与画布默认滚动单位一致
+            offset = menu_canvas.canvasy(0) + (-step if e.delta > 0 else step)
+            offset = max(0, min(slack, offset))
+            menu_canvas.yview_moveto(offset / menu.winfo_reqheight())
+
+        root.bind_all("<MouseWheel>", _on_menu_wheel)
+        self._on_menu_wheel = _on_menu_wheel
+
+        # 分隔条：拖拽调整菜单宽度（限制在 160–360），双击恢复默认宽度
+        sash = tk.Frame(body, width=5, bg=COLOR["border"], cursor="sb_h_double_arrow")
+        sash.pack(side=tk.LEFT, fill=tk.Y)
+        sash.bind("<ButtonPress-1>", self._on_nav_resize_start)
+        sash.bind("<B1-Motion>", self._on_nav_resize_move)
+        sash.bind("<ButtonRelease-1>", self._on_nav_resize_end)
+        sash.bind("<Double-Button-1>", self._on_nav_reset_width)
+
+        content = ttk.Frame(body)
+        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.tool_frames = []
+        self.nav_items = []  # [(button, frame, title), ...]
+        self._drop_handlers = {}  # {frame: handler} 各工具页注册的拖放处理器
+        self._show_handlers = {}  # {frame: handler} 各工具页注册的「切换到该页时」回调
+        self._current_index = 0
+        builders = [
+            ("① 文件分组", build_group_tab),
+            ("② 移动到根目录", build_flatten_tab),
+            ("③ 删除空文件夹", build_empty_tab),
+            ("④ 实况图分组", build_live_tab),
+            ("⑤ 文件名添加路径", build_rename_tab),
+            ("⑥ 序号重命名", build_seq_rename_tab),
+            ("⑦ 视频常用压制", build_encode_tab),
+            ("⑧ 视频横竖屏", build_video_tab),
+            ("⑨ 文件名删除", build_trim_tab),
+            ("⑩ 图片生成MD", build_md_tab),
+            ("⑪ TXT转图片", build_txt2img_tab),
+            ("⑫ TXT合并", build_merge_tab),
+            ("⑬ TXT重命名", build_txt_rename_tab),
+            ("⑭ WebP转JPG", build_webp_tab),
+            ("⑮ 加密包分类", build_zip_tab),
+            ("⑯ 图片压缩", build_compress_tab),
+            ("⑰ ReSoBackup备份", build_rsbackup_tab),

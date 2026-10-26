@@ -1,0 +1,39 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "offset": 108, "limit": 38}
+        apply_theme(root)
+
+        # 恢复上次左侧菜单宽度（越界/缺失时用默认）
+        cfg = load_window_config()
+        saved_nav_w = cfg.get("nav_width")
+        nav_width = saved_nav_w if isinstance(saved_nav_w, int) \
+            and NAV_MIN_WIDTH <= saved_nav_w <= NAV_MAX_WIDTH else NAV_DEFAULT_WIDTH
+
+        # 主体：左侧纵向菜单 + 右侧工具内容区
+        body = ttk.Frame(root)
+        body.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+        # 左侧菜单：宽度可拖拽调整；按钮放画布内，超出高度时可滚动
+        nav = ttk.Frame(body, width=nav_width, style="Nav.TFrame")
+        nav.pack(side=tk.LEFT, fill=tk.Y)
+        nav.pack_propagate(False)
+        self.nav = nav
+
+        ttk.Label(nav, text="工具箱", font=FONTS["nav_title"]).pack(pady=(12, 2))
+        ttk.Label(nav, text="点击左侧菜单切换工具",
+                  foreground=COLOR["text_muted"], font=FONTS["sm"]).pack(pady=(0, 8))
+
+        menu_scroll = ttk.Frame(nav)
+        menu_scroll.pack(fill=tk.BOTH, expand=True)
+        menu_vsb = ttk.Scrollbar(menu_scroll, orient=tk.VERTICAL)
+        menu_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        menu_canvas = tk.Canvas(menu_scroll, yscrollcommand=menu_vsb.set,
+                                highlightthickness=0, bg=COLOR["nav_bg"])
+        menu_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        menu_vsb.config(command=menu_canvas.yview)
+
+        menu = tk.Frame(menu_canvas, bg=COLOR["nav_bg"])
+        menu_win = menu_canvas.create_window((0, 0), window=menu, anchor="nw")
+
+        def _menu_slack():
+            """可滚动余量 = 内容总高 - 视口高（<=0 表示全部按钮都放得下）"""
+            return menu.winfo_reqheight() - menu_canvas.winfo_height()
+

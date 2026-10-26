@@ -1,0 +1,68 @@
+[
+ {
+  "old": "from . import config\n\nAPP_VERSION = \"1.31\"",
+  "new": "from . import config\nfrom .theme import COLOR, FONTS\n\nAPP_VERSION = \"1.32\"",
+  "call_line": 43,
+  "replace_all": false
+ },
+ {
+  "old": "    lbl = ttk.Label(parent, text=text, foreground=\"#666666\", justify=\"left\")",
+  "new": "    lbl = ttk.Label(parent, text=text, foreground=COLOR[\"text_secondary\"], justify=\"left\")",
+  "call_line": 46,
+  "replace_all": false
+ },
+ {
+  "old": "def make_start_button(parent, row, text, command, colspan=3):\n    \"\"\"主操作按钮：统一放在输入列，左边缘与输入框对齐\"\"\"\n    btn = tk.Button(\n        parent, text=text, command=command,\n        bg=\"#2f6bff\", fg=\"white\", activebackground=\"#2455cc\", activeforeground=\"white\",\n        font=(\"Microsoft YaHei\", 10, \"bold\"), height=1, padx=16, pady=4, cursor=\"hand2\",\n    )\n    btn.grid(row=row, column=1, sticky=\"w\", padx=(0, 6), pady=(12, 6))\n    return btn",
+  "new": "def make_start_button(parent, row, text, command, colspan=3):\n    \"\"\"主操作按钮：统一放在输入列，左边缘与输入框对齐。\n    使用设计系统令牌：扁平蓝 + 悬停加深 + 禁用仍可读（白字）。\"\"\"\n    btn = tk.Button(\n        parent, text=text, command=command,\n        bg=COLOR[\"accent\"], fg=COLOR[\"text_on_accent\"],\n        activebackground=COLOR[\"accent_active\"], activeforeground=COLOR[\"text_on_accent\"],\n        disabledforeground=COLOR[\"text_on_accent\"],\n        relief=tk.FLAT, borderwidth=0,\n        font=FONTS[\"base\"], padx=18, pady=6, cursor=\"hand2\",\n    )\n\n    def _enter(e):\n        if str(btn.cget(\"state\")) != tk.DISABLED:\n            btn.configure(bg=COLOR[\"accent_hover\"])\n\n    def _leave(e):\n        btn.configure(bg=COLOR[\"accent\"])\n\n    btn.bind(\"<Enter>\", _enter)\n    btn.bind(\"<Leave>\", _leave)\n    btn.grid(row=row, column=1, sticky=\"w\", padx=(0, 6), pady=(12, 6))\n    return btn",
+  "call_line": 48,
+  "replace_all": false
+ },
+ {
+  "old": "    text = scrolledtext.ScrolledText(frame, height=height, state=\"disabled\", wrap=tk.WORD,\n                                     font=(\"Consolas\", 9))\n    text.grid(row=0, column=0, sticky=\"nsew\")",
+  "new": "    text = scrolledtext.ScrolledText(frame, height=height, state=\"disabled\", wrap=tk.WORD,\n                                     font=FONTS[\"log\"],\n                                     background=COLOR[\"surface\"], foreground=COLOR[\"text\"],\n                                     insertbackground=COLOR[\"text\"],\n                                     relief=tk.FLAT, borderwidth=1,\n                                     highlightthickness=1,\n                                     highlightbackground=COLOR[\"border\"],\n                                     highlightcolor=COLOR[\"border\"])\n    text.grid(row=0, column=0, sticky=\"nsew\")",
+  "call_line": 51,
+  "replace_all": false
+ },
+ {
+  "old": "    lbl = ttk.Label(parent, text=text, foreground=\"#666666\",\n                    wraplength=820 if autowrap else 1120, justify=\"left\")",
+  "new": "    lbl = ttk.Label(parent, text=text, foreground=COLOR[\"text_secondary\"],\n                    wraplength=820 if autowrap else 1120, justify=\"left\")",
+  "call_line": 53,
+  "replace_all": false
+ },
+ {
+  "old": "from tkinter import filedialog, messagebox, scrolledtext, ttk\n\nfrom . import config\nfrom .theme import COLOR, FONTS",
+  "new": "from tkinter import filedialog, messagebox\n\nfrom . import ui\nfrom . import ui as ttk\nfrom .theme import COLOR, FONTS",
+  "call_line": 533,
+  "replace_all": false
+ },
+ {
+  "old": "def make_start_button(parent, row, text, command, colspan=3):\n    \"\"\"主操作按钮：统一放在输入列，左边缘与输入框对齐。\n    使用设计系统令牌：扁平蓝 + 悬停加深 + 禁用仍可读（白字）。\"\"\"\n    btn = tk.Button(\n        parent, text=text, command=command,\n        bg=COLOR[\"accent\"], fg=COLOR[\"text_on_accent\"],\n        activebackground=COLOR[\"accent_active\"], activeforeground=COLOR[\"text_on_accent\"],\n        disabledforeground=COLOR[\"text_on_accent\"],\n        relief=tk.FLAT, borderwidth=0,\n        font=FONTS[\"base\"], padx=18, pady=6, cursor=\"hand2\",\n    )\n\n    def _enter(e):\n        if str(btn.cget(\"state\")) != tk.DISABLED:\n            btn.configure(bg=COLOR[\"accent_hover\"])\n\n    def _leave(e):\n        btn.configure(bg=COLOR[\"accent\"])\n\n    btn.bind(\"<Enter>\", _enter)\n    btn.bind(\"<Leave>\", _leave)\n    btn.grid(row=row, column=1, sticky=\"w\", padx=(0, 6), pady=(12, 6))\n    return btn",
+  "new": "def make_start_button(parent, row, text, command, colspan=3):\n    \"\"\"主操作按钮：统一放在输入列，左边缘与输入框对齐。\n    使用设计系统令牌：扁平蓝 + 悬停加深 + 禁用仍可读（白字）。\"\"\"\n    btn = ui.Button(\n        parent, text=text, command=command,\n        bg=COLOR[\"accent\"], fg=COLOR[\"text_on_accent\"],\n        activebackground=COLOR[\"accent_active\"],\n        disabledforeground=COLOR[\"text_on_accent\"],\n        padx=18, pady=6, cursor=\"hand2\",\n    )\n    btn.grid(row=row, column=1, sticky=\"w\", padx=(0, 6), pady=(12, 6))\n    return btn",
+  "call_line": 537,
+  "replace_all": false
+ },
+ {
+  "old": "    text = scrolledtext.ScrolledText(frame, height=height, state=\"disabled\", wrap=tk.WORD,\n                                     font=FONTS[\"log\"],\n                                     background=COLOR[\"surface\"], foreground=COLOR[\"text\"],\n                                     insertbackground=COLOR[\"text\"],\n                                     relief=tk.FLAT, borderwidth=1,\n                                     highlightthickness=1,\n                                     highlightbackground=COLOR[\"border\"],\n                                     highlightcolor=COLOR[\"border\"])",
+  "new": "    text = ui.Textbox(frame, height=height, state=\"disabled\",\n                      font=FONTS[\"log\"],\n                      background=COLOR[\"surface\"], foreground=COLOR[\"text\"])",
+  "call_line": 539,
+  "replace_all": false
+ },
+ {
+  "old": "def make_tip(parent, row, text, colspan=3, autowrap=False):\n    \"\"\"提示文字：autowrap=True 时随容器宽度自动换行，避免文字被裁掉；\n    配合 colspan=1 使用可避免跨列提示把表单列宽撑开。\"\"\"\n    lbl = ttk.Label(parent, text=text, foreground=COLOR[\"text_secondary\"],\n                    wraplength=820 if autowrap else 1120, justify=\"left\")\n    lbl.grid(row=row, column=0, columnspan=colspan,\n             sticky=\"we\" if autowrap else \"w\", padx=8, pady=(0, 6))\n    if autowrap:\n        def _rewrap(event):\n            try:\n                w = max(240, event.width - 32)\n                if abs(int(lbl.cget(\"wraplength\")) - w) > 12:\n                    lbl.configure(wraplength=w)\n            except Exception:\n                pass\n\n        parent.bind(\"<Configure>\", _rewrap, add=\"+\")\n    return lbl",
+  "new": "def make_tip(parent, row, text, colspan=3, autowrap=False):\n    \"\"\"提示文字：按容器宽度自动换行，避免长提示在窄窗口被裁掉；\n    配合 colspan=1 使用可避免跨列提示把表单列宽撑开。\"\"\"\n    lbl = ttk.Label(parent, text=text, foreground=COLOR[\"text_secondary\"],\n                    wraplength=820, justify=\"left\")\n    lbl.grid(row=row, column=0, columnspan=colspan,\n             sticky=\"we\" if autowrap else \"w\", padx=8, pady=(0, 6))\n\n    def _rewrap(event):\n        try:\n            if event.width > 80:\n                w = max(240, event.width - 32)\n                if abs(int(lbl.cget(\"wraplength\")) - w) > 12:\n                    lbl.configure(wraplength=w)\n        except Exception:\n            pass\n\n    parent.bind(\"<Configure>\", _rewrap, add=\"+\")\n    return lbl",
+  "call_line": 724,
+  "replace_all": false
+ },
+ {
+  "old": "def form_note(parent, row, text, column=3, columnspan=1):\n    \"\"\"表单说明文字：固定放第 4 列，不参与列宽计算；\n    窗口变窄时自动按可用宽度换行，避免长说明被裁掉。\"\"\"\n    lbl = ttk.Label(parent, text=text, foreground=COLOR[\"text_secondary\"], justify=\"left\")\n    lbl.grid(row=row, column=column, columnspan=columnspan,\n             sticky=\"w\", padx=(8, 4), pady=5)\n\n    def _rewrap(event):\n        try:\n            if event.width > 40:\n                lbl.configure(wraplength=max(80, event.width - 2))\n        except Exception:\n            pass\n\n    lbl.bind(\"<Configure>\", _rewrap, add=\"+\")\n    return lbl",
+  "new": "def form_note(parent, row, text, column=3, columnspan=1):\n    \"\"\"表单说明文字：固定放第 4 列，不参与列宽计算；\n    按主窗口剩余宽度自动换行，避免长说明被裁掉（CTk 下自身 Configure 会\n    收敛到过窄宽度，这里改为跟随顶层窗口宽度计算可用空间）。\"\"\"\n    lbl = ttk.Label(parent, text=text, foreground=COLOR[\"text_secondary\"], justify=\"left\")\n    lbl.grid(row=row, column=column, columnspan=columnspan,\n             sticky=\"w\", padx=(8, 4), pady=5)\n\n    def _rewrap(_event=None):\n        try:\n            top = lbl.winfo_toplevel()\n            if not top.winfo_exists() or top.winfo_width() <= 1:\n                return\n            avail = top.winfo_width() - (lbl.winfo_rootx() - top.winfo_rootx()) - 24\n            w = max(200, min(640, avail))\n            cur = int(float(lbl.cget(\"wraplength\") or 0))\n            if abs(cur - w) > 12:\n                lbl.configure(wraplength=w)\n        except Exception:\n            pass\n\n    try:\n        top = lbl.winfo_toplevel()\n        top.bind(\"<Configure>\", _rewrap, add=\"+\")\n        top.after(200, _rewrap)\n    except Exception:\n        pass\n    return lbl",
+  "call_line": 777,
+  "replace_all": false
+ },
+ {
+  "old": "APP_VERSION = \"1.32\"",
+  "new": "APP_VERSION = \"1.33\"",
+  "call_line": 802,
+  "replace_all": false
+ }
+]

@@ -1,0 +1,20 @@
+[
+ {
+  "old": "    # 语义色\n    \"success\":        \"#1FA971\",\n    \"warning\":        \"#D9920A\",\n    \"error\":          \"#E0444B\",\n    \"info\":           \"#3B82F6\",",
+  "new": "    # 语义色\n    \"success\":        \"#1FA971\",\n    \"success_active\": \"#178A5E\",\n    \"warning\":        \"#D9920A\",\n    \"warning_active\": \"#B5790A\",\n    \"error\":          \"#E0444B\",\n    \"info\":           \"#3B82F6\",",
+  "call_line": 108,
+  "replace_all": false
+ },
+ {
+  "old": "    \"surface_alt\":   \"#EEF2F7\",   # 次级表面（输入框底、悬停态）\n    \"nav_bg\":        \"#FAFBFD\",   # 左侧导航栏背景（近白）",
+  "new": "    \"surface_alt\":   \"#EEF2F7\",   # 次级表面（输入框底、悬停态）\n    \"nav_bg\":        \"#EAEFF6\",   # 左侧导航栏背景（浅灰块，与白色内容区明显区分）\n    \"nav_item_hover\":\"#DCE3EE\",   # 导航项悬停（比 nav_bg 略深，反馈可见）",
+  "call_line": 339,
+  "replace_all": false
+ },
+ {
+  "old": "  · 浅灰底（#F4F6F9）+ 近白卡片/导航（#FFFFFF / #FAFBFD）\n  · 收敛的现代蓝强调色（#3B82F6），配淡蓝选中底（#EAF2FE）",
+  "new": "  · 浅灰底（#F4F6F9）+ 近白卡片（#FFFFFF）+ 浅灰导航块（#EAEFF6）\n  · 收敛的现代蓝强调色（#3B82F6），配淡蓝选中底（#EAF2FE）",
+  "call_line": 578,
+  "replace_all": false
+ }
+]

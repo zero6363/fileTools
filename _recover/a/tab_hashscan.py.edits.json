@@ -1,0 +1,38 @@
+[
+ {
+  "old": "            b.config(text=(f\"{k} {counts[k]}\" if all_rows else k),\n                         bg=\"#2f6bff\" if on else \"#efefef\",\n                         fg=\"white\" if on else \"#333333\",\n                         activebackground=\"#2455cc\" if on else \"#e2e2e2\",\n                         activeforeground=\"white\" if on else \"#333333\")",
+  "new": "            b.config(text=(f\"{k} {counts[k]}\" if all_rows else k),\n                         bg=COLOR[\"accent\"] if on else COLOR[\"surface_alt\"],\n                         fg=COLOR[\"text_on_accent\"] if on else COLOR[\"text\"],\n                         activebackground=COLOR[\"accent_active\"] if on else COLOR[\"border\"],\n                         activeforeground=COLOR[\"text_on_accent\"] if on else COLOR[\"text\"])",
+  "call_line": 111,
+  "replace_all": false
+ },
+ {
+  "old": "                    b.config(text=f\"{k} {counts[k]}\",\n                             bg=\"#2f6bff\" if on else \"#efefef\",\n                             fg=\"white\" if on else \"#333333\",\n                             activebackground=\"#2455cc\" if on else \"#e2e2e2\",\n                             activeforeground=\"white\" if on else \"#333333\")",
+  "new": "                    b.config(text=f\"{k} {counts[k]}\",\n                             bg=COLOR[\"accent\"] if on else COLOR[\"surface_alt\"],\n                             fg=COLOR[\"text_on_accent\"] if on else COLOR[\"text\"],\n                             activebackground=COLOR[\"accent_active\"] if on else COLOR[\"border\"],\n                             activeforeground=COLOR[\"text_on_accent\"] if on else COLOR[\"text\"])",
+  "call_line": 114,
+  "replace_all": false
+ },
+ {
+  "old": "    btn_start = tk.Button(run_row, text=\"开始扫描\", bg=\"#2f6bff\", fg=\"white\",\n                          disabledforeground=\"#c9dbff\",\n                          activebackground=\"#2455cc\", activeforeground=\"white\",\n                          font=(\"Microsoft YaHei\", 10, \"bold\"), padx=18, pady=4,\n                          cursor=\"hand2\")",
+  "new": "    btn_start = tk.Button(run_row, text=\"开始扫描\", bg=COLOR[\"accent\"], fg=COLOR[\"text_on_accent\"],\n                          disabledforeground=COLOR[\"text_on_accent\"],\n                          activebackground=COLOR[\"accent_active\"], activeforeground=COLOR[\"text_on_accent\"],\n                          font=(\"Microsoft YaHei\", 10, \"bold\"), padx=18, pady=4,\n                          cursor=\"hand2\")",
+  "call_line": 116,
+  "replace_all": false
+ },
+ {
+  "old": "    btn_apply = tk.Button(bar_list, text=\"写入数据库\", bg=\"#0b8a3e\", fg=\"white\",\n                          disabledforeground=\"#e8f5ee\",\n                          activebackground=\"#086b30\", activeforeground=\"white\",\n                          font=(\"Microsoft YaHei\", 9), padx=12, pady=2,\n                          cursor=\"hand2\")",
+  "new": "    btn_apply = tk.Button(bar_list, text=\"写入数据库\", bg=COLOR[\"success\"], fg=COLOR[\"text_on_accent\"],\n                          disabledforeground=COLOR[\"text_on_accent\"],\n                          activebackground=COLOR[\"success_active\"], activeforeground=COLOR[\"text_on_accent\"],\n                          font=(\"Microsoft YaHei\", 9), padx=12, pady=2,\n                          cursor=\"hand2\")",
+  "call_line": 118,
+  "replace_all": false
+ },
+ {
+  "old": "        btn_apply = tk.Button(bottom, text=\"写入数据库\", bg=\"#0b8a3e\", fg=\"white\",\n                              activebackground=\"#086b30\", activeforeground=\"white\",\n                              font=(\"Microsoft YaHei\", 9), padx=12, pady=2,\n                              cursor=\"hand2\", command=apply_selected)\n        btn_apply.pack(side=tk.RIGHT, padx=(0, 6))\n        ttk.Button(bottom, text=\"勾选可写回\", command=check_writable).pack(\n            side=tk.RIGHT, padx=(0, 6))\n        btn_time = tk.Button(bottom, text=\"统一修改时间\", bg=\"#b06000\", fg=\"white\",\n                             activebackground=\"#8a4a00\", activeforeground=\"white\",\n                             font=(\"Microsoft YaHei\", 9), padx=12, pady=2,\n                             cursor=\"hand2\", command=apply_time)",
+  "new": "        btn_apply = tk.Button(bottom, text=\"写入数据库\", bg=COLOR[\"success\"], fg=COLOR[\"text_on_accent\"],\n                              activebackground=COLOR[\"success_active\"], activeforeground=COLOR[\"text_on_accent\"],\n                              font=(\"Microsoft YaHei\", 9), padx=12, pady=2,\n                              cursor=\"hand2\", command=apply_selected)\n        btn_apply.pack(side=tk.RIGHT, padx=(0, 6))\n        ttk.Button(bottom, text=\"勾选可写回\", command=check_writable).pack(\n            side=tk.RIGHT, padx=(0, 6))\n        btn_time = tk.Button(bottom, text=\"统一修改时间\", bg=COLOR[\"warning\"], fg=COLOR[\"text_on_accent\"],\n                             activebackground=COLOR[\"warning_active\"], activeforeground=COLOR[\"text_on_accent\"],\n                             font=(\"Microsoft YaHei\", 9), padx=12, pady=2,\n                             cursor=\"hand2\", command=apply_time)",
+  "call_line": 120,
+  "replace_all": false
+ },
+ {
+  "old": "from . import config\nfrom .common import (clean_path, clear_log, form_label, form_note, make_form,\n                     make_logger, make_tip)",
+  "new": "from . import config\nfrom .common import (clean_path, clear_log, form_label, form_note, make_form,\n                     make_logger, make_tip)\nfrom .theme import COLOR",
+  "call_line": 128,
+  "replace_all": false
+ }
+]

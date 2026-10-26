@@ -1,0 +1,13 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_hashscan.py", "offset": 4283, "limit": 12}
+            for k, b in filter_btns.items():
+                on = (k == state_flt["k"])
+                try:
+                    b.config(text=f"{k} {counts[k]}",
+                             bg="#2f6bff" if on else "#efefef",
+                             fg="white" if on else "#333333",
+                             activebackground="#2455cc" if on else "#e2e2e2",
+                             activeforeground="white" if on else "#333333")
+                except Exception:
+                    pass
+            ltv.heading("#0", text=f"左：{short_path(cur['left'][0], 32)}")
+            rtv.heading("#0", text=f"右：{short_path(cur['right'][0], 32)}")

@@ -27,14 +27,11 @@ import tkinter as tk
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext
-from . import ui, ui as ttk
-from .theme import FONTS
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from . import config
 from .common import (clean_path, clear_log, get_unique_path, make_logger,
                      make_num_box, natural_key)
-from .theme import COLOR
 
 # ============================================================
 # 常量
@@ -1531,22 +1528,22 @@ def build_encode_tab(parent, app=None):
     }
     probe_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="probe")
 
-    def run_ui(fn):
+    def ui(fn):
         try:
             parent.after(0, fn)
         except Exception:
             pass
 
     # ---------------- 顶部：FFmpeg 路径（紧凑单行，去掉大段说明） ----------------
-    ff_row = ui.Frame(parent)
+    ff_row = ttk.Frame(parent)
     ff_row.grid(row=0, column=0, columnspan=4, sticky="ew", padx=8, pady=(6, 2))
     ff_row.grid_columnconfigure(1, weight=1)
-    ui.Label(ff_row, text="FFmpeg：").grid(row=0, column=0, sticky="w", padx=(2, 4))
+    ttk.Label(ff_row, text="FFmpeg：").grid(row=0, column=0, sticky="w", padx=(2, 4))
     var_ff = tk.StringVar()
     ent_ff = ttk.Entry(ff_row, textvariable=var_ff)
     ent_ff.grid(row=0, column=1, sticky="ew", padx=4)
 
-    lbl_ff = ui.Label(ff_row, text="检测中…", foreground=COLOR["text_secondary"])
+    lbl_ff = ttk.Label(ff_row, text="检测中…", foreground="#5C6675")
     lbl_ff.grid(row=0, column=4, sticky="w", padx=6)
 
     def _pick_ff():
@@ -1558,16 +1555,16 @@ def build_encode_tab(parent, app=None):
         save_ffmpeg_hint(p)
         apply_ffmpeg()
 
-    ui.Button(ff_row, text="浏览…", width=7, command=_pick_ff).grid(row=0, column=2, padx=2)
-    btn_redetect = ui.Button(ff_row, text="重新检测", width=9)
+    ttk.Button(ff_row, text="浏览…", width=7, command=_pick_ff).grid(row=0, column=2, padx=2)
+    btn_redetect = ttk.Button(ff_row, text="重新检测", width=9)
     btn_redetect.grid(row=0, column=3, padx=2)
 
     # ---------------- 压制设置（模式 + 编码参数 + 选项，紧凑几行） ----------------
-    settings_box = ui.LabelFrame(parent, text=" 压制设置 ", padding=(6, 4))
+    settings_box = ttk.LabelFrame(parent, text=" 压制设置 ", padding=(6, 4))
     settings_box.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 4))
 
     # 第 1 行：模式
-    mode_line = ui.Frame(settings_box)
+    mode_line = ttk.Frame(settings_box)
     mode_line.grid(row=0, column=0, columnspan=6, sticky="w")
     var_mode = tk.StringVar(value="640")
     for i, (val, text) in enumerate((("640", "640p（最长边 640）"),
@@ -1578,39 +1575,39 @@ def build_encode_tab(parent, app=None):
                         command=lambda: refresh_mode_ui()).pack(side=tk.LEFT, padx=(4, 14))
 
     # 第 2 行：编码格式 / 质量 / preset / 并发
-    param_line = ui.Frame(settings_box)
+    param_line = ttk.Frame(settings_box)
     param_line.grid(row=1, column=0, columnspan=6, sticky="w", pady=(4, 0))
-    ui.Label(param_line, text="编码格式：").pack(side=tk.LEFT, padx=(4, 2))
+    ttk.Label(param_line, text="编码格式：").pack(side=tk.LEFT, padx=(4, 2))
     var_codec = tk.StringVar(value=CODEC_LABELS[CODEC_AV1])
     cbo_codec = ttk.Combobox(param_line, textvariable=var_codec, width=12, state="readonly",
                              values=[CODEC_LABELS[CODEC_AV1], CODEC_LABELS[CODEC_HEVC]])
     cbo_codec.pack(side=tk.LEFT, padx=(0, 12))
 
-    ui.Label(param_line, text="质量：").pack(side=tk.LEFT, padx=(0, 2))
+    ttk.Label(param_line, text="质量：").pack(side=tk.LEFT, padx=(0, 2))
     var_quality = tk.StringVar(value=str(DEFAULT_QUALITY[CODEC_AV1]))
     sp_quality = ttk.Spinbox(param_line, from_=1, to=51, width=5, textvariable=var_quality)
     sp_quality.pack(side=tk.LEFT, padx=(0, 12))
 
-    ui.Label(param_line, text="preset：").pack(side=tk.LEFT, padx=(0, 2))
+    ttk.Label(param_line, text="preset：").pack(side=tk.LEFT, padx=(0, 2))
     var_preset = tk.StringVar(value="p1")
     cbo_preset = ttk.Combobox(param_line, textvariable=var_preset, width=10, state="readonly",
                               values=NVENC_PRESETS)
     cbo_preset.pack(side=tk.LEFT, padx=(0, 12))
 
-    ui.Label(param_line, text="并发：").pack(side=tk.LEFT, padx=(0, 2))
+    ttk.Label(param_line, text="并发：").pack(side=tk.LEFT, padx=(0, 2))
     box_conc, var_conc = make_num_box(param_line, 4, 1, 16, width=3)
     box_conc.pack(side=tk.LEFT)
 
     # 第 3 行：输出目录 / 硬烧字幕 / 显示 ffmpeg 窗口
-    opt_line = ui.Frame(settings_box)
+    opt_line = ttk.Frame(settings_box)
     opt_line.grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
-    ui.Label(opt_line, text="输出目录：").pack(side=tk.LEFT, padx=(4, 2))
+    ttk.Label(opt_line, text="输出目录：").pack(side=tk.LEFT, padx=(4, 2))
     var_outdir = tk.StringVar()
     ttk.Entry(opt_line, textvariable=var_outdir, width=24).pack(side=tk.LEFT)
-    ui.Button(opt_line, text="浏览…", width=7,
+    ttk.Button(opt_line, text="浏览…", width=7,
                command=lambda: var_outdir.set(filedialog.askdirectory(title="选择输出目录") or
                                               var_outdir.get())).pack(side=tk.LEFT, padx=3)
-    ui.Label(opt_line, text="留空=源目录", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(0, 10))
+    ttk.Label(opt_line, text="留空=源目录", foreground="#5C6675").pack(side=tk.LEFT, padx=(0, 10))
 
     var_burn = tk.BooleanVar(value=True)
     ttk.Checkbutton(opt_line, text="硬烧字幕", variable=var_burn).pack(side=tk.LEFT, padx=(0, 10))
@@ -1620,9 +1617,9 @@ def build_encode_tab(parent, app=None):
     ttk.Checkbutton(opt_line, text="显示 ffmpeg 窗口", variable=var_console).pack(side=tk.LEFT)
 
     # 第 3 行：归档动作开关（默认全开；关掉就地把文件留在原位）
-    move_line = ui.Frame(settings_box)
+    move_line = ttk.Frame(settings_box)
     move_line.grid(row=3, column=0, columnspan=6, sticky="w", pady=(4, 0))
-    ui.Label(move_line, text="完成后移动：", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(4, 2))
+    ttk.Label(move_line, text="完成后移动：", foreground="#5C6675").pack(side=tk.LEFT, padx=(4, 2))
     var_move_ok = tk.BooleanVar(value=True)
     ttk.Checkbutton(move_line, text="成功 → success/", variable=var_move_ok).pack(side=tk.LEFT, padx=(0, 10))
     var_move_fail = tk.BooleanVar(value=True)
@@ -1631,13 +1628,13 @@ def build_encode_tab(parent, app=None):
     ttk.Checkbutton(move_line, text="变大 → oversize/", variable=var_move_grow).pack(side=tk.LEFT)
 
     # 第 4 行：编码器状态（一行小字）
-    lbl_enc = ui.Label(settings_box, text="编码器：检测中…", foreground="#1a6b1a")
+    lbl_enc = ttk.Label(settings_box, text="编码器：检测中…", foreground="#1a6b1a")
     lbl_enc.grid(row=4, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
 
     # ---------------- 文件列表 ----------------
-    list_bar = ui.Frame(parent)
+    list_bar = ttk.Frame(parent)
     list_bar.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=(4, 2))
-    lbl_count = ui.Label(list_bar, text="共 0 个文件")
+    lbl_count = ttk.Label(list_bar, text="共 0 个文件")
     lbl_count.pack(side=tk.LEFT, padx=4)
 
     def _add_files():
@@ -1654,14 +1651,14 @@ def build_encode_tab(parent, app=None):
         if d:
             add_paths([d])
 
-    ui.Button(list_bar, text="添加文件", command=_add_files).pack(side=tk.LEFT, padx=3)
-    ui.Button(list_bar, text="添加文件夹", command=_add_folder).pack(side=tk.LEFT, padx=3)
-    ui.Button(list_bar, text="移除选中", command=lambda: remove_selected()).pack(side=tk.LEFT, padx=3)
-    ui.Button(list_bar, text="清空列表", command=lambda: clear_list()).pack(side=tk.LEFT, padx=3)
-    ui.Label(list_bar, text="可拖放视频/文件夹",
-              foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=8)
+    ttk.Button(list_bar, text="添加文件", command=_add_files).pack(side=tk.LEFT, padx=3)
+    ttk.Button(list_bar, text="添加文件夹", command=_add_folder).pack(side=tk.LEFT, padx=3)
+    ttk.Button(list_bar, text="移除选中", command=lambda: remove_selected()).pack(side=tk.LEFT, padx=3)
+    ttk.Button(list_bar, text="清空列表", command=lambda: clear_list()).pack(side=tk.LEFT, padx=3)
+    ttk.Label(list_bar, text="可拖放视频/文件夹",
+              foreground="#5C6675").pack(side=tk.LEFT, padx=8)
 
-    tree_frame = ui.Frame(parent)
+    tree_frame = ttk.Frame(parent)
     tree_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=8, pady=2)
     tree_frame.grid_rowconfigure(0, weight=1)
     tree_frame.grid_columnconfigure(0, weight=1)
@@ -1676,15 +1673,14 @@ def build_encode_tab(parent, app=None):
     vsb.grid(row=0, column=1, sticky="ns")
 
     # ---------------- 按钮 + 总进度 ----------------
-    btn_row = ui.Frame(parent)
+    btn_row = ttk.Frame(parent)
     btn_row.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
-    btn_start = ui.Button(btn_row, text="开始压制", bg=COLOR["accent"], fg=COLOR["text_on_accent"],
-                          disabledforeground=COLOR["text_on_accent"],
-                          activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
-                          font=FONTS["base"], padx=18, pady=4,
+    btn_start = tk.Button(btn_row, text="开始压制", bg="#2f6bff", fg="white",
+                          activebackground="#2455cc", activeforeground="white",
+                          font=("Microsoft YaHei", 10, "bold"), padx=18, pady=4,
                           cursor="hand2", command=lambda: start_batch())
     btn_start.pack(side=tk.LEFT, padx=4)
-    btn_stop = ui.Button(btn_row, text="停止", state=tk.DISABLED, padx=16, pady=4,
+    btn_stop = tk.Button(btn_row, text="停止", state=tk.DISABLED, padx=16, pady=4,
                          command=lambda: (state["stop"].set(),
                                           log("正在停止：已启动的 ffmpeg 会被结束…")))
     btn_stop.pack(side=tk.LEFT, padx=4)
@@ -1692,27 +1688,27 @@ def build_encode_tab(parent, app=None):
     bar_prog = ttk.Progressbar(btn_row, orient=tk.HORIZONTAL, mode="determinate",
                                length=300, maximum=1, value=0)
     bar_prog.pack(side=tk.LEFT, padx=(18, 8))
-    lbl_prog = ui.Label(btn_row, text="未开始", foreground=COLOR["text_secondary"])
+    lbl_prog = ttk.Label(btn_row, text="未开始", foreground="#5C6675")
     lbl_prog.pack(side=tk.LEFT)
 
     # ---------------- 运行日志（可折叠，默认收起，把空间让给文件列表） ----------------
-    log_wrap = ui.Frame(parent)
+    log_wrap = ttk.Frame(parent)
     log_wrap.grid(row=5, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 6))
     log_wrap.grid_columnconfigure(0, weight=1)
 
-    log_head = ui.Frame(log_wrap)
+    log_head = ttk.Frame(log_wrap)
     log_head.grid(row=0, column=0, sticky="ew")
     var_log_open = tk.BooleanVar(value=False)
-    btn_log_toggle = ui.Button(log_head, text="▸ 运行日志", width=11)
+    btn_log_toggle = ttk.Button(log_head, text="▸ 运行日志", width=11)
     btn_log_toggle.pack(side=tk.LEFT)
-    ui.Button(log_head, text="清空", width=6,
+    ttk.Button(log_head, text="清空", width=6,
                command=lambda: clear_log(text_log)).pack(side=tk.LEFT, padx=6)
 
-    log_body = ui.Frame(log_wrap)
+    log_body = ttk.Frame(log_wrap)
     log_body.grid(row=1, column=0, sticky="nsew", pady=(2, 0))
     log_body.grid_rowconfigure(0, weight=1)
     log_body.grid_columnconfigure(0, weight=1)
-    text_log = ui.Textbox(log_body, height=10, state="disabled", wrap=tk.WORD,
+    text_log = scrolledtext.ScrolledText(log_body, height=10, state="disabled", wrap=tk.WORD,
                                          font=("Consolas", 9))
     text_log.grid(row=0, column=0, sticky="nsew")
     log = make_logger(text_log)
@@ -1838,7 +1834,7 @@ def build_encode_tab(parent, app=None):
             if not ff:
                 ff, fp = locate_ffmpeg(load_ffmpeg_hint())
             info = probe_media(fp, path) if fp else None
-            run_ui(lambda: fill_info(iid, info))
+            ui(lambda: fill_info(iid, info))
 
         probe_pool.submit(work)
 
@@ -1872,7 +1868,7 @@ def build_encode_tab(parent, app=None):
         ver = ffmpeg_version(ff)
         lbl_ff.config(text=("✓ " + ver.replace("ffmpeg version ", "v").split(" Copyright")[0][:46]
                             if ver else "✓ 已找到 ffmpeg"), foreground="#1a6b1a")
-        lbl_enc.config(text="编码器：检测中…", foreground=COLOR["text_secondary"])
+        lbl_enc.config(text="编码器：检测中…", foreground="#5C6675")
         log(f"FFmpeg：{ff}")
         if ver:
             log("  " + ver[:120])
@@ -1881,13 +1877,13 @@ def build_encode_tab(parent, app=None):
 
         def work():
             try:
-                enc = detect_encoders(ff, log=lambda m: run_ui(lambda m=m: log(m)))
+                enc = detect_encoders(ff, log=lambda m: ui(lambda m=m: log(m)))
             except Exception:
                 tb = traceback.format_exc()
-                run_ui(lambda: log("编码器检测失败：\n" + tb))
-                run_ui(lambda: lbl_enc.config(text="编码器：检测失败", foreground="#b00020"))
+                ui(lambda: log("编码器检测失败：\n" + tb))
+                ui(lambda: lbl_enc.config(text="编码器：检测失败", foreground="#b00020"))
                 return
-            run_ui(lambda: apply_encoders(enc))
+            ui(lambda: apply_encoders(enc))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1925,8 +1921,8 @@ def build_encode_tab(parent, app=None):
         ff = state["ffmpeg"] or locate_ffmpeg(load_ffmpeg_hint())[0]
         if not ff:
             raise RuntimeError("未找到 ffmpeg，无法压制")
-        enc = detect_encoders(ff, log=lambda m: run_ui(lambda m=m: log(m)))
-        run_ui(lambda: apply_encoders(enc))
+        enc = detect_encoders(ff, log=lambda m: ui(lambda m=m: log(m)))
+        ui(lambda: apply_encoders(enc))
         return enc
 
     # ============================================================
@@ -2108,8 +2104,8 @@ def build_encode_tab(parent, app=None):
             try:
                 enc = ensure_encoders()
             except Exception as e:
-                run_ui(lambda: log(f"错误：{e}"))
-                run_ui(lambda: finish_batch(0, 0, 0, 0))
+                ui(lambda: log(f"错误：{e}"))
+                ui(lambda: finish_batch(0, 0, 0, 0))
                 return
             settings["ffmpeg"] = state["ffmpeg"]
             settings["encoders"] = enc
@@ -2118,10 +2114,10 @@ def build_encode_tab(parent, app=None):
             def one(iid):
                 nonlocal ok_n, fail_n, cancel_n, skip_n, grown_n
                 if state["stop"].is_set():
-                    run_ui(lambda: set_cell(iid, "status", "已取消"))
+                    ui(lambda: set_cell(iid, "status", "已取消"))
                     cancel_n += 1
                     state["cancel"] += 1
-                    run_ui(refresh_progress)
+                    ui(refresh_progress)
                     return
                 it = state["items"].get(iid)
                 if not it:
@@ -2131,9 +2127,9 @@ def build_encode_tab(parent, app=None):
                     # 列表是开始前拍的快照，文件可能已被上一轮压制的归档动作移走
                     fail_n += 1
                     state["fail"] += 1
-                    run_ui(lambda: set_cell(iid, "status", "失败：文件已不存在"))
-                    run_ui(lambda: log(f"  ✗ 文件已不存在（可能已被上一次压制归档或移动）：{src}"))
-                    run_ui(refresh_progress)
+                    ui(lambda: set_cell(iid, "status", "失败：文件已不存在"))
+                    ui(lambda: log(f"  ✗ 文件已不存在（可能已被上一次压制归档或移动）：{src}"))
+                    ui(refresh_progress)
                     return
                 info = it["info"] or probe_media(state["ffprobe"], src)
                 if not info:
@@ -2144,18 +2140,18 @@ def build_encode_tab(parent, app=None):
                                 if (state["ffprobe"] and move_fail) else "")
                     fail_n += 1
                     state["fail"] += 1
-                    run_ui(lambda: set_cell(iid, "status", "失败：读不到视频信息"))
-                    run_ui(lambda: log(f"  ✗ 读不到视频信息：{os.path.basename(src)}"
+                    ui(lambda: set_cell(iid, "status", "失败：读不到视频信息"))
+                    ui(lambda: log(f"  ✗ 读不到视频信息：{os.path.basename(src)}"
                                    + (f"（已移到 {archive_tag(archived)}）" if archived
                                       else "（按要求不移动源文件）" if not move_fail else "")))
-                    run_ui(refresh_progress)
+                    ui(refresh_progress)
                     return
                 plan = resolve_plan(settings, info)
                 if not plan.get("remux") and not plan["enc"]:
-                    run_ui(lambda: set_cell(iid, "status", f"失败：没有可用的 {CODEC_LABELS[plan['codec']]} 编码器"))
+                    ui(lambda: set_cell(iid, "status", f"失败：没有可用的 {CODEC_LABELS[plan['codec']]} 编码器"))
                     fail_n += 1
                     state["fail"] += 1
-                    run_ui(refresh_progress)
+                    ui(refresh_progress)
                     return
                 # 640p 模式：最长边本来就不超过 640 的直接跳过（既不放大，也不浪费时间再压一遍）
                 if settings["mode"] == "640":
@@ -2164,19 +2160,19 @@ def build_encode_tab(parent, app=None):
                         skip_n += 1
                         state["skip"] += 1
                         state["progress"].pop(iid, None)
-                        run_ui(lambda: set_cell(iid, "status", f"跳过：已 ≤640p（{dw0}x{dh0}）"))
-                        run_ui(lambda: log(f"  ⊘ 跳过：{os.path.basename(src)}"
+                        ui(lambda: set_cell(iid, "status", f"跳过：已 ≤640p（{dw0}x{dh0}）"))
+                        ui(lambda: log(f"  ⊘ 跳过：{os.path.basename(src)}"
                                        f"（{dw0}x{dh0}，最长边已 ≤640，无需压制，源文件保持原位）"))
-                        run_ui(refresh_progress)
+                        ui(refresh_progress)
                         return
                 out_dir = settings["out_dir"] or os.path.dirname(src)
                 try:
                     os.makedirs(out_dir, exist_ok=True)
                 except Exception:
-                    run_ui(lambda: set_cell(iid, "status", "失败：输出目录不可写"))
+                    ui(lambda: set_cell(iid, "status", "失败：输出目录不可写"))
                     fail_n += 1
                     state["fail"] += 1
-                    run_ui(refresh_progress)
+                    ui(refresh_progress)
                     return
                 dst = os.path.join(out_dir,
                                    output_name(src, plan["quality"], plan.get("remux", False),
@@ -2188,7 +2184,7 @@ def build_encode_tab(parent, app=None):
                             else f"{dw}x{dh}")
                 if plan.get("remux"):
                     dv_tag = f"，杜比视界 {dv_label(info)} 随码流保留" if info.get("dovi") else ""
-                    run_ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
+                    ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
                                    f"（极速转封装：-c copy，不重编码，画质音质不变{dv_tag}）"))
                 else:
                     cx = {420: "4:2:0", 422: "4:2:2", 444: "4:4:4", 400: "灰阶"}.get(
@@ -2205,13 +2201,13 @@ def build_encode_tab(parent, app=None):
                     if info.get("dovi"):
                         dv_tag = (" " + dv_label(info) +
                                   (" 保留RPU" if plan.get("keep_dv") else " RPU未保留"))
-                    run_ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
+                    ui(lambda: log(f"▶ {os.path.basename(src)}  →  {os.path.basename(dst)}"
                                    f"（{CODEC_LABELS[plan['codec']]} / {plan['enc']} / "
                                    f"{quality_tag(plan['enc'], plan['quality'])} / "
                                    f"preset {plan['preset']} / {size_txt} / "
                                    f"{depth} {cx}{hdr_tag}{vfr_tag}{dv_tag}）"))
-                run_ui(lambda: set_cell(iid, "status", "压制中 0%"))
-                run_ui(lambda: state["progress"].__setitem__(iid, 0))
+                ui(lambda: set_cell(iid, "status", "压制中 0%"))
+                ui(lambda: state["progress"].__setitem__(iid, 0))
                 work_dir = tempfile.mkdtemp(prefix="vfx_")
                 last = {"t": 0.0, "pct": -1, "speed": ""}
 
@@ -2251,19 +2247,19 @@ def build_encode_tab(parent, app=None):
                         state["progress"][iid] = pct
                         refresh_progress()
 
-                    run_ui(apply)
+                    ui(apply)
 
                 def on_cmd(cmd):
                     # 弹出 ffmpeg 窗口时，把实际执行的命令行也写进日志（可复制去手动跑）
                     if settings.get("show_console"):
                         line = subprocess.list2cmdline([str(c) for c in cmd])
-                        run_ui(lambda: log("  命令：" + line))
+                        ui(lambda: log("  命令：" + line))
 
                 ok, msg, sub_note = run_encode(settings, info, plan, src, dst, work_dir,
                                                on_progress, state["stop"], state["procs"],
                                                on_cmd=on_cmd)
                 if sub_note:
-                    run_ui(lambda: log(f"  字幕：{sub_note}"))
+                    ui(lambda: log(f"  字幕：{sub_note}"))
                 try:
                     shutil.rmtree(work_dir, ignore_errors=True)
                 except Exception:
@@ -2321,9 +2317,9 @@ def build_encode_tab(parent, app=None):
                     ok_n += 1
                     state["ok"] += 1
                     state["progress"].pop(iid, None)
-                    run_ui(lambda iid=iid, t=status_txt: set_cell(iid, "status", t))
-                    run_ui(lambda t=log_txt: log(t))
-                    run_ui(refresh_progress)
+                    ui(lambda iid=iid, t=status_txt: set_cell(iid, "status", t))
+                    ui(lambda t=log_txt: log(t))
+                    ui(refresh_progress)
                 elif state["stop"].is_set():
                     try:
                         os.remove(dst)
@@ -2332,8 +2328,8 @@ def build_encode_tab(parent, app=None):
                     cancel_n += 1
                     state["cancel"] += 1
                     state["progress"].pop(iid, None)
-                    run_ui(lambda: set_cell(iid, "status", "已取消"))
-                    run_ui(refresh_progress)
+                    ui(lambda: set_cell(iid, "status", "已取消"))
+                    ui(refresh_progress)
                 else:
                     try:
                         os.remove(dst)
@@ -2352,9 +2348,9 @@ def build_encode_tab(parent, app=None):
                     fail_n += 1
                     state["fail"] += 1
                     state["progress"].pop(iid, None)
-                    run_ui(lambda: set_cell(iid, "status", "失败 ✗"))
-                    run_ui(lambda: log(f"  ✗ 失败：{os.path.basename(src)}：{msg}{fail_note}"))
-                    run_ui(refresh_progress)
+                    ui(lambda: set_cell(iid, "status", "失败 ✗"))
+                    ui(lambda: log(f"  ✗ 失败：{os.path.basename(src)}：{msg}{fail_note}"))
+                    ui(refresh_progress)
 
             # 逐个收集结果：任一文件内部异常只把它自己标记失败，绝不让整个批次线程
             # 静默崩掉（否则所有行会永远停在「排队中」，按钮状态也会卡死）。
@@ -2371,10 +2367,10 @@ def build_encode_tab(parent, app=None):
                         fail_n += 1
                         state["fail"] += 1
                         state["progress"].pop(iid, None)
-                        run_ui(lambda iid=iid: set_cell(iid, "status", "失败：内部异常"))
-                        run_ui(lambda bad=bad, tb=tb: log(f"  ✗ 内部异常：{bad}\n{tb}"))
-                        run_ui(refresh_progress)
-            run_ui(lambda: finish_batch(ok_n, fail_n, cancel_n, skip_n, grown_n,
+                        ui(lambda iid=iid: set_cell(iid, "status", "失败：内部异常"))
+                        ui(lambda bad=bad, tb=tb: log(f"  ✗ 内部异常：{bad}\n{tb}"))
+                        ui(refresh_progress)
+            ui(lambda: finish_batch(ok_n, fail_n, cancel_n, skip_n, grown_n,
                                     bool(settings.get("move_grow", True))))
 
         def finish_batch(ok_n, fail_n, cancel_n, skip_n=0, grown_n=0, moved_grow=True):

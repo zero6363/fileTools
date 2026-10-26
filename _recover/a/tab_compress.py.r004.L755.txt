@@ -1,0 +1,36 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_compress.py", "limit": 35, "offset": 548}
+            return float(text[:-3]) * 1024 ** 3
+        if text.endswith('B'):
+            return float(text[:-1])
+    except ValueError:
+        pass
+    return None
+
+
+class CompressOptionsDialog(ui.Toplevel):
+    """图片压缩操作选项对话框"""
+
+    def __init__(self, master, options):
+        super().__init__(master)
+        self.options = options
+        self.result = None
+        self.title("操作选项")
+        self.resizable(False, False)
+        self.transient(master)
+        self.grab_set()
+        self.configure(bg=COLOR["surface_alt"])
+
+        pad = dict(padx=10, pady=4)
+
+        # ---- 保存路径 ----
+        box1 = ui.LabelFrame(self, text=" 保存路径 ")
+        box1.pack(fill="x", **pad)
+        self.var_save_mode = tk.IntVar(value=options['save_mode'])
+        for val, text in ((0, "覆盖原图"), (1, "原路径重命名"), (2, "保存到指定路径")):
+            ttk.Radiobutton(box1, text=text, variable=self.var_save_mode,
+                            value=val, command=self._pick_dir_state).pack(side="left", padx=8, pady=6)
+        row = ui.Frame(box1)
+        row.pack(fill="x", padx=8, pady=(0, 6))
+        self.var_outdir = tk.StringVar(value=options.get('outdir', '') or '')
+        self.ent_outdir = ttk.Entry(row, textvariable=self.var_outdir, width=32, state="disabled")
+        self.ent_outdir.pack(side="left", fill="x", expand=True)

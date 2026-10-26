@@ -1,0 +1,21 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "offset": 398, "limit": 20}
+def main():
+    # 高 DPI 适配，避免高分屏下界面发虚
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+    root = tk.Tk()
+    app = ToolboxApp(root)
+    try:
+        root.mainloop()
+    except Exception:
+        # windowed exe 无控制台：致命错误写入日志文件，便于排查（不再静默闪退）
+        try:
+            if getattr(sys, "frozen", False):
+                base = os.path.dirname(sys.executable)
+            else:
+                base = os.path.dirname(os.path.abspath(__file__))
+            with open(os.path.join(base, "文件工具箱_错误日志.txt"), "a", encoding="utf-8") as f:
+                f.write("=" * 50 + "\n")

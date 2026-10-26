@@ -1,0 +1,216 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/theme.py"}
+# -*- coding: utf-8 -*-
+"""文件工具箱 · 统一设计系统（Design Tokens + 现代浅色主题）
+============================================================
+集中管理颜色 / 字体 / 间距 / 圆角令牌，并把它们落地为 ttk 主题与
+可复用的组件样式。所有界面元素从这里取色，杜绝散落的硬编码值。
+
+风格方向：现代浅色简约
+  · 浅灰底（#F4F6F9）+ 近白卡片/导航（#FFFFFF / #FAFBFD）
+  · 收敛的现代蓝强调色（#3B82F6），配淡蓝选中底（#EAF2FE）
+  · 充足留白、轻描边、扁平按钮、清晰层级
+  · 语义色：成功 / 警告 / 错误，统一取用，避免各 tab 各写一套
+"""
+import tkinter as tk
+from tkinter import ttk
+
+# ============================================================
+# 1. 颜色令牌（Color Tokens）
+# ============================================================
+COLOR = {
+    # 背景层
+    "bg":            "#F4F6F9",   # 应用主背景（浅灰）
+    "surface":       "#FFFFFF",   # 卡片 / 面板表面
+    "surface_alt":   "#EEF2F7",   # 次级表面（输入框底、悬停态）
+    "nav_bg":        "#FAFBFD",   # 左侧导航栏背景（近白）
+
+    # 描边 / 分隔
+    "border":        "#E4E9F0",   # 常规描边
+    "border_strong": "#D2DAE5",   # 强调描边 / 分隔线
+
+    # 文字
+    "text":           "#1F2733",  # 主文字
+    "text_secondary": "#5C6675",  # 次要文字 / 说明
+    "text_muted":     "#939DAB",  # 占位 / 禁用
+    "text_on_accent": "#FFFFFF",  # 强调色上的文字
+
+    # 强调色（现代蓝）
+    "accent":         "#3B82F6",
+    "accent_hover":   "#2F6FE0",
+    "accent_active":  "#265FCB",
+    "accent_soft":    "#EAF2FE",  # 强调色淡底（选中 / 标签 / 激活项）
+
+    # 状态栏
+    "status_bg":      "#ECEFF4",
+
+    # 语义色
+    "success":        "#1FA971",
+    "success_active": "#178A5E",
+    "warning":        "#D9920A",
+    "warning_active": "#B5790A",
+    "error":          "#E0444B",
+    "info":           "#3B82F6",
+}
+
+# ============================================================
+# 2. 字体令牌（Typography）
+# ============================================================
+FONT_FAMILY = "Microsoft YaHei"
+FONT_MONO = "Consolas"
+
+
+def font(size=12, weight="normal"):
+    """统一字体工厂：尺寸 + 字重，家族固定为 Microsoft YaHei。"""
+    return (FONT_FAMILY, size, weight)
+
+
+FONTS = {
+    "xs":          font(10),
+    "sm":          font(11),
+    "base":        font(12),
+    "md":          font(13),
+    "lg":          font(15),
+    "xl":          font(18, "bold"),
+    "title":       font(20, "bold"),
+    "nav_title":   font(15, "bold"),
+    "nav":         font(11),
+    "nav_active":  font(11, "bold"),
+    "log":         (FONT_MONO, 9),
+}
+
+# ============================================================
+# 3. 间距 / 圆角（Spacing / Radius，4px 基准）
+# ============================================================
+SPC = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 20,
+       "2xl": 24, "3xl": 32, "4xl": 40}
+RADIUS = {"sm": 4, "md": 6, "lg": 10, "pill": 999}
+
+# ============================================================
+# 4. ttk 主题落地
+# ============================================================
+def apply_theme(root):
+    """把设计令牌写入 ttk 主题（基于 clam，跨平台可控），并设定应用底色。
+    须在创建任何 ttk 控件之前调用。"""
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except Exception:
+        pass
+
+    # 全局基线（clam 会向下继承）
+    style.configure(".",
+        background=COLOR["bg"],
+        foreground=COLOR["text"],
+        font=FONTS["base"])
+
+    style.configure("TFrame", background=COLOR["bg"])
+    style.configure("Nav.TFrame", background=COLOR["nav_bg"])
+
+    style.configure("TLabel",
+        background=COLOR["bg"], foreground=COLOR["text"], font=FONTS["base"])
+
+    style.configure("TLabelframe",
+        background=COLOR["bg"], foreground=COLOR["text_secondary"],
+        bordercolor=COLOR["border"], relief="groove", borderwidth=1)
+    style.configure("TLabelframe.Label",
+        background=COLOR["bg"], foreground=COLOR["text_secondary"], font=FONTS["sm"])
+
+    # 次要按钮（如「浏览…」）
+    style.configure("TButton",
+        background=COLOR["surface"], foreground=COLOR["text"],
+        bordercolor=COLOR["border"], darkcolor=COLOR["border"],
+        lightcolor=COLOR["surface"], relief="solid", borderwidth=1,
+        font=FONTS["base"], padding=(10, 4))
+    style.map("TButton",
+        background=[("active", COLOR["surface_alt"]), ("pressed", COLOR["border"])],
+        foreground=[("disabled", COLOR["text_muted"])])
+
+    # 输入框
+    style.configure("TEntry",
+        fieldbackground=COLOR["surface"], foreground=COLOR["text"],
+        bordercolor=COLOR["border"], lightcolor=COLOR["surface"],
+        relief="solid", borderwidth=1, padding=(6, 3))
+    style.map("TEntry",
+        bordercolor=[("focus", COLOR["accent"])],
+        fieldbackground=[("readonly", COLOR["surface_alt"])])
+
+    style.configure("TCombobox",
+        fieldbackground=COLOR["surface"], foreground=COLOR["text"],
+        bordercolor=COLOR["border"], relief="solid", borderwidth=1, padding=(6, 3))
+    style.map("TCombobox", fieldbackground=[("readonly", COLOR["surface"])])
+
+    style.configure("TSpinbox",
+        fieldbackground=COLOR["surface"], foreground=COLOR["text"],
+        bordercolor=COLOR["border"], relief="solid", borderwidth=1, padding=(6, 3))
+
+    # 勾选框
+    style.configure("TCheckbutton",
+        background=COLOR["bg"], foreground=COLOR["text"], font=FONTS["base"])
+    style.map("TCheckbutton", background=[("active", COLOR["bg"])])
+
+    # 笔记本（如有）
+    style.configure("TNotebook", background=COLOR["bg"], bordercolor=COLOR["border"])
+    style.configure("TNotebook.Tab",
+        background=COLOR["surface_alt"], foreground=COLOR["text_secondary"],
+        padding=(12, 6), font=FONTS["base"])
+    style.map("TNotebook.Tab",
+        background=[("selected", COLOR["surface"])],
+        foreground=[("selected", COLOR["accent"])])
+
+    # 表格（硬盘哈希扫描等）
+    style.configure("Treeview",
+        background=COLOR["surface"], foreground=COLOR["text"],
+        fieldbackground=COLOR["surface"], bordercolor=COLOR["border"],
+        rowheight=28, font=FONTS["base"])
+    style.configure("Treeview.Heading",
+        background=COLOR["surface_alt"], foreground=COLOR["text_secondary"],
+        font=FONTS["sm"], relief="flat", borderwidth=1)
+    style.map("Treeview",
+        background=[("selected", COLOR["accent_soft"])],
+        foreground=[("selected", COLOR["accent"])])
+    style.map("Treeview.Heading", background=[("active", COLOR["border"])])
+
+    # 滚动条
+    style.configure("TScrollbar",
+        background=COLOR["surface_alt"], troughcolor=COLOR["bg"],
+        bordercolor=COLOR["bg"], arrowcolor=COLOR["text_muted"], relief="flat")
+
+    # 应用底色
+    try:
+        root.configure(background=COLOR["bg"])
+    except Exception:
+        pass
+    return style
+
+
+# ============================================================
+# 5. 复用组件
+# ============================================================
+def make_primary_button(parent, text, command, **kw):
+    """主操作按钮（tk.Button）：扁平蓝 + 悬停加深 + 禁用仍可读（白字）。"""
+    btn = tk.Button(
+        parent, text=text, command=command,
+        bg=COLOR["accent"], fg=COLOR["text_on_accent"],
+        activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
+        disabledforeground=COLOR["text_on_accent"],
+        relief=tk.FLAT, borderwidth=0,
+        font=FONTS["base"], padx=kw.pop("padx", 18), pady=kw.pop("pady", 6),
+        cursor="hand2", **kw,
+    )
+    _bind_accent_hover(btn)
+    return btn
+
+
+def _bind_accent_hover(btn):
+    def _enter(e):
+        if str(btn.cget("state")) != tk.DISABLED:
+            btn.configure(bg=COLOR["accent_hover"])
+    def _leave(e):
+        btn.configure(bg=COLOR["accent"])
+    btn.bind("<Enter>", _enter)
+    btn.bind("<Leave>", _leave)
+
+
+def make_section_title(parent, text):
+    """区块标题标签：中等字号主文字，用于分隔面板内的功能段落。"""
+    return ttk.Label(parent, text=text, font=FONTS["md"], foreground=COLOR["text"])

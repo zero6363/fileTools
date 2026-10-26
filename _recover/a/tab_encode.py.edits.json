@@ -1,0 +1,14 @@
+[
+ {
+  "old": "from . import config\nfrom .common import (clean_path, clear_log, get_unique_path, make_logger,\n                     make_num_box, natural_key)",
+  "new": "from . import config\nfrom .common import (clean_path, clear_log, get_unique_path, make_logger,\n                     make_num_box, natural_key)\nfrom .theme import COLOR",
+  "call_line": 139,
+  "replace_all": false
+ },
+ {
+  "old": "    btn_start = tk.Button(btn_row, text=\"开始压制\", bg=\"#2f6bff\", fg=\"white\",\n                          activebackground=\"#2455cc\", activeforeground=\"white\",\n                          font=(\"Microsoft YaHei\", 10, \"bold\"), padx=18, pady=4,\n                          cursor=\"hand2\", command=lambda: start_batch())",
+  "new": "    btn_start = tk.Button(btn_row, text=\"开始压制\", bg=COLOR[\"accent\"], fg=COLOR[\"text_on_accent\"],\n                          disabledforeground=COLOR[\"text_on_accent\"],\n                          activebackground=COLOR[\"accent_active\"], activeforeground=COLOR[\"text_on_accent\"],\n                          font=(\"Microsoft YaHei\", 10, \"bold\"), padx=18, pady=4,\n                          cursor=\"hand2\", command=lambda: start_batch())",
+  "call_line": 142,
+  "replace_all": false
+ }
+]

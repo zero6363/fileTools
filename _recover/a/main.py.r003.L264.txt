@@ -1,0 +1,15 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "offset": 316, "limit": 14}
+        frame.pack(fill=tk.BOTH, expand=True)
+        current_title = self.nav_items[index][2]
+        for i, (btn, _f, _title) in enumerate(self.nav_items):
+            if i == index:
+                btn._active = True
+                btn.config(bg=COLOR["accent"], fg=COLOR["text_on_accent"], font=FONTS["nav_active"])
+            else:
+                btn._active = False
+                btn.config(bg=COLOR["nav_bg"], fg=COLOR["text_secondary"], font=FONTS["nav"])
+        self.status.config(text=f"当前工具：{current_title}")
+        handler = self._show_handlers.get(frame)
+        if handler:
+            try:
+                handler()

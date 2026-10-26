@@ -9,14 +9,12 @@ import string
 from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
-from tkinter import messagebox
-from . import ui, ui as ttk
+from tkinter import messagebox, ttk
 
 from .common import (_module_available, clean_path, clear_log, form_label,
                      form_note, make_check, make_entry_row, make_file_row,
                      make_form, make_log_panel, make_path_row, make_spin_row,
                      make_start_button, make_tip, natural_key, run_task)
-from .theme import COLOR
 
 
 # ⑩ 图片生成MD —— 原 记录md.py
@@ -603,7 +601,7 @@ def build_md_tab(parent):
     form_note(form, 1, "在源目录下创建该文件夹，可自定义输入")
 
     # 三个复选框放在输入列，与上方输入框左对齐
-    check_row = ui.Frame(form)
+    check_row = ttk.Frame(form)
     check_row.grid(row=2, column=1, sticky="w", pady=2)
     var_sub = make_check(check_row, "递归遍历子目录", default=True, row=0, column=0)
     var_folder = make_check(check_row, "md添加文件夹名称", default=True, row=0, column=1)
@@ -692,11 +690,11 @@ def build_merge_tab(parent):
     parent.grid_rowconfigure(4, weight=1)
     make_tip(parent, 0, "把指定后缀的文件合并为一个文件，每个文件前会带上原文件名与路径。")
     var_dir = make_path_row(parent, 1, "目标文件夹：", title="选择目标文件夹")
-    ui.Label(parent, text="目标后缀：").grid(row=2, column=0, sticky="w", padx=6, pady=5)
+    ttk.Label(parent, text="目标后缀：").grid(row=2, column=0, sticky="w", padx=6, pady=5)
     var_suffix = tk.StringVar(value=".txt")
     ttk.Combobox(parent, textvariable=var_suffix, width=12,
                  values=[".txt", ".srt", ".md", ".log"]).grid(row=2, column=1, sticky="w", padx=6)
-    ui.Label(parent, text="可直接输入自定义后缀", foreground=COLOR["text_secondary"]).grid(row=2, column=2, sticky="w", padx=4)
+    ttk.Label(parent, text="可直接输入自定义后缀", foreground="#5C6675").grid(row=2, column=2, sticky="w", padx=4)
     var_sub = make_check(parent, "递归遍历子目录", default=False, row=2, column=3)
     text_log, log = make_log_panel(parent, 4)
 

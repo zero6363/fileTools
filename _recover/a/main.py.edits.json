@@ -1,0 +1,92 @@
+[
+ {
+  "old": "from .common import (APP_TITLE, _module_available, install_drop_support,\n                     load_window_config, restore_window_geometry,\n                     save_window_geometry)",
+  "new": "from .common import (APP_TITLE, _module_available, install_drop_support,\n                     load_window_config, restore_window_geometry,\n                     save_window_geometry)\nfrom .theme import apply_theme, COLOR, FONTS",
+  "call_line": 60,
+  "replace_all": false
+ },
+ {
+  "old": "        root.protocol(\"WM_DELETE_WINDOW\", self.on_close)",
+  "new": "        root.protocol(\"WM_DELETE_WINDOW\", self.on_close)\n\n        # 注入统一设计系统（现代浅色主题）：须在创建任何 ttk 控件前调用\n        apply_theme(root)",
+  "call_line": 63,
+  "replace_all": false
+ },
+ {
+  "old": "        # 主体：左侧纵向菜单 + 右侧工具内容区\n        body = ttk.Frame(root)\n        body.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)\n\n        # 左侧菜单：宽度可拖拽调整；按钮放画布内，超出高度时可滚动\n        nav = ttk.Frame(body, width=nav_width)\n        nav.pack(side=tk.LEFT, fill=tk.Y)\n        nav.pack_propagate(False)\n        self.nav = nav\n\n        ttk.Label(nav, text=\"工具箱\", font=(\"Microsoft YaHei\", 15, \"bold\")).pack(pady=(12, 2))\n        ttk.Label(nav, text=\"点击左侧菜单切换工具\", foreground=\"#888888\").pack(pady=(0, 8))",
+  "new": "        # 主体：左侧纵向菜单 + 右侧工具内容区\n        body = ttk.Frame(root)\n        body.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)\n\n        # 左侧菜单：宽度可拖拽调整；按钮放画布内，超出高度时可滚动\n        nav = ttk.Frame(body, width=nav_width, style=\"Nav.TFrame\")\n        nav.pack(side=tk.LEFT, fill=tk.Y)\n        nav.pack_propagate(False)\n        self.nav = nav\n\n        ttk.Label(nav, text=\"工具箱\", font=FONTS[\"nav_title\"]).pack(pady=(12, 2))\n        ttk.Label(nav, text=\"点击左侧菜单切换工具\",\n                  foreground=COLOR[\"text_muted\"], font=FONTS[\"sm\"]).pack(pady=(0, 8))",
+  "call_line": 65,
+  "replace_all": false
+ },
+ {
+  "old": "        menu_canvas = tk.Canvas(menu_scroll, yscrollcommand=menu_vsb.set,\n                                highlightthickness=0, bg=\"#f2f2f2\")\n        menu_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)\n        menu_vsb.config(command=menu_canvas.yview)\n\n        menu = tk.Frame(menu_canvas, bg=\"#f2f2f2\")",
+  "new": "        menu_canvas = tk.Canvas(menu_scroll, yscrollcommand=menu_vsb.set,\n                                highlightthickness=0, bg=COLOR[\"nav_bg\"])\n        menu_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)\n        menu_vsb.config(command=menu_canvas.yview)\n\n        menu = tk.Frame(menu_canvas, bg=COLOR[\"nav_bg\"])",
+  "call_line": 67,
+  "replace_all": false
+ },
+ {
+  "old": "        # 分隔条：拖拽调整菜单宽度（限制在 160–360），双击恢复默认宽度\n        sash = tk.Frame(body, width=5, cursor=\"sb_h_double_arrow\")",
+  "new": "        # 分隔条：拖拽调整菜单宽度（限制在 160–360），双击恢复默认宽度\n        sash = tk.Frame(body, width=5, bg=COLOR[\"border\"], cursor=\"sb_h_double_arrow\")",
+  "call_line": 69,
+  "replace_all": false
+ },
+ {
+  "old": "        for index, (title, builder) in enumerate(builders):\n            frame = ttk.Frame(content, padding=8)",
+  "new": "        for index, (title, builder) in enumerate(builders):\n            frame = ttk.Frame(content, padding=10)",
+  "call_line": 73,
+  "replace_all": false
+ },
+ {
+  "old": "            self.tool_frames.append(frame)\n            btn = tk.Button(\n                menu, text=\"  \" + title, anchor=\"w\", command=lambda i=index: self.show_tool(i),\n                bg=\"#f2f2f2\", fg=\"#333333\", relief=tk.FLAT, activebackground=\"#e4e4e4\",\n                font=(\"Microsoft YaHei\", 10), padx=10, pady=3, cursor=\"hand2\",\n            )\n            btn.pack(fill=tk.X, pady=1)\n            self.nav_items.append((btn, frame, title))",
+  "new": "            self.tool_frames.append(frame)\n            btn = tk.Button(\n                menu, text=\"  \" + title, anchor=\"w\", command=lambda i=index: self.show_tool(i),\n                bg=COLOR[\"nav_bg\"], fg=COLOR[\"text_secondary\"], relief=tk.FLAT,\n                activebackground=COLOR[\"surface_alt\"], activeforeground=COLOR[\"text\"],\n                font=FONTS[\"nav\"], padx=10, pady=6, cursor=\"hand2\",\n            )\n            btn._active = False\n\n            def _enter(e, b=btn):\n                if not b._active:\n                    b.configure(bg=COLOR[\"surface_alt\"])\n\n            def _leave(e, b=btn):\n                if not b._active:\n                    b.configure(bg=COLOR[\"nav_bg\"])\n\n            btn.bind(\"<Enter>\", _enter)\n            btn.bind(\"<Leave>\", _leave)\n            btn.pack(fill=tk.X, pady=1)\n            self.nav_items.append((btn, frame, title))",
+  "call_line": 75,
+  "replace_all": false
+ },
+ {
+  "old": "        self.status = tk.Label(root, text=\"就绪\", anchor=\"w\", relief=tk.SUNKEN, padx=8, pady=3)\n        self.status.pack(fill=tk.X, side=tk.BOTTOM)",
+  "new": "        self.status = tk.Label(\n            root, text=\"就绪\", anchor=\"w\", relief=tk.FLAT, padx=8, pady=4,\n            bg=COLOR[\"status_bg\"], fg=COLOR[\"text_secondary\"], font=FONTS[\"sm\"],\n            highlightthickness=1, highlightbackground=COLOR[\"border\"],\n            highlightcolor=COLOR[\"border\"])\n        self.status.pack(fill=tk.X, side=tk.BOTTOM)",
+  "call_line": 77,
+  "replace_all": false
+ },
+ {
+  "old": "        current_title = self.nav_items[index][2]\n        for i, (btn, _f, _title) in enumerate(self.nav_items):\n            if i == index:\n                btn.config(bg=\"#2f6bff\", fg=\"white\", font=(\"Microsoft YaHei\", 10, \"bold\"))\n            else:\n                btn.config(bg=\"#f2f2f2\", fg=\"#333333\", font=(\"Microsoft YaHei\", 10))",
+  "new": "        current_title = self.nav_items[index][2]\n        for i, (btn, _f, _title) in enumerate(self.nav_items):\n            if i == index:\n                btn._active = True\n                btn.config(bg=COLOR[\"accent\"], fg=COLOR[\"text_on_accent\"], font=FONTS[\"nav_active\"])\n            else:\n                btn._active = False\n                btn.config(bg=COLOR[\"nav_bg\"], fg=COLOR[\"text_secondary\"], font=FONTS[\"nav\"])",
+  "call_line": 80,
+  "replace_all": false
+ },
+ {
+  "old": "        ttk.Label(nav, text=\"工具箱\", font=FONTS[\"nav_title\"]).pack(pady=(12, 2))\n        ttk.Label(nav, text=\"点击左侧菜单切换工具\",\n                  foreground=COLOR[\"text_muted\"], font=FONTS[\"sm\"]).pack(pady=(0, 8))",
+  "new": "        ttk.Label(nav, text=\"工具箱\", font=FONTS[\"nav_title\"],\n                  background=COLOR[\"nav_bg\"]).pack(pady=(12, 2), fill=tk.X)\n        ttk.Label(nav, text=\"点击左侧菜单切换工具\",\n                  foreground=COLOR[\"text_muted\"], font=FONTS[\"sm\"],\n                  background=COLOR[\"nav_bg\"]).pack(pady=(0, 8), fill=tk.X)",
+  "call_line": 344,
+  "replace_all": false
+ },
+ {
+  "old": "        sash = tk.Frame(body, width=5, bg=COLOR[\"border\"], cursor=\"sb_h_double_arrow\")",
+  "new": "        sash = tk.Frame(body, width=5, bg=COLOR[\"border_strong\"], cursor=\"sb_h_double_arrow\")",
+  "call_line": 347,
+  "replace_all": false
+ },
+ {
+  "old": "            btn = tk.Button(\n                menu, text=\"  \" + title, anchor=\"w\", command=lambda i=index: self.show_tool(i),\n                bg=COLOR[\"nav_bg\"], fg=COLOR[\"text_secondary\"], relief=tk.FLAT,\n                activebackground=COLOR[\"surface_alt\"], activeforeground=COLOR[\"text\"],",
+  "new": "            btn = tk.Button(\n                menu, text=\"  \" + title, anchor=\"w\", command=lambda i=index: self.show_tool(i),\n                bg=COLOR[\"nav_bg\"], fg=COLOR[\"text\"], relief=tk.FLAT,\n                activebackground=COLOR[\"surface_alt\"], activeforeground=COLOR[\"text\"],",
+  "call_line": 349,
+  "replace_all": false
+ },
+ {
+  "old": "            def _enter(e, b=btn):\n                if not b._active:\n                    b.configure(bg=COLOR[\"surface_alt\"])",
+  "new": "            def _enter(e, b=btn):\n                if not b._active:\n                    b.configure(bg=COLOR[\"nav_item_hover\"])",
+  "call_line": 351,
+  "replace_all": false
+ },
+ {
+  "old": "import os\nimport sys\nimport traceback\nimport tkinter as tk\nfrom tkinter import messagebox, ttk\n\nfrom .common import (APP_TITLE, _module_available, install_drop_support,\n                     load_window_config, restore_window_geometry,\n                     save_window_geometry)\nfrom .theme import apply_theme, COLOR, FONTS\n\n# 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）\nNAV_DEFAULT_WIDTH = 210\nNAV_MIN_WIDTH = 160\nNAV_MAX_WIDTH = 360",
+  "new": "import os\nimport sys\nimport traceback\nimport tkinter as tk\nfrom tkinter import messagebox\nfrom tkinter import ttk as real_ttk\n\nfrom .common import (APP_TITLE, _module_available, install_drop_support,\n                     load_window_config, restore_window_geometry,\n                     save_window_geometry)\nfrom .theme import apply_theme, COLOR, FONTS\nfrom . import ui, ui as ttk\n\n# 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）\nNAV_DEFAULT_WIDTH = 184\nNAV_MIN_WIDTH = 132\nNAV_MAX_WIDTH = 320",
+  "call_line": 562,
+  "replace_all": false
+ },
+ {
+  "old": "        self.nav = nav\n        nav_inner = nav.scrollable_frame",
+  "new": "        self.nav = nav\n        # CTk 6.x：可滚动容器实例自身即为内容容器，子控件直接放入它\n        nav_inner = nav",
+  "call_line": 645,
+  "replace_all": false
+ }
+]

@@ -1,0 +1,1387 @@
+[
+ {
+  "line": 35,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 44,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 61,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792986393424,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 112,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792986393424,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_hashscan.py": {
+    "backupFileName": "455b36fa34f30dae@v1",
+    "version": 1,
+    "backupTime": 1792986839344,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 140,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792986393424,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_hashscan.py": {
+    "backupFileName": "455b36fa34f30dae@v1",
+    "version": 1,
+    "backupTime": 1792986839344,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_encode.py": {
+    "backupFileName": "33d4076bbf8558c2@v1",
+    "version": 1,
+    "backupTime": 1792986949630,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 153,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792986393424,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_hashscan.py": {
+    "backupFileName": "455b36fa34f30dae@v1",
+    "version": 1,
+    "backupTime": 1792986839344,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_encode.py": {
+    "backupFileName": "33d4076bbf8558c2@v1",
+    "version": 1,
+    "backupTime": 1792986949630,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rsbackup.py": {
+    "backupFileName": "5d8b0950322449c6@v1",
+    "version": 1,
+    "backupTime": 1792986988843,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 175,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792986393424,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_hashscan.py": {
+    "backupFileName": "455b36fa34f30dae@v1",
+    "version": 1,
+    "backupTime": 1792986839344,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_encode.py": {
+    "backupFileName": "33d4076bbf8558c2@v1",
+    "version": 1,
+    "backupTime": 1792986949630,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rsbackup.py": {
+    "backupFileName": "5d8b0950322449c6@v1",
+    "version": 1,
+    "backupTime": 1792986988843,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_translate.py": {
+    "backupFileName": "568b8b7441093593@v1",
+    "version": 1,
+    "backupTime": 1792987058303,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 176,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792986393424,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_hashscan.py": {
+    "backupFileName": "455b36fa34f30dae@v1",
+    "version": 1,
+    "backupTime": 1792986839344,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_encode.py": {
+    "backupFileName": "33d4076bbf8558c2@v1",
+    "version": 1,
+    "backupTime": 1792986949630,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rsbackup.py": {
+    "backupFileName": "5d8b0950322449c6@v1",
+    "version": 1,
+    "backupTime": 1792986988843,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_translate.py": {
+    "backupFileName": "568b8b7441093593@v1",
+    "version": 1,
+    "backupTime": 1792987058303,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rename.py": {
+    "backupFileName": "6654a6f44ded43fd@v1",
+    "version": 1,
+    "backupTime": 1792987058361,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 177,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792986393424,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_hashscan.py": {
+    "backupFileName": "455b36fa34f30dae@v1",
+    "version": 1,
+    "backupTime": 1792986839344,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_encode.py": {
+    "backupFileName": "33d4076bbf8558c2@v1",
+    "version": 1,
+    "backupTime": 1792986949630,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rsbackup.py": {
+    "backupFileName": "5d8b0950322449c6@v1",
+    "version": 1,
+    "backupTime": 1792986988843,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_translate.py": {
+    "backupFileName": "568b8b7441093593@v1",
+    "version": 1,
+    "backupTime": 1792987058303,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rename.py": {
+    "backupFileName": "6654a6f44ded43fd@v1",
+    "version": 1,
+    "backupTime": 1792987058361,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_docs.py": {
+    "backupFileName": "4d20f7de7f8e1060@v1",
+    "version": 1,
+    "backupTime": 1792987063489,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 178,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792986393424,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_hashscan.py": {
+    "backupFileName": "455b36fa34f30dae@v1",
+    "version": 1,
+    "backupTime": 1792986839344,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_encode.py": {
+    "backupFileName": "33d4076bbf8558c2@v1",
+    "version": 1,
+    "backupTime": 1792986949630,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rsbackup.py": {
+    "backupFileName": "5d8b0950322449c6@v1",
+    "version": 1,
+    "backupTime": 1792986988843,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_translate.py": {
+    "backupFileName": "568b8b7441093593@v1",
+    "version": 1,
+    "backupTime": 1792987058303,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rename.py": {
+    "backupFileName": "6654a6f44ded43fd@v1",
+    "version": 1,
+    "backupTime": 1792987058361,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_docs.py": {
+    "backupFileName": "4d20f7de7f8e1060@v1",
+    "version": 1,
+    "backupTime": 1792987063489,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_compress.py": {
+    "backupFileName": "4ab07648657dc99b@v1",
+    "version": 1,
+    "backupTime": 1792987081450,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 276,
+  "backups": {
+   "toolbox\\theme.py": {
+    "version": 1,
+    "backupTime": 1792986337676,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792986353393,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792986393424,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_hashscan.py": {
+    "backupFileName": "455b36fa34f30dae@v1",
+    "version": 1,
+    "backupTime": 1792986839344,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_encode.py": {
+    "backupFileName": "33d4076bbf8558c2@v1",
+    "version": 1,
+    "backupTime": 1792986949630,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rsbackup.py": {
+    "backupFileName": "5d8b0950322449c6@v1",
+    "version": 1,
+    "backupTime": 1792986988843,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_translate.py": {
+    "backupFileName": "568b8b7441093593@v1",
+    "version": 1,
+    "backupTime": 1792987058303,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_rename.py": {
+    "backupFileName": "6654a6f44ded43fd@v1",
+    "version": 1,
+    "backupTime": 1792987058361,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_docs.py": {
+    "backupFileName": "4d20f7de7f8e1060@v1",
+    "version": 1,
+    "backupTime": 1792987063489,
+    "existedAtTrack": true
+   },
+   "toolbox\\tab_compress.py": {
+    "backupFileName": "4ab07648657dc99b@v1",
+    "version": 1,
+    "backupTime": 1792987081450,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v1",
+    "version": 1,
+    "backupTime": 1792987766520,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 295,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 1,
+    "backupTime": 1792988499525,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 322,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "backupFileName": "98bfd616552234ac@v2",
+    "version": 2,
+    "backupTime": 1792988712456,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 340,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "backupFileName": "98bfd616552234ac@v2",
+    "version": 2,
+    "backupTime": 1792988712456,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v1",
+    "version": 1,
+    "backupTime": 1792988853962,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 345,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "backupFileName": "98bfd616552234ac@v2",
+    "version": 2,
+    "backupTime": 1792988712456,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v1",
+    "version": 1,
+    "backupTime": 1792988853962,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792988873322,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 370,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "backupFileName": "98bfd616552234ac@v2",
+    "version": 2,
+    "backupTime": 1792988712456,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v1",
+    "version": 1,
+    "backupTime": 1792988853962,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v1",
+    "version": 1,
+    "backupTime": 1792988873322,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v1",
+    "version": 1,
+    "backupTime": 1792989005797,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 378,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v2",
+    "version": 2,
+    "backupTime": 1792989083854,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v2",
+    "version": 2,
+    "backupTime": 1792989083857,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v2",
+    "version": 2,
+    "backupTime": 1792989083860,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 414,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v2",
+    "version": 2,
+    "backupTime": 1792989083854,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v2",
+    "version": 2,
+    "backupTime": 1792989083857,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v2",
+    "version": 2,
+    "backupTime": 1792989083860,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 460,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v2",
+    "version": 2,
+    "backupTime": 1792989083854,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v2",
+    "version": 2,
+    "backupTime": 1792989083857,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v2",
+    "version": 2,
+    "backupTime": 1792989083860,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 470,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v2",
+    "version": 2,
+    "backupTime": 1792989083854,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v2",
+    "version": 2,
+    "backupTime": 1792989083857,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v2",
+    "version": 2,
+    "backupTime": 1792989083860,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 476,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v2",
+    "version": 2,
+    "backupTime": 1792989083854,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v2",
+    "version": 2,
+    "backupTime": 1792989083857,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 528,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v2",
+    "version": 2,
+    "backupTime": 1792989083854,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v2",
+    "version": 2,
+    "backupTime": 1792989083857,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "version": 1,
+    "backupTime": 1792990306860,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 534,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v2",
+    "version": 2,
+    "backupTime": 1792989083854,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v2",
+    "version": 2,
+    "backupTime": 1792989083857,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "version": 1,
+    "backupTime": 1792990306860,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792990330420,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 616,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v2",
+    "version": 2,
+    "backupTime": 1792989083854,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v2",
+    "version": 2,
+    "backupTime": 1792989083857,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "version": 1,
+    "backupTime": 1792990306860,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v1",
+    "version": 1,
+    "backupTime": 1792990330420,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "version": 1,
+    "backupTime": 1792991012959,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 675,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v2",
+    "version": 2,
+    "backupTime": 1792991275457,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v2",
+    "version": 2,
+    "backupTime": 1792991275459,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "backupFileName": "d6e881f94684f9de@v2",
+    "version": 2,
+    "backupTime": 1792991275461,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 710,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v2",
+    "version": 2,
+    "backupTime": 1792991275457,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v2",
+    "version": 2,
+    "backupTime": 1792991275459,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "backupFileName": "d6e881f94684f9de@v2",
+    "version": 2,
+    "backupTime": 1792991275461,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 728,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v2",
+    "version": 2,
+    "backupTime": 1792991275457,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v2",
+    "version": 2,
+    "backupTime": 1792991275459,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "backupFileName": "d6e881f94684f9de@v2",
+    "version": 2,
+    "backupTime": 1792991275461,
+    "existedAtTrack": false
+   },
+   "_shot.py": {
+    "version": 1,
+    "backupTime": 1792991494085,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 811,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v2",
+    "version": 2,
+    "backupTime": 1792991275457,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v2",
+    "version": 2,
+    "backupTime": 1792991275459,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "backupFileName": "d6e881f94684f9de@v2",
+    "version": 2,
+    "backupTime": 1792991275461,
+    "existedAtTrack": false
+   },
+   "_shot.py": {
+    "version": 1,
+    "backupTime": 1792991494085,
+    "existedAtTrack": false
+   },
+   "README.md": {
+    "backupFileName": "aa2fef9e608d870d@v1",
+    "version": 1,
+    "backupTime": 1792991874918,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 815,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v2",
+    "version": 2,
+    "backupTime": 1792991275457,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v2",
+    "version": 2,
+    "backupTime": 1792991275459,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "backupFileName": "d6e881f94684f9de@v2",
+    "version": 2,
+    "backupTime": 1792991275461,
+    "existedAtTrack": false
+   },
+   "_shot.py": {
+    "version": 1,
+    "backupTime": 1792991494085,
+    "existedAtTrack": false
+   },
+   "README.md": {
+    "backupFileName": "aa2fef9e608d870d@v1",
+    "version": 1,
+    "backupTime": 1792991874918,
+    "existedAtTrack": true
+   },
+   "打包.bat": {
+    "backupFileName": "2e884255bb709e10@v1",
+    "version": 1,
+    "backupTime": 1792991883483,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 832,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v3",
+    "version": 3,
+    "backupTime": 1792991954176,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v3",
+    "version": 3,
+    "backupTime": 1792991954180,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "version": 3,
+    "backupTime": 1792991954182,
+    "existedAtTrack": false
+   },
+   "_shot.py": {
+    "version": 1,
+    "backupTime": 1792991494085,
+    "existedAtTrack": false
+   },
+   "README.md": {
+    "backupFileName": "aa2fef9e608d870d@v2",
+    "version": 2,
+    "backupTime": 1792991954183,
+    "existedAtTrack": true
+   },
+   "打包.bat": {
+    "backupFileName": "2e884255bb709e10@v2",
+    "version": 2,
+    "backupTime": 1792991954187,
+    "existedAtTrack": true
+   }
+  }
+ },
+ {
+  "line": 852,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v3",
+    "version": 3,
+    "backupTime": 1792991954176,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v3",
+    "version": 3,
+    "backupTime": 1792991954180,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "version": 3,
+    "backupTime": 1792991954182,
+    "existedAtTrack": false
+   },
+   "_shot.py": {
+    "version": 1,
+    "backupTime": 1792991494085,
+    "existedAtTrack": false
+   },
+   "README.md": {
+    "backupFileName": "aa2fef9e608d870d@v2",
+    "version": 2,
+    "backupTime": 1792991954183,
+    "existedAtTrack": true
+   },
+   "打包.bat": {
+    "backupFileName": "2e884255bb709e10@v2",
+    "version": 2,
+    "backupTime": 1792991954187,
+    "existedAtTrack": true
+   },
+   "_release.py": {
+    "version": 1,
+    "backupTime": 1792992058238,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 861,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v3",
+    "version": 3,
+    "backupTime": 1792989725949,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v3",
+    "version": 3,
+    "backupTime": 1792991954176,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v3",
+    "version": 3,
+    "backupTime": 1792991954180,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "version": 3,
+    "backupTime": 1792991954182,
+    "existedAtTrack": false
+   },
+   "_shot.py": {
+    "version": 1,
+    "backupTime": 1792991494085,
+    "existedAtTrack": false
+   },
+   "README.md": {
+    "backupFileName": "aa2fef9e608d870d@v2",
+    "version": 2,
+    "backupTime": 1792991954183,
+    "existedAtTrack": true
+   },
+   "打包.bat": {
+    "backupFileName": "2e884255bb709e10@v2",
+    "version": 2,
+    "backupTime": 1792991954187,
+    "existedAtTrack": true
+   },
+   "_release.py": {
+    "backupFileName": "efbdac7e4d162ff3@v2",
+    "version": 2,
+    "backupTime": 1792992083024,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 882,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v4",
+    "version": 4,
+    "backupTime": 1792992165624,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v3",
+    "version": 3,
+    "backupTime": 1792991954176,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v3",
+    "version": 3,
+    "backupTime": 1792991954180,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "version": 3,
+    "backupTime": 1792991954182,
+    "existedAtTrack": false
+   },
+   "_shot.py": {
+    "version": 1,
+    "backupTime": 1792991494085,
+    "existedAtTrack": false
+   },
+   "README.md": {
+    "backupFileName": "aa2fef9e608d870d@v2",
+    "version": 2,
+    "backupTime": 1792991954183,
+    "existedAtTrack": true
+   },
+   "打包.bat": {
+    "backupFileName": "2e884255bb709e10@v2",
+    "version": 2,
+    "backupTime": 1792991954187,
+    "existedAtTrack": true
+   },
+   "_release.py": {
+    "version": 3,
+    "backupTime": 1792992165628,
+    "existedAtTrack": false
+   }
+  }
+ },
+ {
+  "line": 898,
+  "backups": {
+   ".workbuddy\\screenshot_app.py": {
+    "version": 3,
+    "backupTime": 1792989083852,
+    "existedAtTrack": false
+   },
+   "toolbox\\theme.py": {
+    "backupFileName": "06349d344c6a2505@v3",
+    "version": 3,
+    "backupTime": 1792991275450,
+    "existedAtTrack": true
+   },
+   "toolbox\\main.py": {
+    "backupFileName": "0695768fcc93a8a7@v3",
+    "version": 3,
+    "backupTime": 1792991275453,
+    "existedAtTrack": true
+   },
+   ".workbuddy\\memory\\2026-10-26.md": {
+    "backupFileName": "d79dee29c79a7144@v4",
+    "version": 4,
+    "backupTime": 1792992165624,
+    "existedAtTrack": true
+   },
+   "toolbox\\ui.py": {
+    "backupFileName": "a2a84d35e7ab6cb5@v3",
+    "version": 3,
+    "backupTime": 1792991954176,
+    "existedAtTrack": false
+   },
+   "toolbox\\common.py": {
+    "backupFileName": "05cb6cfdc4370228@v3",
+    "version": 3,
+    "backupTime": 1792991954180,
+    "existedAtTrack": true
+   },
+   "_smoke.py": {
+    "version": 3,
+    "backupTime": 1792991954182,
+    "existedAtTrack": false
+   },
+   "_shot.py": {
+    "version": 1,
+    "backupTime": 1792991494085,
+    "existedAtTrack": false
+   },
+   "README.md": {
+    "backupFileName": "aa2fef9e608d870d@v2",
+    "version": 2,
+    "backupTime": 1792991954183,
+    "existedAtTrack": true
+   },
+   "打包.bat": {
+    "backupFileName": "2e884255bb709e10@v2",
+    "version": 2,
+    "backupTime": 1792991954187,
+    "existedAtTrack": true
+   },
+   "_release.py": {
+    "version": 3,
+    "backupTime": 1792992165628,
+    "existedAtTrack": false
+   },
+   "_dig.py": {
+    "version": 1,
+    "backupTime": 1792992564340,
+    "existedAtTrack": false
+   }
+  }
+ }
+]

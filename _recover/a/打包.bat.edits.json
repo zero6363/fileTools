@@ -1,0 +1,8 @@
+[
+ {
+  "old": "echo [2/3] PyInstaller 打包中（约 1 分钟，请稍候）...\n\"%PY%\" -m PyInstaller --onefile --windowed --noconfirm --clean ^\n    --name 文件工具箱 ^\n    --add-data \"%CD%\\bin\\mozjpeg;bin/mozjpeg\" ^\n    --add-binary \"%CD%\\bin\\mediainfo\\MediaInfo.dll;bin/mediainfo\" ^\n    --add-binary \"%CD%\\bin\\mediainfo\\LIBCURL.DLL;bin/mediainfo\" ^\n    --hidden-import PIL.Image ^\n    --hidden-import PIL.ImageDraw ^\n    --hidden-import PIL.ImageFont ^\n    --hidden-import Crypto.Cipher.AES ^\n    --hidden-import Crypto.Util._raw_api ^\n    --distpath .pybuild\\dist ^\n    --workpath .pybuild\\build ^\n    --specpath .pybuild ^\n    文件工具箱.py",
+  "new": "echo [2/3] PyInstaller 打包中（约 1 分钟，请稍候）...\n\"%PY%\" -m PyInstaller --onefile --windowed --noconfirm --clean ^\n    --name 文件工具箱 ^\n    --add-data \"%CD%\\bin\\mozjpeg;bin/mozjpeg\" ^\n    --add-binary \"%CD%\\bin\\mediainfo\\MediaInfo.dll;bin/mediainfo\" ^\n    --add-binary \"%CD%\\bin\\mediainfo\\LIBCURL.DLL;bin/mediainfo\" ^\n    --collect-all customtkinter ^\n    --hidden-import PIL.Image ^\n    --hidden-import PIL.ImageDraw ^\n    --hidden-import PIL.ImageFont ^\n    --hidden-import Crypto.Cipher.AES ^\n    --hidden-import Crypto.Util._raw_api ^\n    --distpath .pybuild\\dist ^\n    --workpath .pybuild\\build ^\n    --specpath .pybuild ^\n    文件工具箱.py",
+  "call_line": 814,
+  "replace_all": false
+ }
+]

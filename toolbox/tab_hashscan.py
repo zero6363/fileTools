@@ -57,14 +57,11 @@ import subprocess
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
-from . import ui, ui as ttk
-from .theme import FONTS
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from . import config
 from .common import (clean_path, clear_log, form_label, form_note, make_form,
                      make_logger, make_tip)
-from .theme import COLOR
 
 DB_NAME = "filehash.db"
 LOG_NAME = "scan_log.txt"
@@ -2340,10 +2337,10 @@ def build_hash_tab(parent, app=None):
             var_root.set(os.path.abspath(p))
             refresh_db_info()
 
-    btn_box = ui.Frame(form)
+    btn_box = ttk.Frame(form)
     btn_box.grid(row=0, column=2, sticky="w", padx=(0, 4), pady=5)
-    ui.Button(btn_box, text="浏览...", command=choose_root).pack(side=tk.LEFT)
-    ui.Button(btn_box, text="管理...", width=7,
+    ttk.Button(btn_box, text="浏览...", command=choose_root).pack(side=tk.LEFT)
+    ttk.Button(btn_box, text="管理...", width=7,
                command=lambda: open_manager()).pack(side=tk.LEFT, padx=(4, 0))
     form_note(form, 0, "下拉可选已管理的目录；库文件固定为「根目录\\filehash.db」")
 
@@ -2352,22 +2349,22 @@ def build_hash_tab(parent, app=None):
     var_db = tk.StringVar(value="（先选择扫描根目录）")
     ttk.Entry(form, textvariable=var_db, width=52, state="readonly").grid(
         row=1, column=1, sticky="w", padx=(0, 6), pady=5)
-    db_btns = ui.Frame(form)
+    db_btns = ttk.Frame(form)
     db_btns.grid(row=1, column=2, sticky="w", padx=(0, 4), pady=5)
-    ui.Button(db_btns, text="查看", width=6,
+    ttk.Button(db_btns, text="查看", width=6,
                command=lambda: view_db()).pack(side=tk.LEFT)
-    ui.Button(db_btns, text="补全哈希", width=9,
+    ttk.Button(db_btns, text="补全哈希", width=9,
                command=lambda: fill_hashes()).pack(side=tk.LEFT, padx=(4, 0))
-    ui.Button(db_btns, text="合并数据库", width=10,
+    ttk.Button(db_btns, text="合并数据库", width=10,
                command=lambda: merge_dbs()).pack(side=tk.LEFT, padx=(4, 0))
-    ui.Button(db_btns, text="用上级库", width=9,
+    ttk.Button(db_btns, text="用上级库", width=9,
                command=lambda: seed_from_parent()).pack(side=tk.LEFT, padx=(4, 0))
-    lbl_scope = ui.Label(form, text="", foreground=COLOR["text_secondary"])
+    lbl_scope = ttk.Label(form, text="", foreground="#5C6675")
     lbl_scope.grid(row=1, column=3, sticky="w", padx=(8, 4), pady=5)
 
     # 模式
     form_label(form, 2, "扫描模式：")
-    frame_mode = ui.Frame(form)
+    frame_mode = ttk.Frame(form)
     frame_mode.grid(row=2, column=1, sticky="w", pady=3)
     var_mode = tk.StringVar(value=MODE_PRECHECK)     # 默认快速预检（只读、不算哈希）
     for _i, _key in enumerate(MODE_ORDER):
@@ -2377,17 +2374,17 @@ def build_hash_tab(parent, app=None):
     form_note(form, 2, "只读模式扫完可多选写回数据库")
 
     # ---------------- 执行 / 进度 ----------------
-    run_row = ui.Frame(parent)
+    run_row = ttk.Frame(parent)
     run_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(2, 2))
     run_row.grid_columnconfigure(4, weight=1)
 
-    btn_start = ui.Button(run_row, text="开始扫描", bg=COLOR["accent"], fg=COLOR["text_on_accent"],
-                          disabledforeground=COLOR["text_on_accent"],
-                          activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
-                          font=FONTS["base"], padx=18, pady=4,
+    btn_start = tk.Button(run_row, text="开始扫描", bg="#2f6bff", fg="white",
+                          disabledforeground="#c9dbff",
+                          activebackground="#2455cc", activeforeground="white",
+                          font=("Microsoft YaHei", 10, "bold"), padx=18, pady=4,
                           cursor="hand2")
     btn_start.grid(row=0, column=0, padx=(0, 6))
-    btn_stop = ui.Button(run_row, text="停止", state=tk.DISABLED, padx=14, pady=4,
+    btn_stop = tk.Button(run_row, text="停止", state=tk.DISABLED, padx=14, pady=4,
                          command=lambda: on_stop())
     btn_stop.grid(row=0, column=1, padx=(0, 10))
 
@@ -2395,13 +2392,13 @@ def build_hash_tab(parent, app=None):
     bar_all.grid(row=0, column=2, sticky="w")
     bar_cur = ttk.Progressbar(run_row, mode="determinate", maximum=100, length=110)
     bar_cur.grid(row=0, column=3, sticky="w", padx=(8, 10))
-    lbl_prog = ui.Label(run_row, text="未开始", foreground=COLOR["text_secondary"])
+    lbl_prog = ttk.Label(run_row, text="未开始", foreground="#5C6675")
     lbl_prog.grid(row=0, column=4, sticky="w")
 
     # ---------------- 搜索 ----------------
-    search_row = ui.Frame(parent)
+    search_row = ttk.Frame(parent)
     search_row.grid(row=3, column=0, sticky="ew", padx=8, pady=(2, 2))
-    ui.Label(search_row, text="搜索：").pack(side=tk.LEFT)
+    ttk.Label(search_row, text="搜索：").pack(side=tk.LEFT)
     var_kw = tk.StringVar()
     ent_kw = ttk.Entry(search_row, textvariable=var_kw, width=34)
     ent_kw.pack(side=tk.LEFT, padx=(0, 6))
@@ -2411,38 +2408,38 @@ def build_hash_tab(parent, app=None):
     var_scope = tk.StringVar(value="当前目录")
     ttk.Combobox(search_row, textvariable=var_scope, width=16, state="readonly",
                  values=["当前目录", "全部已管理目录"]).pack(side=tk.LEFT, padx=(0, 6))
-    ui.Button(search_row, text="搜索", width=6, command=lambda: do_search()).pack(
+    ttk.Button(search_row, text="搜索", width=6, command=lambda: do_search()).pack(
         side=tk.LEFT, padx=(0, 6))
     var_inc_deleted = tk.BooleanVar(value=False)
     ttk.Checkbutton(search_row, text="含缺失", variable=var_inc_deleted).pack(
         side=tk.LEFT, padx=(0, 6))
-    ui.Button(search_row, text="导出 CSV", command=lambda: export_csv()).pack(
+    ttk.Button(search_row, text="导出 CSV", command=lambda: export_csv()).pack(
         side=tk.LEFT, padx=(0, 6))
-    lbl_count = ui.Label(search_row, text="", foreground=COLOR["text_secondary"])
+    lbl_count = ttk.Label(search_row, text="", foreground="#5C6675")
     lbl_count.pack(side=tk.LEFT, padx=6)
 
     # ---------------- 结果表格 ----------------
-    tree_frame = ui.Frame(parent)
+    tree_frame = ttk.Frame(parent)
     tree_frame.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 4))
     tree_frame.grid_rowconfigure(1, weight=1)
     tree_frame.grid_columnconfigure(0, weight=1)
 
     # 列表上方：写回数据库 / 全选
-    bar_list = ui.Frame(tree_frame)
+    bar_list = ttk.Frame(tree_frame)
     bar_list.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 3))
-    btn_apply = ui.Button(bar_list, text="写入数据库", bg=COLOR["success"], fg=COLOR["text_on_accent"],
-                          disabledforeground=COLOR["text_on_accent"],
-                          activebackground=COLOR["success_active"], activeforeground=COLOR["text_on_accent"],
-                          font=FONTS["sm"], padx=12, pady=2,
+    btn_apply = tk.Button(bar_list, text="写入数据库", bg="#0b8a3e", fg="white",
+                          disabledforeground="#e8f5ee",
+                          activebackground="#086b30", activeforeground="white",
+                          font=("Microsoft YaHei", 9), padx=12, pady=2,
                           cursor="hand2")
     btn_apply.pack(side=tk.LEFT)
-    btn_sel_all = ui.Button(bar_list, text="全选本页", width=9, state=tk.DISABLED)
+    btn_sel_all = ttk.Button(bar_list, text="全选本页", width=9, state=tk.DISABLED)
     btn_sel_all.pack(side=tk.LEFT, padx=(8, 0))
-    btn_sel_none = ui.Button(bar_list, text="全不选", width=7, state=tk.DISABLED)
+    btn_sel_none = ttk.Button(bar_list, text="全不选", width=7, state=tk.DISABLED)
     btn_sel_none.pack(side=tk.LEFT, padx=(4, 0))
-    lbl_sel = ui.Label(bar_list, text="", foreground=COLOR["text_secondary"])
+    lbl_sel = ttk.Label(bar_list, text="", foreground="#5C6675")
     lbl_sel.pack(side=tk.LEFT, padx=(10, 0))
-    lbl_hint = ui.Label(bar_list, text="", foreground="#0b6b0b")
+    lbl_hint = ttk.Label(bar_list, text="", foreground="#0b6b0b")
     lbl_hint.pack(side=tk.LEFT, padx=(12, 0))
 
     tree = ttk.Treeview(tree_frame, columns=[c[0] for c in COLS], show="headings",
@@ -2480,37 +2477,37 @@ def build_hash_tab(parent, app=None):
     hsb.grid(row=2, column=0, sticky="ew")
 
     # 列表下方：左侧分类筛选（全部 / 新增 / 更新 / 删除 / 已计算 / 未计算），右侧分页
-    filter_bar = ui.Frame(tree_frame)
+    filter_bar = ttk.Frame(tree_frame)
     filter_bar.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
     filter_btns = {}
     for _key in CATS:
-        _b = ui.Button(filter_bar, text=_key, font=FONTS["sm"],
+        _b = tk.Button(filter_bar, text=_key, font=("Microsoft YaHei", 9),
                        relief=tk.FLAT, bd=0, padx=12, pady=2, cursor="hand2")
         _b.pack(side=tk.LEFT, padx=(0, 4))
         filter_btns[_key] = _b
 
     # 分页单独一行靠右：每页条数 + 首页/上页/页码/下页/末页
-    page_box = ui.Frame(tree_frame)
+    page_box = ttk.Frame(tree_frame)
     page_box.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-    page_inner = ui.Frame(page_box)
+    page_inner = ttk.Frame(page_box)
     page_inner.pack(side=tk.RIGHT)
-    ui.Label(page_inner, text="每页", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT)
+    ttk.Label(page_inner, text="每页", foreground="#5C6675").pack(side=tk.LEFT)
     var_page_size = tk.StringVar(value=str(DEFAULT_PAGE_SIZE))
     cmb_page_size = ttk.Combobox(page_inner, textvariable=var_page_size, width=6,
                                  values=PAGE_SIZE_CHOICES)
     cmb_page_size.pack(side=tk.LEFT, padx=(3, 10))
-    btn_pg_first = ui.Button(page_inner, text="⏮", width=3)
+    btn_pg_first = ttk.Button(page_inner, text="⏮", width=3)
     btn_pg_first.pack(side=tk.LEFT)
-    btn_pg_prev = ui.Button(page_inner, text="<", width=3)
+    btn_pg_prev = ttk.Button(page_inner, text="<", width=3)
     btn_pg_prev.pack(side=tk.LEFT, padx=(2, 0))
     var_page = tk.StringVar(value="1")
     ent_page = ttk.Entry(page_inner, textvariable=var_page, width=6, justify="center")
     ent_page.pack(side=tk.LEFT, padx=(6, 4))
-    lbl_pages = ui.Label(page_inner, text="/ 1 页 · 共 0 条", foreground=COLOR["text_secondary"])
+    lbl_pages = ttk.Label(page_inner, text="/ 1 页 · 共 0 条", foreground="#5C6675")
     lbl_pages.pack(side=tk.LEFT)
-    btn_pg_next = ui.Button(page_inner, text=">", width=3)
+    btn_pg_next = ttk.Button(page_inner, text=">", width=3)
     btn_pg_next.pack(side=tk.LEFT, padx=(6, 0))
-    btn_pg_last = ui.Button(page_inner, text="⏭", width=3)
+    btn_pg_last = ttk.Button(page_inner, text="⏭", width=3)
     btn_pg_last.pack(side=tk.LEFT, padx=(2, 0))
 
     tree.tag_configure("missing", foreground="#b00020")
@@ -2518,21 +2515,21 @@ def build_hash_tab(parent, app=None):
     tree.tag_configure("changed", foreground="#a35b00")
 
     # ---------------- 日志（默认收起，把空间留给表格） ----------------
-    log_wrap = ui.Frame(parent)
+    log_wrap = ttk.Frame(parent)
     log_wrap.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 6))
     log_wrap.grid_columnconfigure(0, weight=1)
-    log_head = ui.Frame(log_wrap)
+    log_head = ttk.Frame(log_wrap)
     log_head.grid(row=0, column=0, sticky="ew")
     var_log_open = tk.BooleanVar(value=False)
-    btn_log_toggle = ui.Button(log_head, text="▸ 运行日志", width=11)
+    btn_log_toggle = ttk.Button(log_head, text="▸ 运行日志", width=11)
     btn_log_toggle.pack(side=tk.LEFT)
-    ui.Button(log_head, text="清空", width=6,
+    ttk.Button(log_head, text="清空", width=6,
                command=lambda: clear_log(text_log)).pack(side=tk.LEFT, padx=6)
-    log_body = ui.Frame(log_wrap)
+    log_body = ttk.Frame(log_wrap)
     log_body.grid(row=1, column=0, sticky="nsew", pady=(2, 0))
     log_body.grid_rowconfigure(0, weight=1)
     log_body.grid_columnconfigure(0, weight=1)
-    text_log = ui.Textbox(log_body, height=9, state="disabled",
+    text_log = scrolledtext.ScrolledText(log_body, height=9, state="disabled",
                                          wrap=tk.WORD, font=("Consolas", 9))
     text_log.grid(row=0, column=0, sticky="nsew")
     log = make_logger(text_log)
@@ -2683,10 +2680,10 @@ def build_hash_tab(parent, app=None):
             on = (k == flt)
             try:
                 b.config(text=(f"{k} {counts[k]}" if all_rows else k),
-                         bg=COLOR["accent"] if on else COLOR["surface_alt"],
-                         fg=COLOR["text_on_accent"] if on else COLOR["text"],
-                         activebackground=COLOR["accent_active"] if on else COLOR["border"],
-                         activeforeground=COLOR["text_on_accent"] if on else COLOR["text"])
+                         bg="#2f6bff" if on else "#efefef",
+                         fg="white" if on else "#333333",
+                         activebackground="#2455cc" if on else "#e2e2e2",
+                         activeforeground="white" if on else "#333333")
             except Exception:
                 pass
 
@@ -3829,7 +3826,7 @@ def build_hash_tab(parent, app=None):
                 "提示", "选中的目录还没有数据库，\n先扫描一次（快速建档即可）再来查重。")
             return
 
-        win = ui.Toplevel(parent)
+        win = tk.Toplevel(parent)
         win.title("重复文件检查")
         win.geometry("1060x640")
         try:
@@ -3840,13 +3837,13 @@ def build_hash_tab(parent, app=None):
         win.grid_columnconfigure(0, weight=1)
         win.grid_rowconfigure(2, weight=1)
 
-        lbl_head = ui.Label(win, foreground=COLOR["text_secondary"])
+        lbl_head = ttk.Label(win, foreground="#5C6675")
         lbl_head.grid(row=0, column=0, sticky="w", padx=12, pady=(8, 2))
         bar = ttk.Progressbar(win, mode="indeterminate", length=260)
         bar.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 4))
         bar.start(14)
 
-        frame = ui.Frame(win)
+        frame = ttk.Frame(win)
         frame.grid(row=2, column=0, sticky="nsew", padx=12)
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
@@ -3866,9 +3863,9 @@ def build_hash_tab(parent, app=None):
         tv.tag_configure("group", background="#eef3ff")
         tv.tag_configure("child", foreground="#333333")
 
-        bottom = ui.Frame(win)
+        bottom = ttk.Frame(win)
         bottom.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
-        lbl_sum = ui.Label(bottom, text="正在读取数据库…", foreground=COLOR["text_secondary"])
+        lbl_sum = ttk.Label(bottom, text="正在读取数据库…", foreground="#5C6675")
         lbl_sum.pack(side=tk.LEFT)
 
         info = {"done": False, "groups": [], "err": "",
@@ -4011,13 +4008,13 @@ def build_hash_tab(parent, app=None):
                 except Exception:
                     pass
 
-        ui.Button(bottom, text="关闭", command=close).pack(side=tk.RIGHT)
-        ui.Button(bottom, text="导出 CSV", command=export_dup).pack(
+        ttk.Button(bottom, text="关闭", command=close).pack(side=tk.RIGHT)
+        ttk.Button(bottom, text="导出 CSV", command=export_dup).pack(
             side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="全部折叠",
+        ttk.Button(bottom, text="全部折叠",
                    command=lambda: toggle_all(False)).pack(
             side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="全部展开",
+        ttk.Button(bottom, text="全部展开",
                    command=lambda: toggle_all(True)).pack(
             side=tk.RIGHT, padx=(0, 6))
         win.protocol("WM_DELETE_WINDOW", close)
@@ -4040,7 +4037,7 @@ def build_hash_tab(parent, app=None):
                     "提示", f"「{r}」还没有数据库，\n先扫描一次（快速建档即可）再来比对。")
                 return
 
-        win = ui.Toplevel(parent)
+        win = tk.Toplevel(parent)
         win.title("检查不重复（镜像比对）")
         win.geometry("1120x640")
         try:
@@ -4051,10 +4048,10 @@ def build_hash_tab(parent, app=None):
         win.grid_columnconfigure(0, weight=1)
         win.grid_rowconfigure(2, weight=1)
 
-        lbl_head = ui.Label(win, foreground=COLOR["text_secondary"])
+        lbl_head = ttk.Label(win, foreground="#5C6675")
         lbl_head.grid(row=0, column=0, sticky="w", padx=12, pady=(8, 2))
 
-        topbar = ui.Frame(win)
+        topbar = ttk.Frame(win)
         topbar.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 4))
         bar = ttk.Progressbar(topbar, mode="indeterminate", length=220)
         bar.pack(side=tk.LEFT)
@@ -4073,7 +4070,7 @@ def build_hash_tab(parent, app=None):
 
         # FreeFileSync 风格的左右双栏视图：左栏（左边目录）+ 中间状态列 + 右栏（右边目录），
         # 三栏同一行对齐滚动；底部分类筛选（全部 / 内容不同 / 只在一边 / 内容一致 …）
-        frame = ui.Frame(win)
+        frame = ttk.Frame(win)
         frame.grid(row=2, column=0, sticky="nsew", padx=12)
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
@@ -4169,7 +4166,7 @@ def build_hash_tab(parent, app=None):
             t.bind("<<TreeviewSelect>>", on_sel, add="+")
 
         # 底部分类筛选（带实时条数，默认「全部」；点「内容一致」可单独看相同文件）
-        flt_bar = ui.Frame(win)
+        flt_bar = ttk.Frame(win)
         flt_bar.grid(row=3, column=0, sticky="w", padx=12, pady=(4, 0))
         MFILTERS = ("全部", MIRROR_UPD_L, MIRROR_UPD_R, MIRROR_DIFF,
                     MIRROR_LEFT, MIRROR_RIGHT, MIRROR_UNKNOWN, MIRROR_SAME)
@@ -4181,15 +4178,15 @@ def build_hash_tab(parent, app=None):
             fill()
 
         for k in MFILTERS:
-            b = ui.Button(flt_bar, text=k, font=FONTS["sm"],
+            b = tk.Button(flt_bar, text=k, font=("Microsoft YaHei", 9),
                           relief=tk.FLAT, bd=0, padx=12, pady=2, cursor="hand2",
                           command=lambda k=k: set_filter(k))
             b.pack(side=tk.LEFT, padx=(0, 4))
             filter_btns[k] = b
 
-        bottom = ui.Frame(win)
+        bottom = ttk.Frame(win)
         bottom.grid(row=4, column=0, sticky="ew", padx=12, pady=8)
-        lbl_sum = ui.Label(bottom, text="准备比对…", foreground=COLOR["text_secondary"])
+        lbl_sum = ttk.Label(bottom, text="准备比对…", foreground="#5C6675")
         lbl_sum.pack(side=tk.LEFT)
 
         cur = {"left": pair[0], "right": pair[1], "rows": [], "stats": {},
@@ -4287,10 +4284,10 @@ def build_hash_tab(parent, app=None):
                 on = (k == state_flt["k"])
                 try:
                     b.config(text=f"{k} {counts[k]}",
-                             bg=COLOR["accent"] if on else COLOR["surface_alt"],
-                             fg=COLOR["text_on_accent"] if on else COLOR["text"],
-                             activebackground=COLOR["accent_active"] if on else COLOR["border"],
-                             activeforeground=COLOR["text_on_accent"] if on else COLOR["text"])
+                             bg="#2f6bff" if on else "#efefef",
+                             fg="white" if on else "#333333",
+                             activebackground="#2455cc" if on else "#e2e2e2",
+                             activeforeground="white" if on else "#333333")
                 except Exception:
                     pass
             ltv.heading("#0", text=f"左：{short_path(cur['left'][0], 32)}")
@@ -4544,7 +4541,7 @@ def build_hash_tab(parent, app=None):
                     if ("f%d~%s" % (i, r[1])) in file_iids]
 
         def confirm_sync(mode, n_new, n_ovr, n_del, n_touch, n_skip, rows, plan):
-            dlg = ui.Toplevel(win)
+            dlg = tk.Toplevel(win)
             dlg.title("确认同步")
             dlg.geometry("620x520")
             try:
@@ -4554,8 +4551,8 @@ def build_hash_tab(parent, app=None):
                 pass
             dlg.grid_columnconfigure(0, weight=1)
             dlg.grid_rowconfigure(1, weight=1)
-            ui.Label(dlg, text=f"同步方向：{MODE_NAME[mode]}",
-                      font=FONTS["base"]).grid(
+            ttk.Label(dlg, text=f"同步方向：{MODE_NAME[mode]}",
+                      font=("Microsoft YaHei", 10, "bold")).grid(
                 row=0, column=0, sticky="w", padx=12, pady=(10, 2))
             lines = [f"涉及 {len(rows)} 个文件：",
                      f"  新增复制 {n_new} 个", f"  覆盖 {n_ovr} 个",
@@ -4586,10 +4583,10 @@ def build_hash_tab(parent, app=None):
                 result["ok"] = True
                 dlg.destroy()
 
-            btns = ui.Frame(dlg)
+            btns = ttk.Frame(dlg)
             btns.grid(row=3, column=0, sticky="e", padx=12, pady=(0, 10))
-            ui.Button(btns, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=3)
-            ui.Button(btns, text="开始同步", command=ok).pack(side=tk.RIGHT, padx=3)
+            ttk.Button(btns, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=3)
+            ttk.Button(btns, text="开始同步", command=ok).pack(side=tk.RIGHT, padx=3)
             dlg.wait_window()
             return var_trash.get() if result["ok"] else None
 
@@ -4654,15 +4651,15 @@ def build_hash_tab(parent, app=None):
             t.bind("<Button-3>", popup)
             t.bind("<Double-1>", lambda _e: open_row())
 
-        ui.Button(bottom, text="关闭", command=close).pack(side=tk.RIGHT)
-        ui.Button(bottom, text="导出 CSV", command=export_csv).pack(
+        ttk.Button(bottom, text="关闭", command=close).pack(side=tk.RIGHT)
+        ttk.Button(bottom, text="导出 CSV", command=export_csv).pack(
             side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="交换左右", command=swap).pack(
+        ttk.Button(bottom, text="交换左右", command=swap).pack(
             side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="全部折叠",
+        ttk.Button(bottom, text="全部折叠",
                    command=lambda: set_all_open(False)).pack(
             side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="全部展开",
+        ttk.Button(bottom, text="全部展开",
                    command=lambda: set_all_open(True)).pack(
             side=tk.RIGHT, padx=(0, 6))
         win.protocol("WM_DELETE_WINDOW", close)
@@ -4679,7 +4676,7 @@ def build_hash_tab(parent, app=None):
         if not results:
             messagebox.showinfo("校验哈希", "没有可显示的结果")
             return
-        win = ui.Toplevel(parent)
+        win = tk.Toplevel(parent)
         win.title("校验哈希结果（勾选可写回 / 可统一修改时间）")
         win.geometry("1180x640")
         try:
@@ -4690,10 +4687,10 @@ def build_hash_tab(parent, app=None):
         win.grid_columnconfigure(0, weight=1)
         win.grid_rowconfigure(2, weight=1)
 
-        lbl_head = ui.Label(win, text="", foreground=COLOR["text_secondary"])
+        lbl_head = ttk.Label(win, text="", foreground="#5C6675")
         lbl_head.grid(row=0, column=0, sticky="w", padx=12, pady=(8, 4))
 
-        bar = ui.Frame(win)
+        bar = ttk.Frame(win)
         bar.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 4))
         var_only = tk.BooleanVar(value=bool(
             sum(1 for r in results
@@ -4702,10 +4699,10 @@ def build_hash_tab(parent, app=None):
                     and abs(r[7] - r[8]) > 1e-6))))
         ttk.Checkbutton(bar, text="只看有问题的（已变化 / 文件不存在 / 读取失败 / 日期不同）",
                         variable=var_only).pack(side=tk.LEFT)
-        lbl_dirty = ui.Label(bar, text="", foreground=COLOR["text_secondary"])
+        lbl_dirty = ttk.Label(bar, text="", foreground="#5C6675")
         lbl_dirty.pack(side=tk.LEFT, padx=(12, 0))
 
-        frame = ui.Frame(win)
+        frame = ttk.Frame(win)
         frame.grid(row=2, column=0, sticky="nsew", padx=12)
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
@@ -4732,13 +4729,13 @@ def build_hash_tab(parent, app=None):
         tv.tag_configure("changed", foreground="#b00020")
         tv.tag_configure("gone", foreground="#a35b00")
         tv.tag_configure("bad", foreground="#7a0000")
-        tv.tag_configure("nohash", foreground=COLOR["text_secondary"])
+        tv.tag_configure("nohash", foreground="#5C6675")
         tv.tag_configure("ok", foreground="#0b6b0b")
         tv.tag_configure("timediff", foreground="#b06000")
 
-        bottom = ui.Frame(win)
+        bottom = ttk.Frame(win)
         bottom.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
-        lbl_sum = ui.Label(bottom, text="", foreground=COLOR["text_secondary"])
+        lbl_sum = ttk.Label(bottom, text="", foreground="#5C6675")
         lbl_sum.pack(side=tk.LEFT)
 
         limit = 3000
@@ -5094,22 +5091,22 @@ def build_hash_tab(parent, app=None):
         tv.bind("<<TreeviewSelect>>", lambda _e: refresh_checks())
         var_only.trace_add("write", lambda *_a: fill())
 
-        ui.Button(bottom, text="关闭", command=close).pack(side=tk.RIGHT)
-        ui.Button(bottom, text="导出 CSV", command=export_csv).pack(
+        ttk.Button(bottom, text="关闭", command=close).pack(side=tk.RIGHT)
+        ttk.Button(bottom, text="导出 CSV", command=export_csv).pack(
             side=tk.RIGHT, padx=(0, 6))
-        btn_apply = ui.Button(bottom, text="写入数据库", bg=COLOR["success"], fg=COLOR["text_on_accent"],
-                              activebackground=COLOR["success_active"], activeforeground=COLOR["text_on_accent"],
-                              font=FONTS["sm"], padx=12, pady=2,
+        btn_apply = tk.Button(bottom, text="写入数据库", bg="#0b8a3e", fg="white",
+                              activebackground="#086b30", activeforeground="white",
+                              font=("Microsoft YaHei", 9), padx=12, pady=2,
                               cursor="hand2", command=apply_selected)
         btn_apply.pack(side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="勾选可写回", command=check_writable).pack(
+        ttk.Button(bottom, text="勾选可写回", command=check_writable).pack(
             side=tk.RIGHT, padx=(0, 6))
-        btn_time = ui.Button(bottom, text="统一修改时间", bg=COLOR["warning"], fg=COLOR["text_on_accent"],
-                             activebackground=COLOR["warning_active"], activeforeground=COLOR["text_on_accent"],
-                             font=FONTS["sm"], padx=12, pady=2,
+        btn_time = tk.Button(bottom, text="统一修改时间", bg="#b06000", fg="white",
+                             activebackground="#8a4a00", activeforeground="white",
+                             font=("Microsoft YaHei", 9), padx=12, pady=2,
                              cursor="hand2", command=apply_time)
         btn_time.pack(side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="勾选可对时", command=check_timediff).pack(
+        ttk.Button(bottom, text="勾选可对时", command=check_timediff).pack(
             side=tk.RIGHT, padx=(0, 6))
         var_time = tk.StringVar(value="new")
         ttk.Radiobutton(bottom, text="用新时间(更新库)", value="new",
@@ -5125,7 +5122,7 @@ def build_hash_tab(parent, app=None):
     # ============================================================
 
     def open_manager():
-        win = ui.Toplevel(parent)
+        win = tk.Toplevel(parent)
         win.title("管理扫描目录")
         win.geometry("960x460")
         try:
@@ -5136,17 +5133,17 @@ def build_hash_tab(parent, app=None):
         win.grid_columnconfigure(0, weight=1)
         win.grid_rowconfigure(1, weight=1)
 
-        ui.Label(win, text=f"配置文件：{roots_config_path()}"
+        ttk.Label(win, text=f"配置文件：{roots_config_path()}"
                             f"　　点最左列的勾选框 / Ctrl / Shift 多选："
                             f"「检查重复」找重复文件，"
                             f"「检查不重复」比对两个目录的镜像差异",
-                  foreground=COLOR["text_secondary"]).grid(
+                  foreground="#5C6675").grid(
             row=0, column=0, sticky="w", padx=10, pady=(8, 4))
 
         cols = [("chk", "选", 34, False), ("path", "扫描目录", 280, True),
                 ("db", "数据库", 280, True), ("count", "记录", 110, False),
                 ("time", "最后扫描", 145, False), ("mode", "模式", 90, False)]
-        frame = ui.Frame(win)
+        frame = ttk.Frame(win)
         frame.grid(row=1, column=0, sticky="nsew", padx=10)
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
@@ -5166,7 +5163,7 @@ def build_hash_tab(parent, app=None):
         hsb2.grid(row=1, column=0, sticky="ew")
         tv.tag_configure("gone", foreground="#b00020")
 
-        bar = ui.Frame(win)
+        bar = ttk.Frame(win)
         bar.grid(row=2, column=0, sticky="ew", padx=10, pady=8)
 
         def roots_now():
@@ -5258,10 +5255,10 @@ def build_hash_tab(parent, app=None):
             if sel:
                 reveal_in_explorer(sel[0])
 
-        ui.Button(bar, text="添加目录", command=add_folder).pack(side=tk.LEFT, padx=3)
-        ui.Button(bar, text="移除选中", command=remove_selected).pack(side=tk.LEFT, padx=3)
-        ui.Button(bar, text="刷新", command=refresh).pack(side=tk.LEFT, padx=3)
-        ui.Button(bar, text="设为扫描目录", command=scan_this).pack(side=tk.LEFT, padx=3)
+        ttk.Button(bar, text="添加目录", command=add_folder).pack(side=tk.LEFT, padx=3)
+        ttk.Button(bar, text="移除选中", command=remove_selected).pack(side=tk.LEFT, padx=3)
+        ttk.Button(bar, text="刷新", command=refresh).pack(side=tk.LEFT, padx=3)
+        ttk.Button(bar, text="设为扫描目录", command=scan_this).pack(side=tk.LEFT, padx=3)
 
         def select_all(flag=True):
             ids = tv.get_children()
@@ -5273,9 +5270,9 @@ def build_hash_tab(parent, app=None):
                 tv.selection_remove(*ids)
             refresh_checks()
 
-        ui.Button(bar, text="全选", command=lambda: select_all(True)).pack(
+        ttk.Button(bar, text="全选", command=lambda: select_all(True)).pack(
             side=tk.LEFT, padx=(10, 3))
-        ui.Button(bar, text="全不选", command=lambda: select_all(False)).pack(
+        ttk.Button(bar, text="全不选", command=lambda: select_all(False)).pack(
             side=tk.LEFT, padx=3)
         def check_dup():
             sel = list(tv.selection())
@@ -5309,10 +5306,10 @@ def build_hash_tab(parent, app=None):
             win.grab_release()
             open_mirror_check(pair, on_close=lambda: _regrab(win))
 
-        ui.Button(bar, text="检查重复", command=check_dup).pack(side=tk.LEFT, padx=(16, 3))
-        ui.Button(bar, text="检查不重复", command=check_mirror).pack(side=tk.LEFT, padx=3)
-        ui.Button(bar, text="打开文件夹", command=open_folder).pack(side=tk.LEFT, padx=3)
-        ui.Button(bar, text="关闭", command=win.destroy).pack(side=tk.RIGHT, padx=3)
+        ttk.Button(bar, text="检查重复", command=check_dup).pack(side=tk.LEFT, padx=(16, 3))
+        ttk.Button(bar, text="检查不重复", command=check_mirror).pack(side=tk.LEFT, padx=3)
+        ttk.Button(bar, text="打开文件夹", command=open_folder).pack(side=tk.LEFT, padx=3)
+        ttk.Button(bar, text="关闭", command=win.destroy).pack(side=tk.RIGHT, padx=3)
 
         tv.bind("<Double-1>", lambda _e: scan_this())
         tv.bind("<<TreeviewSelect>>", lambda _e: refresh_checks())

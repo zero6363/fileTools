@@ -1,0 +1,14 @@
+[
+ {
+  "old": "from .common import (_module_available, clean_path, clear_log, form_label,\n                     form_note, make_check, make_entry_row, make_file_row,\n                     make_form, make_log_panel, make_path_row, make_spin_row,",
+  "new": "from .common import (_module_available, clean_path, clear_log, form_label,\n                     form_note, make_check, make_entry_row, make_file_row,\n                     make_form, make_log_panel, make_path_row, make_spin_row,\n                     make_start_button, make_tip, natural_key, run_task)\nfrom .theme import COLOR",
+  "call_line": 173,
+  "replace_all": false
+ },
+ {
+  "old": "from .common import (_module_available, clean_path, clear_log, form_label,\n                     form_note, make_check, make_entry_row, make_file_row,\n                     make_form, make_log_panel, make_path_row, make_spin_row,\nfrom .theme import COLOR\n                     make_start_button, make_tip, natural_key, run_task)",
+  "new": "from .common import (_module_available, clean_path, clear_log, form_label,\n                     form_note, make_check, make_entry_row, make_file_row,\n                     make_form, make_log_panel, make_path_row, make_spin_row,\n                     make_start_button, make_tip, natural_key, run_task)\nfrom .theme import COLOR",
+  "call_line": 189,
+  "replace_all": false
+ }
+]

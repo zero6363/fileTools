@@ -1,3 +1,4 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/ui.py"}
 # -*- coding: utf-8 -*-
 """统一 UI 适配层：把现有代码里的 ttk/tk 可视控件路由到 CustomTkinter，
 同时保留 ttk.Treeview / Scrollbar / Style 等原样透传。
@@ -40,31 +41,18 @@ def init_appearance():
 # ============================================================
 # 控件封装（均为 CTk 子类，保留 .config/.cget/.pack/.grid/.bind 等全部方法）
 # ============================================================
-class _CTkCompat:
-    """CTk 6 起移除了 .config()（强制用 .configure）。
-    存量代码大量使用 .config(...)，这里恢复为 .configure 的别名，
-    避免逐行改写各 tab；同时支持 .config("text") 读取属性。"""
-
-    def config(self, cnf=None, **kw):
-        if isinstance(cnf, str):
-            return self.cget(cnf)
-        if cnf:
-            kw.update(cnf)
-        return self.configure(**kw)
-
-
-class Button(_CTkCompat, ctk.CTkButton):
+class Button(ctk.CTkButton):
     def __init__(self, master=None, **kw):
         # 旧样式 → CTk 参数
-        bg = kw.pop("bg", None)
-        fg = kw.pop("fg", None)
-        ab = kw.pop("activebackground", None)
-        dfg = kw.pop("disabledforeground", None)
+        bg = kw.pop("bg", COLOR["accent"])
+        fg = kw.pop("fg", COLOR["text_on_accent"])
+        ab = kw.pop("activebackground", bg)
+        dfg = kw.pop("disabledforeground", fg)
         kw.pop("activeforeground", None)
         kw.pop("relief", None)
-        bd = kw.pop("bd", kw.pop("borderwidth", None))
-        kw.pop("padx", None)
-        kw.pop("pady", None)
+        bd = kw.pop("borderwidth", None)
+        padx = kw.pop("padx", None)
+        pady = kw.pop("pady", None)
         kw.pop("cursor", None)            # CTk 不接收 cursor
         kw.pop("highlightthickness", None)
         kw.pop("highlightbackground", None)
@@ -72,24 +60,15 @@ class Button(_CTkCompat, ctk.CTkButton):
         kw.pop("justify", None)
         height = kw.pop("height", None)   # 旧 ttk 的 height(行) 忽略，交给 CTk 自适应
 
-        if bg is None:
-            # 次级按钮（未显式指定底色，如「浏览...」「添加文件」）：
-            # 白底描边，与设计系统 TButton 一致，避免满屏蓝色主按钮
-            bg = COLOR["surface"]
-            fg = fg or COLOR["text"]
-            dfg = dfg or COLOR["text_muted"]
-            kw["border_width"] = 1
-            kw["border_color"] = COLOR["border_strong"]
-        else:
-            # 主按钮/彩色按钮：底色上用白字（或调用方显式给的字色）
-            fg = fg or COLOR["text_on_accent"]
-            dfg = dfg or fg
+        # 主按钮（accent 底）白字；次级按钮（surface 底）深字
         kw["fg_color"] = bg
         kw["text_color"] = fg
-        if ab is not None:
-            kw["hover_color"] = ab        # 显式给了悬停色才覆盖（否则 CTk 自动派生）
+        kw["hover_color"] = ab
         kw["text_color_disabled"] = dfg
         kw.setdefault("corner_radius", 8)
+        if bd not in (None, 0):
+            kw["border_width"] = int(bd)
+            kw.setdefault("border_color", COLOR["border"])
         # 仅当调用方显式给了宽度时换算；否则 CTk 按文字自适应，尺寸更统一
         w = _px(kw.pop("width", None))
         if w:
@@ -99,12 +78,12 @@ class Button(_CTkCompat, ctk.CTkButton):
         super().__init__(master, **kw)
 
 
-class Label(_CTkCompat, ctk.CTkLabel):
+class Label(ctk.CTkLabel):
     def __init__(self, master=None, **kw):
         fg = kw.pop("foreground", kw.pop("fg", COLOR["text"]))
         bg = kw.pop("background", kw.pop("bg", None))
         kw.pop("relief", None)
-        kw.pop("bd", kw.pop("borderwidth", None))
+        kw.pop("borderwidth", None)
         kw.pop("highlightthickness", None)
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
@@ -121,11 +100,11 @@ class Label(_CTkCompat, ctk.CTkLabel):
         super().__init__(master, **kw)
 
 
-class Frame(_CTkCompat, ctk.CTkFrame):
+class Frame(ctk.CTkFrame):
     def __init__(self, master=None, **kw):
         bg = kw.pop("background", kw.pop("bg", None))
         kw.pop("relief", None)
-        bd = kw.pop("bd", kw.pop("borderwidth", None))
+        bd = kw.pop("borderwidth", None)
         kw.pop("highlightthickness", None)
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
@@ -144,12 +123,12 @@ class Frame(_CTkCompat, ctk.CTkFrame):
         super().__init__(master, **kw)
 
 
-class Entry(_CTkCompat, ctk.CTkEntry):
+class Entry(ctk.CTkEntry):
     def __init__(self, master=None, **kw):
         fg = kw.pop("foreground", kw.pop("fg", COLOR["text"]))
         bg = kw.pop("background", kw.pop("bg", None))
         kw.pop("relief", None)
-        kw.pop("bd", kw.pop("borderwidth", None))
+        kw.pop("borderwidth", None)
         kw.pop("highlightthickness", None)
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
@@ -171,12 +150,12 @@ class Entry(_CTkCompat, ctk.CTkEntry):
         super().__init__(master, **kw)
 
 
-class Checkbutton(_CTkCompat, ctk.CTkCheckBox):
+class Checkbutton(ctk.CTkCheckBox):
     def __init__(self, master=None, **kw):
         fg = kw.pop("foreground", kw.pop("fg", COLOR["text"]))
         bg = kw.pop("background", kw.pop("bg", None))
         kw.pop("relief", None)
-        kw.pop("bd", kw.pop("borderwidth", None))
+        kw.pop("borderwidth", None)
         kw.pop("highlightthickness", None)
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
@@ -186,9 +165,10 @@ class Checkbutton(_CTkCompat, ctk.CTkCheckBox):
         kw.pop("cursor", None)
 
         kw["text_color"] = fg
-        # CTkCheckBox 的 fg_color 是勾选框填充色，不允许 transparent；
-        # 未显式指定底色时统一用强调色（与全站设计系统一致）
-        kw["fg_color"] = bg if bg is not None else COLOR["accent"]
+        if bg is not None:
+            kw["fg_color"] = bg
+        else:
+            kw["fg_color"] = "transparent"
         kw["border_color"] = COLOR["border"]
         kw["checkmark_color"] = COLOR["text_on_accent"]
         kw["hover_color"] = COLOR["accent_soft"]
@@ -198,12 +178,12 @@ class Checkbutton(_CTkCompat, ctk.CTkCheckBox):
         super().__init__(master, **kw)
 
 
-class Combobox(_CTkCompat, ctk.CTkComboBox):
+class Combobox(ctk.CTkComboBox):
     def __init__(self, master=None, **kw):
         fg = kw.pop("foreground", kw.pop("fg", COLOR["text"]))
         bg = kw.pop("background", kw.pop("bg", None))
         kw.pop("relief", None)
-        kw.pop("bd", kw.pop("borderwidth", None))
+        kw.pop("borderwidth", None)
         kw.pop("state", None)  # 重新收集
         state = kw.get("state", "normal")
         kw.pop("postcommand", None)
@@ -235,7 +215,7 @@ class Combobox(_CTkCompat, ctk.CTkComboBox):
         super().__init__(master, **kw)
 
 
-class Textbox(_CTkCompat, ctk.CTkTextbox):
+class Textbox(ctk.CTkTextbox):
     """替代 tkinter.scrolledtext.ScrolledText：自带滚动条。"""
     def __init__(self, master=None, **kw):
         fg = kw.pop("foreground", kw.pop("fg", COLOR["text"]))
@@ -244,7 +224,7 @@ class Textbox(_CTkCompat, ctk.CTkTextbox):
         kw.pop("insertofftime", None)
         kw.pop("insertontime", None)
         kw.pop("relief", None)
-        kw.pop("bd", kw.pop("borderwidth", None))
+        kw.pop("borderwidth", None)
         kw.pop("highlightthickness", None)
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
@@ -283,11 +263,11 @@ class Textbox(_CTkCompat, ctk.CTkTextbox):
         super().__init__(master, **kw)
 
 
-class ScrollableFrame(_CTkCompat, ctk.CTkScrollableFrame):
+class ScrollableFrame(ctk.CTkScrollableFrame):
     def __init__(self, master=None, **kw):
         bg = kw.pop("background", kw.pop("bg", None))
         kw.pop("relief", None)
-        kw.pop("bd", kw.pop("borderwidth", None))
+        kw.pop("borderwidth", None)
         kw.pop("highlightthickness", None)
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
@@ -314,10 +294,10 @@ class ScrollableFrame(_CTkCompat, ctk.CTkScrollableFrame):
         super().__init__(master, **kw)
 
 
-class Toplevel(_CTkCompat, ctk.CTkToplevel):
+class Toplevel(ctk.CTkToplevel):
     def __init__(self, master=None, **kw):
         kw.pop("relief", None)
-        kw.pop("bd", kw.pop("borderwidth", None))
+        kw.pop("borderwidth", None)
         kw.pop("highlightthickness", None)
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
@@ -330,20 +310,10 @@ class Toplevel(_CTkCompat, ctk.CTkToplevel):
         kw.pop("use", None)
         kw.pop("visual", None)
         kw.pop("colormap", None)
-        bg = kw.pop("background", kw.pop("bg", None))
-        if bg is not None and "fg_color" not in kw:
-            kw["fg_color"] = bg
+        kw.pop("background", None)
+        kw.pop("bg", None)
         kw.setdefault("fg_color", COLOR["bg"])
         super().__init__(master, **kw)
-
-    def configure(self, **kw):
-        # 旧式 bg/background → CTk 的 fg_color
-        bg = kw.pop("background", kw.pop("bg", None))
-        if bg is not None and "fg_color" not in kw:
-            kw["fg_color"] = bg
-        return super().configure(**kw)
-
-    config = configure
 
 
 # ============================================================
@@ -359,11 +329,6 @@ Labelframe = ttk.Labelframe
 Menubutton = ttk.Menubutton
 Panedwindow = ttk.Panedwindow
 Sizegrip = ttk.Sizegrip
-# 兼容旧代码中的 Tkinter 命名（与 CTk 风格小写并存）
-LabelFrame = ttk.LabelFrame
-Radiobutton = ttk.Radiobutton
-Spinbox = ttk.Spinbox
-Scale = ttk.Scale
 
 # 供入口创建根窗口
 CTk = ctk.CTk

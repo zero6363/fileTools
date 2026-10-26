@@ -7,13 +7,11 @@ import threading
 import traceback
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from . import ui
-from . import ui as ttk
-from .theme import COLOR, FONTS
+from . import config
 
-APP_VERSION = "1.33"
+APP_VERSION = "1.31"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -228,31 +226,19 @@ def form_label(parent, row, text):
 
 def form_note(parent, row, text, column=3, columnspan=1):
     """表单说明文字：固定放第 4 列，不参与列宽计算；
-    按主窗口剩余宽度自动换行，避免长说明被裁掉（CTk 下自身 Configure 会
-    收敛到过窄宽度，这里改为跟随顶层窗口宽度计算可用空间）。"""
-    lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"], justify="left")
+    窗口变窄时自动按可用宽度换行，避免长说明被裁掉。"""
+    lbl = ttk.Label(parent, text=text, foreground="#666666", justify="left")
     lbl.grid(row=row, column=column, columnspan=columnspan,
              sticky="w", padx=(8, 4), pady=5)
 
-    def _rewrap(_event=None):
+    def _rewrap(event):
         try:
-            top = lbl.winfo_toplevel()
-            if not top.winfo_exists() or top.winfo_width() <= 1:
-                return
-            avail = top.winfo_width() - (lbl.winfo_rootx() - top.winfo_rootx()) - 24
-            w = max(200, min(640, avail))
-            cur = int(float(lbl.cget("wraplength") or 0))
-            if abs(cur - w) > 12:
-                lbl.configure(wraplength=w)
+            if event.width > 40:
+                lbl.configure(wraplength=max(80, event.width - 2))
         except Exception:
             pass
 
-    try:
-        top = lbl.winfo_toplevel()
-        top.bind("<Configure>", _rewrap, add="+")
-        top.after(200, _rewrap)
-    except Exception:
-        pass
+    lbl.bind("<Configure>", _rewrap, add="+")
     return lbl
 
 
@@ -355,14 +341,11 @@ def make_check(parent, text, default=False, row=None, column=None, var=None):
 
 
 def make_start_button(parent, row, text, command, colspan=3):
-    """主操作按钮：统一放在输入列，左边缘与输入框对齐。
-    使用设计系统令牌：扁平蓝 + 悬停加深 + 禁用仍可读（白字）。"""
-    btn = ui.Button(
+    """主操作按钮：统一放在输入列，左边缘与输入框对齐"""
+    btn = tk.Button(
         parent, text=text, command=command,
-        bg=COLOR["accent"], fg=COLOR["text_on_accent"],
-        activebackground=COLOR["accent_active"],
-        disabledforeground=COLOR["text_on_accent"],
-        padx=18, pady=6, cursor="hand2",
+        bg="#2f6bff", fg="white", activebackground="#2455cc", activeforeground="white",
+        font=("Microsoft YaHei", 10, "bold"), height=1, padx=16, pady=4, cursor="hand2",
     )
     btn.grid(row=row, column=1, sticky="w", padx=(0, 6), pady=(12, 6))
     return btn
@@ -373,31 +356,29 @@ def make_log_panel(parent, row, colspan=3, title="运行日志", height=12):
     frame.grid(row=row, column=0, columnspan=colspan, sticky="nsew", padx=8, pady=6)
     frame.grid_rowconfigure(0, weight=1)
     frame.grid_columnconfigure(0, weight=1)
-    text = ui.Textbox(frame, height=height, state="disabled",
-                      font=FONTS["log"],
-                      background=COLOR["surface"], foreground=COLOR["text"])
+    text = scrolledtext.ScrolledText(frame, height=height, state="disabled", wrap=tk.WORD,
+                                     font=("Consolas", 9))
     text.grid(row=0, column=0, sticky="nsew")
     return text, make_logger(text)
 
 
 def make_tip(parent, row, text, colspan=3, autowrap=False):
-    """提示文字：按容器宽度自动换行，避免长提示在窄窗口被裁掉；
+    """提示文字：autowrap=True 时随容器宽度自动换行，避免文字被裁掉；
     配合 colspan=1 使用可避免跨列提示把表单列宽撑开。"""
-    lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"],
-                    wraplength=820, justify="left")
+    lbl = ttk.Label(parent, text=text, foreground="#666666",
+                    wraplength=820 if autowrap else 1120, justify="left")
     lbl.grid(row=row, column=0, columnspan=colspan,
              sticky="we" if autowrap else "w", padx=8, pady=(0, 6))
-
-    def _rewrap(event):
-        try:
-            if event.width > 80:
+    if autowrap:
+        def _rewrap(event):
+            try:
                 w = max(240, event.width - 32)
                 if abs(int(lbl.cget("wraplength")) - w) > 12:
                     lbl.configure(wraplength=w)
-        except Exception:
-            pass
+            except Exception:
+                pass
 
-    parent.bind("<Configure>", _rewrap, add="+")
+        parent.bind("<Configure>", _rewrap, add="+")
     return lbl
 
 

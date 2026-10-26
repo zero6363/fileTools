@@ -5,8 +5,7 @@ import shutil
 import zipfile
 from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox
-from . import ui, ui as ttk
+from tkinter import messagebox, ttk
 
 from .common import (_is_relative_to, _module_available, clean_path,
                      clear_log, get_unique_path, make_check, make_entry_row,

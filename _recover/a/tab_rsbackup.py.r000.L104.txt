@@ -1,0 +1,15 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_rsbackup.py", "offset": 922, "limit": 14}
+    form_btn.grid(row=3, column=0, sticky="w", padx=6, pady=(0, 2))
+    frame_btn = ttk.Frame(form_btn)
+    frame_btn.grid(row=0, column=1, columnspan=2, sticky="w", pady=(4, 2))
+    btn_backup = tk.Button(frame_btn, text="开始备份", command=lambda: do_backup(),
+                           bg="#2f6bff", fg="white", activebackground="#2455cc",
+                           activeforeground="white", font=("Microsoft YaHei", 10, "bold"),
+                           padx=16, pady=4, cursor="hand2")
+    btn_backup.pack(side="left", padx=(0, 8))
+    btn_restore = tk.Button(frame_btn, text="开始恢复", command=lambda: do_restore(),
+                            bg="#1a7f37", fg="white", activebackground="#15662b",
+                            activeforeground="white", font=("Microsoft YaHei", 10, "bold"),
+                            padx=16, pady=4, cursor="hand2")
+    btn_restore.pack(side="left")
+

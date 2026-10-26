@@ -1,0 +1,21 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_hashscan.py", "offset": 2378, "limit": 20}
+    run_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(2, 2))
+    run_row.grid_columnconfigure(4, weight=1)
+
+    btn_start = tk.Button(run_row, text="开始扫描", bg="#2f6bff", fg="white",
+                          disabledforeground="#c9dbff",
+                          activebackground="#2455cc", activeforeground="white",
+                          font=("Microsoft YaHei", 10, "bold"), padx=18, pady=4,
+                          cursor="hand2")
+    btn_start.grid(row=0, column=0, padx=(0, 6))
+    btn_stop = tk.Button(run_row, text="停止", state=tk.DISABLED, padx=14, pady=4,
+                         command=lambda: on_stop())
+    btn_stop.grid(row=0, column=1, padx=(0, 10))
+
+    bar_all = ttk.Progressbar(run_row, mode="determinate", maximum=100, length=220)
+    bar_all.grid(row=0, column=2, sticky="w")
+    bar_cur = ttk.Progressbar(run_row, mode="determinate", maximum=100, length=110)
+    bar_cur.grid(row=0, column=3, sticky="w", padx=(8, 10))
+    lbl_prog = ttk.Label(run_row, text="未开始", foreground="#444444")
+    lbl_prog.grid(row=0, column=4, sticky="w")
+

@@ -1,0 +1,15 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_hashscan.py", "offset": 2678, "limit": 14}
+            counts[CAT_HASHED if r[1] else CAT_NOHASH] += 1
+        for k, b in filter_btns.items():
+            on = (k == flt)
+            try:
+                b.config(text=(f"{k} {counts[k]}" if all_rows else k),
+                         bg="#2f6bff" if on else "#efefef",
+                         fg="white" if on else "#333333",
+                         activebackground="#2455cc" if on else "#e2e2e2",
+                         activeforeground="white" if on else "#333333")
+            except Exception:
+                pass
+
+        # 分页状态
+        try:

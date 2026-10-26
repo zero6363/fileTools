@@ -1,0 +1,8 @@
+[
+ {
+  "old": "from .common import (clean_path, clear_log, make_check, make_log_panel,\n                     make_num_box, make_path_row, make_spin_row,\n                     make_start_button, make_tip, natural_key, run_task)",
+  "new": "from .common import (clean_path, clear_log, make_check, make_log_panel,\n                     make_num_box, make_path_row, make_spin_row,\n                     make_start_button, make_tip, natural_key, run_task)\nfrom .theme import COLOR",
+  "call_line": 172,
+  "replace_all": false
+ }
+]

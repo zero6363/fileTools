@@ -1,0 +1,15 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/tab_compress.py", "offset": 764, "limit": 14}
+    btn_add_files = ttk.Button(frame_btn, text="添加图片", command=lambda: add_files_dialog())
+    btn_add_files.pack(side="left")
+    btn_add_dir = ttk.Button(frame_btn, text="添加文件夹", command=lambda: add_folder_dialog())
+    btn_add_dir.pack(side="left", padx=6)
+    btn_options = ttk.Button(frame_btn, text="操作选项", command=lambda: show_options())
+    btn_options.pack(side="left")
+    btn_compress = tk.Button(frame_btn, text="一键压缩", command=lambda: start_compress(),
+                             bg="#2f6bff", fg="white", activebackground="#2455cc",
+                             activeforeground="white", font=("Microsoft YaHei", 10, "bold"),
+                             padx=12, pady=2, cursor="hand2")
+    btn_compress.pack(side="right")
+    btn_clear = ttk.Button(frame_btn, text="清空列表", command=lambda: clear_list())
+    btn_clear.pack(side="right", padx=6)
+

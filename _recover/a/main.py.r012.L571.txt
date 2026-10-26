@@ -1,0 +1,154 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "offset": 289, "limit": 160}
+        root.after(300, self._check_deps)
+
+    def register_drop_handler(self, frame, handler):
+        """由支持拖放的工具页注册处理器（按页面分发，互不干扰）"""
+        self._drop_handlers[frame] = handler
+
+    def register_show_handler(self, frame, handler):
+        """由工具页注册「切换到该页」回调（用于打开页面时才检测依赖，不拖慢启动）"""
+        self._show_handlers[frame] = handler
+
+    def _on_files_dropped(self, files):
+        """拖放回调：分发给当前可见工具页的处理器（经队列在正常事件循环中执行）"""
+        try:
+            paths = [f if isinstance(f, str) else f.decode("utf-8", "ignore") for f in files]
+        except Exception:
+            return
+        frame = self.tool_frames[self._current_index]
+        handler = self._drop_handlers.get(frame)
+        if handler:
+            handler(paths)
+        else:
+            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑦视频常用压制 / "
+                                    "⑧视频横竖屏 / ⑯图片压缩 / ⑱文本翻译 / ⑲硬盘哈希扫描）")
+
+    def show_tool(self, index):
+        """切换到指定工具：隐藏其他页，显示对应页，并高亮菜单按钮"""
+        self._current_index = index
+        frame = self.tool_frames[index]
+        for i, f in enumerate(self.tool_frames):
+            if i != index:
+                f.pack_forget()
+        frame.pack(fill=tk.BOTH, expand=True)
+        current_title = self.nav_items[index][2]
+        for i, (btn, _f, _title) in enumerate(self.nav_items):
+            if i == index:
+                btn._active = True
+                btn.config(bg=COLOR["accent"], fg=COLOR["text_on_accent"], font=FONTS["nav_active"])
+            else:
+                btn._active = False
+                btn.config(bg=COLOR["nav_bg"], fg=COLOR["text_secondary"], font=FONTS["nav"])
+        self.status.config(text=f"当前工具：{current_title}")
+        handler = self._show_handlers.get(frame)
+        if handler:
+            try:
+                handler()
+            except Exception:
+                pass
+
+    def _check_deps(self):
+        missing, optional = check_dependencies()
+        if missing:
+            lines = ["以下依赖缺失，对应功能暂不可用："]
+            for pkg, usage in missing:
+                lines.append(f"  - {pkg}（{usage}）")
+            lines.append("")
+            lines.append("请运行：pip install " + " ".join(p for p, _ in missing))
+            if optional:
+                lines.append("")
+                lines.append("可选增强（⑮ 加密包分类）：pip install " + " ".join(optional))
+            self.status.config(text="部分依赖缺失，详见弹出提示")
+            messagebox.showwarning("缺少依赖", "\n".join(lines))
+        else:
+            self.status.config(text="就绪 —— 所有依赖已安装")
+
+    def _save_window(self):
+        """保存窗口几何 + 左侧菜单宽度（拖拽/双击调整后立即持久化）"""
+        try:
+            save_window_geometry(
+                self.root, extra={"nav_width": self.nav.winfo_width()})
+        except Exception:
+            pass
+
+    def _on_nav_resize_start(self, e):
+        self._nav_resize_x0 = e.x_root
+        self._nav_resize_w0 = self.nav.winfo_width()
+
+    def _on_nav_resize_move(self, e):
+        if getattr(self, "_nav_resize_x0", None) is None:
+            return
+        width = self._nav_resize_w0 + (e.x_root - self._nav_resize_x0)
+        self.nav.configure(width=max(NAV_MIN_WIDTH, min(NAV_MAX_WIDTH, width)))
+
+    def _on_nav_resize_end(self, _e):
+        if getattr(self, "_nav_resize_x0", None) is None:
+            return
+        self._nav_resize_x0 = None
+        self._save_window()
+
+    def _on_nav_reset_width(self, _e):
+        self.nav.configure(width=NAV_DEFAULT_WIDTH)
+        self._save_window()
+
+    def on_close(self):
+        """关闭前记住窗口位置、大小与左侧菜单宽度"""
+        self._save_window()
+        self.root.destroy()
+
+
+def check_dependencies():
+    missing = []
+    if not _module_available("PIL"):
+        missing.append(("pillow", "⑪ TXT转图片 / ⑭ WebP转JPG"))
+    if not _module_available("chardet"):
+        missing.append(("chardet", "⑪ TXT转图片（缺失时使用内置编码猜测，功能仍可用）"))
+    optional = []
+    for mod in ("pyzipper", "rarfile", "py7zr"):
+        if not _module_available(mod):
+            optional.append(mod)
+    return missing, optional
+
+
+def main():
+    # 高 DPI 适配，避免高分屏下界面发虚
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+    root = tk.Tk()
+    app = ToolboxApp(root)
+    try:
+        root.mainloop()
+    except Exception:
+        # windowed exe 无控制台：致命错误写入日志文件，便于排查（不再静默闪退）
+        try:
+            if getattr(sys, "frozen", False):
+                base = os.path.dirname(sys.executable)
+            else:
+                base = os.path.dirname(os.path.abspath(__file__))
+            with open(os.path.join(base, "文件工具箱_错误日志.txt"), "a", encoding="utf-8") as f:
+                f.write("=" * 50 + "\n")
+                f.write(traceback.format_exc() + "\n")
+        except Exception:
+            pass
+        raise
+    finally:
+        # 兜底：非正常退出路径也尽量记住窗口几何与菜单宽度（root 已销毁则跳过）
+        try:
+            if root.winfo_exists():
+                extra = {}
+                try:
+                    w = app.nav.winfo_width()
+                    if w > 1:
+                        extra["nav_width"] = w
+                except Exception:
+                    pass
+                save_window_geometry(root, extra=extra)
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()

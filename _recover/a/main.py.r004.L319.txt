@@ -1,0 +1,121 @@
+@@ARGS={"file_path": "D:/code/fileTools/toolbox/main.py", "offset": 236, "limit": 120}
+            ("⑯ 图片压缩", build_compress_tab),
+            ("⑰ ReSoBackup备份", build_rsbackup_tab),
+            ("⑱ 文本翻译", build_translate_tab),
+            ("⑲ 硬盘哈希扫描", build_hash_tab),
+        ]
+        for index, (title, builder) in enumerate(builders):
+            frame = ttk.Frame(content, padding=10)
+            if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
+                            build_compress_tab, build_rsbackup_tab, build_encode_tab,
+                            build_translate_tab, build_hash_tab):
+                result = builder(frame, self)
+                if builder is build_hash_tab:
+                    # 暴露给自动化冒烟测试（不影响正常使用）
+                    self._hash_api = result
+            else:
+                builder(frame)
+            self.tool_frames.append(frame)
+            btn = tk.Button(
+                menu, text="  " + title, anchor="w", command=lambda i=index: self.show_tool(i),
+                bg=COLOR["nav_bg"], fg=COLOR["text_secondary"], relief=tk.FLAT,
+                activebackground=COLOR["surface_alt"], activeforeground=COLOR["text"],
+                font=FONTS["nav"], padx=10, pady=6, cursor="hand2",
+            )
+            btn._active = False
+
+            def _enter(e, b=btn):
+                if not b._active:
+                    b.configure(bg=COLOR["surface_alt"])
+
+            def _leave(e, b=btn):
+                if not b._active:
+                    b.configure(bg=COLOR["nav_bg"])
+
+            btn.bind("<Enter>", _enter)
+            btn.bind("<Leave>", _leave)
+            btn.pack(fill=tk.X, pady=1)
+            self.nav_items.append((btn, frame, title))
+
+        self.status = tk.Label(
+            root, text="就绪", anchor="w", relief=tk.FLAT, padx=8, pady=4,
+            bg=COLOR["status_bg"], fg=COLOR["text_secondary"], font=FONTS["sm"],
+            highlightthickness=1, highlightbackground=COLOR["border"],
+            highlightcolor=COLOR["border"])
+        self.status.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # 注册 Windows 文件拖放（自实现，经队列在正常事件循环中处理）
+        install_drop_support(root, self._on_files_dropped)
+
+        self.show_tool(0)
+        root.after(300, self._check_deps)
+
+    def register_drop_handler(self, frame, handler):
+        """由支持拖放的工具页注册处理器（按页面分发，互不干扰）"""
+        self._drop_handlers[frame] = handler
+
+    def register_show_handler(self, frame, handler):
+        """由工具页注册「切换到该页」回调（用于打开页面时才检测依赖，不拖慢启动）"""
+        self._show_handlers[frame] = handler
+
+    def _on_files_dropped(self, files):
+        """拖放回调：分发给当前可见工具页的处理器（经队列在正常事件循环中执行）"""
+        try:
+            paths = [f if isinstance(f, str) else f.decode("utf-8", "ignore") for f in files]
+        except Exception:
+            return
+        frame = self.tool_frames[self._current_index]
+        handler = self._drop_handlers.get(frame)
+        if handler:
+            handler(paths)
+        else:
+            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑦视频常用压制 / "
+                                    "⑧视频横竖屏 / ⑯图片压缩 / ⑱文本翻译 / ⑲硬盘哈希扫描）")
+
+    def show_tool(self, index):
+        """切换到指定工具：隐藏其他页，显示对应页，并高亮菜单按钮"""
+        self._current_index = index
+        frame = self.tool_frames[index]
+        for i, f in enumerate(self.tool_frames):
+            if i != index:
+                f.pack_forget()
+        frame.pack(fill=tk.BOTH, expand=True)
+        current_title = self.nav_items[index][2]
+        for i, (btn, _f, _title) in enumerate(self.nav_items):
+            if i == index:
+                btn._active = True
+                btn.config(bg=COLOR["accent"], fg=COLOR["text_on_accent"], font=FONTS["nav_active"])
+            else:
+                btn._active = False
+                btn.config(bg=COLOR["nav_bg"], fg=COLOR["text_secondary"], font=FONTS["nav"])
+        self.status.config(text=f"当前工具：{current_title}")
+        handler = self._show_handlers.get(frame)
+        if handler:
+            try:
+                handler()
+            except Exception:
+                pass
+
+    def _check_deps(self):
+        missing, optional = check_dependencies()
+        if missing:
+            lines = ["以下依赖缺失，对应功能暂不可用："]
+            for pkg, usage in missing:
+                lines.append(f"  - {pkg}（{usage}）")
+            lines.append("")
+            lines.append("请运行：pip install " + " ".join(p for p, _ in missing))
+            if optional:
+                lines.append("")
+                lines.append("可选增强（⑮ 加密包分类）：pip install " + " ".join(optional))
+            self.status.config(text="部分依赖缺失，详见弹出提示")
+            messagebox.showwarning("缺少依赖", "\n".join(lines))
+        else:
+            self.status.config(text="就绪 —— 所有依赖已安装")
+
+    def _save_window(self):
+        """保存窗口几何 + 左侧菜单宽度（拖拽/双击调整后立即持久化）"""
+        try:
+            save_window_geometry(
+                self.root, extra={"nav_width": self.nav.winfo_width()})
+        except Exception:
+            pass
