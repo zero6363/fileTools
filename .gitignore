@@ -21,6 +21,14 @@ hashscan_roots.json
 # 迁移前的旧版本代码，不纳入版本库
 /old/
 
+# 本地调试脚本 / 截图 / 临时恢复目录
+/_ui_shots/
+/_ui_*.py
+/_shot*.py
+/_v*.png
+/_zoom_*.png
+/_recover/
+
 # 编辑器 / 系统杂项
 .vscode/
 .idea/

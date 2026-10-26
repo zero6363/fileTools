@@ -569,7 +569,7 @@ fileTools/
 - `toolbox_config.json`：**唯一**的配置文件，按分区存所有记忆项：
   ```json
   {
-    "window":   { "geometry": "1378x873+111+86", "nav_width": 160 },
+    "window":   { "geometry": "1378x873+111+86", "nav_width": 250 },
     "compress": { "quality": 96, "out_fmt": 1, "...": "⑯ 的选项" },
     "ffmpeg":   { "ffmpeg": "D:\\code\\ffmpeg\\ffmpeg.exe" },
     "hashscan": { "roots": [ { "path": "D:\\data", "...": "⑲ 已管理目录" } ] }
