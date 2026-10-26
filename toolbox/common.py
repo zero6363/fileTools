@@ -13,7 +13,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS
 
-APP_VERSION = "1.36"
+APP_VERSION = "1.37"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -211,9 +211,9 @@ def make_form(parent):
     frame = ttk.Frame(parent)
     try:
         from tkinter import font as tkfont
-        ref = tkfont.nametofont("TkDefaultFont").measure("输出文件夹名：") + 18
+        ref = tkfont.Font(font=FONTS["base"]).measure("输出文件夹名：") + 22
     except Exception:
-        ref = 108
+        ref = 118
     frame.grid_columnconfigure(0, minsize=ref)
     frame.grid_columnconfigure(3, weight=1)
     return frame
@@ -231,7 +231,7 @@ def form_note(parent, row, text, column=3, columnspan=1):
     按主窗口剩余宽度自动换行，避免长说明被裁掉（CTk 下自身 Configure 会
     收敛到过窄宽度，这里改为跟随顶层窗口宽度计算可用空间）。"""
     lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"],
-                    wraplength=340, justify="left")
+                    wraplength=340, justify="left", anchor="w")
     lbl.grid(row=row, column=column, columnspan=columnspan,
              sticky="w", padx=(8, 4), pady=5)
 
@@ -269,7 +269,7 @@ def make_path_row(parent, row, label, default="", title="选择文件夹", entry
         if p:
             var.set(p)
 
-    ttk.Button(parent, text="浏览...", command=_browse).grid(
+    ttk.Button(parent, text="浏览…", command=_browse).grid(
         row=row, column=2, sticky="w", padx=(0, 4), pady=5)
     if note:
         form_note(parent, row, note)
@@ -291,7 +291,7 @@ def make_file_row(parent, row, label, default="", title="选择文件", entry_wi
         if p:
             var.set(p)
 
-    ttk.Button(parent, text="浏览...", command=_browse).grid(
+    ttk.Button(parent, text="浏览…", command=_browse).grid(
         row=row, column=2, sticky="w", padx=(0, 4), pady=5)
     if note:
         form_note(parent, row, note)
@@ -370,14 +370,17 @@ def make_start_button(parent, row, text, command, colspan=3):
 
 
 def make_log_panel(parent, row, colspan=3, title="运行日志", height=12):
-    frame = ttk.LabelFrame(parent, text=title, padding=4)
-    frame.grid(row=row, column=0, columnspan=colspan, sticky="nsew", padx=8, pady=6)
-    frame.grid_rowconfigure(0, weight=1)
-    frame.grid_columnconfigure(0, weight=1)
-    text = ui.Textbox(frame, height=height, state="disabled",
+    """日志面板：区块标题 + 带描边的文本框（比 LabelFrame 标题更清爽）。"""
+    wrap = ttk.Frame(parent)
+    wrap.grid(row=row, column=0, columnspan=colspan, sticky="nsew", padx=8, pady=6)
+    wrap.grid_rowconfigure(1, weight=1)
+    wrap.grid_columnconfigure(0, weight=1)
+    ttk.Label(wrap, text=title, font=FONTS["md"],
+              foreground=COLOR["text"]).grid(row=0, column=0, sticky="w", pady=(0, 4))
+    text = ui.Textbox(wrap, height=height, state="disabled",
                       font=FONTS["log"],
                       background=COLOR["surface_inset"], foreground=COLOR["text"])
-    text.grid(row=0, column=0, sticky="nsew")
+    text.grid(row=1, column=0, sticky="nsew")
     return text, make_logger(text)
 
 
@@ -385,7 +388,7 @@ def make_tip(parent, row, text, colspan=3, autowrap=False):
     """提示文字：按容器宽度自动换行，避免长提示在窄窗口被裁掉；
     配合 colspan=1 使用可避免跨列提示把表单列宽撑开。"""
     lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"],
-                    wraplength=820, justify="left")
+                    wraplength=820, justify="left", anchor="w")
     lbl.grid(row=row, column=0, columnspan=colspan,
              sticky="we" if autowrap else "w", padx=8, pady=(0, 6))
 

@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import messagebox
 from . import ui, ui as ttk
 
-from .common import (clean_path, clear_log, get_unique_path, make_check,
+from .common import (clean_path, clear_log, form_note, get_unique_path, make_check,
                      make_form, make_log_panel, make_path_row,
                      make_start_button, make_tip, run_task)
 
@@ -171,11 +171,12 @@ def build_live_tab(parent):
     form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
 
     var_src = make_path_row(form, 0, "目标文件夹：", title="选择目标文件夹")
-    var_static = make_check(form, "移动静态图片到 StaticPhotos（不勾选保持原位）",
+    var_static = make_check(form, "静态图 → StaticPhotos",
                             default=True, row=1, column=1)
-    var_live = make_check(form, "移动实况图片到 LivePhotos（不勾选保持原位）",
+    form_note(form, 1, "不勾选则保持原位")
+    var_live = make_check(form, "实况图 → LivePhotos",
                           default=True, row=2, column=1)
-    var_extract = make_check(form, "提取实况图视频到 LivePhotos/videos",
+    var_extract = make_check(form, "提取视频 → LivePhotos/videos",
                              default=True, row=3, column=1)
 
     text_log, log = make_log_panel(parent, 2, colspan=1)

@@ -564,12 +564,11 @@ class CompressOptionsDialog(ui.Toplevel):
         self.resizable(False, False)
         self.transient(master)
         self.grab_set()
-        self.configure(bg=COLOR["surface_alt"])
 
         pad = dict(padx=10, pady=4)
 
         # ---- 保存路径 ----
-        box1 = ui.LabelFrame(self, text=" 保存路径 ")
+        box1 = ui.LabelFrame(self, text="保存路径")
         box1.pack(fill="x", **pad)
         self.var_save_mode = tk.IntVar(value=options['save_mode'])
         for val, text in ((0, "覆盖原图"), (1, "原路径重命名"), (2, "保存到指定路径")):
@@ -582,11 +581,11 @@ class CompressOptionsDialog(ui.Toplevel):
         self.ent_outdir.pack(side="left", fill="x", expand=True)
         self.btn_pick = ui.Button(row, text="浏览…", width=8, command=self._pick_dir, state="disabled")
         self.btn_pick.pack(side="left", padx=(6, 0))
-        ui.Label(box1, text="说明: 执行覆盖操作不可逆, 请确认已备份。",
+        ui.Label(box1, text="说明：执行覆盖操作不可逆，请确认已备份。",
                   foreground=COLOR["text_muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
         # ---- 压缩设置 ----
-        box2 = ui.LabelFrame(self, text="  压缩设置 ")
+        box2 = ui.LabelFrame(self, text="压缩设置")
         box2.pack(fill="x", **pad)
         row2 = ui.Frame(box2)
         row2.pack(fill="x", padx=8, pady=6)
@@ -597,7 +596,7 @@ class CompressOptionsDialog(ui.Toplevel):
 
         row_enc = ui.Frame(box2)
         row_enc.pack(fill="x", padx=8, pady=(0, 6))
-        ui.Label(row_enc, text="编码器:").pack(side="left")
+        ui.Label(row_enc, text="编码器：").pack(side="left")
         self.var_encoder = tk.IntVar(value=options.get('encoder', 0))
         ttk.Radiobutton(row_enc, text="mozjpeg (默认·体积更小)", variable=self.var_encoder,
                         value=0).pack(side="left", padx=(8, 0))
@@ -605,26 +604,26 @@ class CompressOptionsDialog(ui.Toplevel):
                         value=1).pack(side="left", padx=(12, 0))
 
         # 失败收集
-        box_fail = ui.LabelFrame(self, text=" 压缩失败收集 ")
+        box_fail = ui.LabelFrame(self, text="压缩失败收集")
         box_fail.pack(fill="x", **pad)
         self.var_collect = tk.BooleanVar(value=options.get('collect_failed', False))
         ttk.Checkbutton(box_fail, text="压缩失败的文件复制到",
                         variable=self.var_collect).pack(side="left", padx=8, pady=6)
         self.var_faildir = tk.StringVar(value=options.get('faildir', 'dist') or 'dist')
         ttk.Entry(box_fail, textvariable=self.var_faildir, width=26).pack(side="left", padx=4, pady=6)
-        ui.Label(box_fail, text="(相对源文件目录或绝对路径)", foreground=COLOR["text_muted"]).pack(side="left", pady=6)
+        ui.Label(box_fail, text="（相对源文件目录或绝对路径）", foreground=COLOR["text_muted"]).pack(side="left", pady=6)
 
-        box_fmt = ui.LabelFrame(self, text=" 结果格式 ")
+        box_fmt = ui.LabelFrame(self, text="结果格式")
         box_fmt.pack(fill="x", **pad)
         self.var_out_fmt = tk.IntVar(value=options.get('out_fmt', 1))
         ttk.Radiobutton(box_fmt, text="保持原格式", variable=self.var_out_fmt,
                         value=0).pack(side="left", padx=8, pady=6)
         ttk.Radiobutton(box_fmt, text="统一为 JPG", variable=self.var_out_fmt,
                         value=1).pack(side="left", padx=8, pady=6)
-        ui.Label(box_fmt, text="统一为 JPG 时, PNG/WebP/TIFF/BMP 均按质量重压缩为 JPEG",
+        ui.Label(box_fmt, text="统一为 JPG 时，PNG/WebP/TIFF/BMP 均按质量重压缩为 JPEG",
                   foreground=COLOR["text_muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
-        box3 = ui.LabelFrame(self, text=" 图片质量 ")
+        box3 = ui.LabelFrame(self, text="图片质量")
         box3.pack(fill="x", **pad)
         qrow = ui.Frame(box3)
         qrow.pack(fill="x", padx=10, pady=(4, 0))
@@ -637,8 +636,8 @@ class CompressOptionsDialog(ui.Toplevel):
         self.qlabel = ui.Label(qrow, text="", width=5)
         self.qlabel.pack(side="left")
         self._qlabel()
-        ui.Label(box3, text="说明: 默认 mozjpeg 对 JPEG 做无损优化(Huffman 重排, 画质不变体积更小);\n"
-                             "质量滑条调低才触发有损重编码; PNG / TIFF 始终无损压缩。",
+        ui.Label(box3, text="说明：默认 mozjpeg 对 JPEG 做无损优化（Huffman 重排，画质不变、体积更小）；\n"
+                             "质量滑条调低才触发有损重编码；PNG / TIFF 始终无损压缩。",
                   foreground=COLOR["text_muted"]).pack(anchor="w", padx=10, pady=(0, 6))
 
         # ---- 其他 ----
@@ -651,7 +650,7 @@ class CompressOptionsDialog(ui.Toplevel):
         self.var_force = tk.BooleanVar(value=options.get('force', False))
         ttk.Checkbutton(box4, text="强行再次压缩", variable=self.var_force).pack(side="left", padx=(20, 0))
         self.var_log = tk.BooleanVar(value=options.get('enable_log', False))
-        ttk.Checkbutton(box4, text="开启日志(compressor.log)", variable=self.var_log).pack(side="left", padx=(20, 0))
+        ttk.Checkbutton(box4, text="开启日志（compressor.log）", variable=self.var_log).pack(side="left", padx=(20, 0))
 
         btnrow = ui.Frame(self)
         btnrow.pack(fill="x", padx=10, pady=10)
@@ -728,9 +727,11 @@ class CompressOptionsDialog(ui.Toplevel):
 # ============================================================
 
 def build_compress_tab(parent, app=None):
+    parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(1, weight=1)
     make_tip(parent, 0, "图片批量压缩：默认 mozjpeg 编码器（JPEG 走 Huffman 无损优化，画质不变体积更小），"
-                        "备选 libjpeg-turbo；支持 JPEG/PNG/WebP/TIFF/BMP，可直接拖入文件或文件夹。")
+                        "备选 libjpeg-turbo；支持 JPEG/PNG/WebP/TIFF/BMP，可直接拖入文件或文件夹。",
+             colspan=1, autowrap=True)
 
     options = load_compress_config()
     setup_logging(options.get('enable_log', False))
@@ -762,7 +763,7 @@ def build_compress_tab(parent, app=None):
 
     # ---- 按钮行 ----
     frame_btn = ui.Frame(parent)
-    frame_btn.grid(row=2, column=0, columnspan=3, sticky="w", padx=6, pady=4)
+    frame_btn.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=4)
     btn_add_files = ui.Button(frame_btn, text="添加图片", command=lambda: add_files_dialog())
     btn_add_files.pack(side="left")
     btn_add_dir = ui.Button(frame_btn, text="添加文件夹", command=lambda: add_folder_dialog())

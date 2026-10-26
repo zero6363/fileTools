@@ -16,7 +16,7 @@
       程序目录的 toolbox_config.json（hashscan 分区）记录扫描过的根目录（时间 / 模式 / 记录数），
       界面可增删管理；搜索范围可选「当前目录」或「全部已管理目录」（跨库检索）。
   二之二、重复文件检查
-      「管理...」里 Ctrl/Shift 多选若干已管理目录 → 「检查重复」：
+      「管理…」里 Ctrl/Shift 多选若干已管理目录 → 「检查重复」：
       先按磁盘当前大小粗筛，只对同尺寸的候选比对 SHA256（库里的哈希在大小 + 修改时间
       都对得上时直接复用），结果按组展开，可导出 CSV。跨目录、单目录内都能查。
   三、合并数据库（独立按钮，扫描不再自动并入）
@@ -2284,11 +2284,11 @@ COLS = [("chk", "选", 34, 30, False),
         ("mtime", "修改时间", 132, 118, False),
         ("last", "上次哈希校验", 132, 118, False),
         ("hash", "哈希", 76, 66, False),
-        ("sha", "SHA256（前 16 位）", 150, 120, False),
+        ("sha", "SHA256（前 16 位）", 176, 150, False),
         ("status", "状态", 86, 70, False)]
 COLS_SINGLE = ("chk", "rel", "size", "mtime", "last", "hash", "sha", "status")
 COLS_MULTI = ("chk", "root", "rel", "size", "mtime", "last", "hash", "sha", "status")
-FIXED_W_SINGLE = 34 + 84 + 132 + 132 + 76 + 150 + 86
+FIXED_W_SINGLE = 34 + 84 + 132 + 132 + 76 + 176 + 86
 FIXED_W_MULTI = FIXED_W_SINGLE + 180
 
 
@@ -2303,7 +2303,7 @@ def build_hash_tab(parent, app=None):
              "【快速预检】只读·不算哈希，【快速建档】改库·不算哈希（秒级建索引），"
              "【完整检查】只读·算哈希，【完整建档】改库·算哈希并标记缺失。"
              "两种只读模式扫完的差异清单可多选后「写入数据库」，底部按 新增 / 更新 / 删除 / 已计算 / 未计算 分类看；"
-             "「管理...」里按住 Ctrl/Shift 多选目录，还能做重复文件检查与镜像比对；"
+             "「管理…」里按住 Ctrl/Shift 多选目录，还能做重复文件检查与镜像比对；"
              "「合并数据库」把子目录的库并进来，「用上级库」反过来按上级库生成本目录的库（都不读文件）。",
              colspan=1, autowrap=True)
 
@@ -2342,39 +2342,37 @@ def build_hash_tab(parent, app=None):
 
     btn_box = ui.Frame(form)
     btn_box.grid(row=0, column=2, sticky="w", padx=(0, 4), pady=5)
-    ui.Button(btn_box, text="浏览...", command=choose_root).pack(side=tk.LEFT)
-    ui.Button(btn_box, text="管理...", width=7,
+    ui.Button(btn_box, text="浏览…", command=choose_root).pack(side=tk.LEFT)
+    ui.Button(btn_box, text="管理…", width=7,
                command=lambda: open_manager()).pack(side=tk.LEFT, padx=(4, 0))
-    form_note(form, 0, "下拉可选已管理的目录；库文件固定为「根目录\\filehash.db」")
+    form_note(form, 0, "库文件：根目录\\filehash.db")
 
     # 数据库
     form_label(form, 1, "当前数据库：")
     var_db = tk.StringVar(value="（先选择扫描根目录）")
     ttk.Entry(form, textvariable=var_db, width=52, state="readonly").grid(
         row=1, column=1, sticky="w", padx=(0, 6), pady=5)
-    db_btns = ui.Frame(form)
-    db_btns.grid(row=1, column=2, sticky="w", padx=(0, 4), pady=5)
-    ui.Button(db_btns, text="查看", width=6,
-               command=lambda: view_db()).pack(side=tk.LEFT)
-    ui.Button(db_btns, text="补全哈希", width=9,
-               command=lambda: fill_hashes()).pack(side=tk.LEFT, padx=(4, 0))
-    ui.Button(db_btns, text="合并数据库", width=10,
-               command=lambda: merge_dbs()).pack(side=tk.LEFT, padx=(4, 0))
-    ui.Button(db_btns, text="用上级库", width=9,
-               command=lambda: seed_from_parent()).pack(side=tk.LEFT, padx=(4, 0))
-    lbl_scope = ui.Label(form, text="", foreground=COLOR["text_secondary"], wraplength=330)
-    lbl_scope.grid(row=1, column=3, sticky="w", padx=(8, 4), pady=5)
+    db_menu = tk.Menu(form, tearoff=0)
+    db_menu.add_command(label="查看数据库…", command=lambda: view_db())
+    db_menu.add_command(label="补全缺失哈希…", command=lambda: fill_hashes())
+    db_menu.add_separator()
+    db_menu.add_command(label="合并子目录数据库…", command=lambda: merge_dbs())
+    db_menu.add_command(label="用上级库生成…", command=lambda: seed_from_parent())
+    ttk.Menubutton(form, text="数据库操作 ▾", menu=db_menu).grid(
+        row=1, column=2, sticky="w", padx=(0, 4), pady=5)
+    lbl_scope = ui.Label(form, text="", foreground=COLOR["text_secondary"], wraplength=520)
+    lbl_scope.grid(row=2, column=1, columnspan=3, sticky="w", padx=(0, 4), pady=(0, 2))
 
     # 模式
-    form_label(form, 2, "扫描模式：")
+    form_label(form, 3, "扫描模式：")
     frame_mode = ui.Frame(form)
-    frame_mode.grid(row=2, column=1, sticky="w", pady=3)
+    frame_mode.grid(row=3, column=1, columnspan=3, sticky="w", pady=3)
     var_mode = tk.StringVar(value=MODE_PRECHECK)     # 默认快速预检（只读、不算哈希）
     for _i, _key in enumerate(MODE_ORDER):
         ttk.Radiobutton(frame_mode, text=MODE_LABELS[_key], value=_key,
                         variable=var_mode).grid(
             row=_i // 2, column=_i % 2, sticky="w", padx=(0, 18), pady=1)
-    form_note(form, 2, "只读模式扫完可多选写回数据库")
+    form_note(form, 4, "只读模式扫完可多选写回数据库")
 
     # ---------------- 执行 / 进度 ----------------
     run_row = ui.Frame(parent)
@@ -2406,7 +2404,7 @@ def build_hash_tab(parent, app=None):
     ent_kw = ttk.Entry(search_row, textvariable=var_kw, width=34)
     ent_kw.pack(side=tk.LEFT, padx=(0, 6))
     var_kind = tk.StringVar(value="按路径模糊")
-    ttk.Combobox(search_row, textvariable=var_kind, width=12, state="readonly",
+    ttk.Combobox(search_row, textvariable=var_kind, width=15, state="readonly",
                  values=["按路径模糊", "按 SHA256"]).pack(side=tk.LEFT, padx=(0, 6))
     var_scope = tk.StringVar(value="当前目录")
     ttk.Combobox(search_row, textvariable=var_scope, width=16, state="readonly",
@@ -2496,7 +2494,7 @@ def build_hash_tab(parent, app=None):
     page_inner.pack(side=tk.RIGHT)
     ui.Label(page_inner, text="每页", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT)
     var_page_size = tk.StringVar(value=str(DEFAULT_PAGE_SIZE))
-    cmb_page_size = ttk.Combobox(page_inner, textvariable=var_page_size, width=6,
+    cmb_page_size = ttk.Combobox(page_inner, textvariable=var_page_size, width=10,
                                  values=PAGE_SIZE_CHOICES)
     cmb_page_size.pack(side=tk.LEFT, padx=(3, 10))
     btn_pg_first = ui.Button(page_inner, text="⏮", width=3)
@@ -2533,7 +2531,7 @@ def build_hash_tab(parent, app=None):
     log_body.grid_rowconfigure(0, weight=1)
     log_body.grid_columnconfigure(0, weight=1)
     text_log = ui.Textbox(log_body, height=9, state="disabled",
-                                         wrap=tk.WORD, font=("Consolas", 9))
+                          wrap=tk.WORD, font=FONTS["log"])
     text_log.grid(row=0, column=0, sticky="nsew")
     log = make_logger(text_log)
 
@@ -4572,7 +4570,7 @@ def build_hash_tab(parent, app=None):
             if len(plan["copy"]) + len(plan["delete"]) + len(plan["touch"]) > len(head):
                 head.append("  …")
             body = "\n".join(lines + (["——明细——"] + head if head else []))
-            txt = tk.Text(dlg, height=12, wrap="none")
+            txt = ui.Textbox(dlg, height=12, wrap="none")
             txt.insert("1.0", body)
             txt.configure(state="disabled")
             txt.grid(row=1, column=0, sticky="nsew", padx=12, pady=(4, 4))

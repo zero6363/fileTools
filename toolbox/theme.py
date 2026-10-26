@@ -76,8 +76,11 @@ FONTS = {
     "xl":          font(20, "bold"),
     "title":       font(22, "bold"),
     "nav_title":   font(17, "bold"),
+    "nav_group":   font(12, "bold"),  # 导航分组小标题
     "nav":         font(15),          # 导航项：比内容正文(base 14)大一号
     "nav_active":  font(15, "bold"),
+    "page_title":  font(20, "bold"),  # 内容页标题
+    "table_head":  font(13, "bold"),  # 表格表头
     "log":         (FONT_MONO, 11),
 }
 
@@ -106,6 +109,48 @@ def apply_theme(root):
         foreground=COLOR["text"],
         font=FONTS["base"])
 
+    # 原生 tk 控件（Listbox / Text / Menu）的默认字体与配色：
+    # 这些控件没有 CTk 等价件，用 option database 统一，避免出现系统默认字体。
+    # Tcl 字体描述里带空格的字体名必须用花括号包起来，
+    # 否则 "Microsoft YaHei 14" 会被拆成 family=Microsoft, size=YaHei。
+    _base_font = f"{{{FONT_FAMILY}}} {FONTS['base'][1]}"
+    for pattern, value in (
+        ("*Font", _base_font),
+        ("*Listbox.font", _base_font),
+        ("*Listbox.background", COLOR["surface_bright"]),
+        ("*Listbox.foreground", COLOR["text"]),
+        ("*Listbox.selectBackground", COLOR["accent_soft"]),
+        ("*Listbox.selectForeground", COLOR["text"]),
+        ("*Listbox.highlightThickness", 1),
+        ("*Listbox.highlightBackground", COLOR["border"]),
+        ("*Listbox.highlightColor", COLOR["accent"]),
+        ("*Listbox.borderWidth", 0),
+        ("*Listbox.relief", "flat"),
+        ("*Listbox.activestyle", "none"),
+        ("*Text.font", _base_font),
+        ("*Text.background", COLOR["surface_bright"]),
+        ("*Text.foreground", COLOR["text"]),
+        ("*Text.insertBackground", COLOR["text"]),
+        ("*Text.selectBackground", COLOR["accent_soft"]),
+        ("*Text.selectForeground", COLOR["text"]),
+        ("*Text.highlightThickness", 0),
+        ("*Text.borderWidth", 0),
+        ("*Text.relief", "flat"),
+        ("*Text.padx", 8),
+        ("*Text.pady", 6),
+        ("*Menu.font", _base_font),
+        ("*Menu.background", COLOR["surface_bright"]),
+        ("*Menu.foreground", COLOR["text"]),
+        ("*Menu.activeBackground", COLOR["accent_soft"]),
+        ("*Menu.activeForeground", COLOR["text"]),
+        ("*Menu.borderWidth", 0),
+        ("*Menu.relief", "flat"),
+    ):
+        try:
+            root.option_add(pattern, value)
+        except Exception:
+            pass
+
     style.configure("TFrame", background=COLOR["bg"])
     style.configure("Nav.TFrame", background=COLOR["nav_bg"])
 
@@ -116,7 +161,8 @@ def apply_theme(root):
         background=COLOR["bg"], foreground=COLOR["text_secondary"],
         bordercolor=COLOR["border"], relief="groove", borderwidth=1)
     style.configure("TLabelframe.Label",
-        background=COLOR["bg"], foreground=COLOR["text_secondary"], font=FONTS["sm"])
+        background=COLOR["bg"], foreground=COLOR["text_secondary"],
+        font=FONTS["sm"], padding=(6, 0))
 
     # 次要按钮（如「浏览…」）
     style.configure("TButton",
@@ -132,7 +178,8 @@ def apply_theme(root):
     style.configure("TEntry",
         fieldbackground=COLOR["surface_bright"], foreground=COLOR["text"],
         bordercolor=COLOR["border_strong"], lightcolor=COLOR["surface_bright"],
-        insertcolor=COLOR["text"], relief="solid", borderwidth=1, padding=(6, 3))
+        insertcolor=COLOR["text"], relief="solid", borderwidth=1,
+        font=FONTS["base"], padding=(8, 4))
     style.map("TEntry",
         bordercolor=[("focus", COLOR["accent"])],
         fieldbackground=[("readonly", COLOR["surface_inset"])])
@@ -140,20 +187,51 @@ def apply_theme(root):
     style.configure("TCombobox",
         fieldbackground=COLOR["surface_bright"], foreground=COLOR["text"],
         arrowcolor=COLOR["text"], bordercolor=COLOR["border_strong"],
-        relief="solid", borderwidth=1, padding=(6, 3))
+        relief="solid", borderwidth=1, font=FONTS["base"], padding=(8, 4))
     style.map("TCombobox",
-        fieldbackground=[("readonly", COLOR["surface_alt"])],
+        fieldbackground=[("readonly", COLOR["surface_bright"])],
         foreground=[("disabled", COLOR["text_muted"])])
 
     style.configure("TSpinbox",
         fieldbackground=COLOR["surface_bright"], foreground=COLOR["text"],
         arrowcolor=COLOR["text"], bordercolor=COLOR["border_strong"],
-        background=COLOR["surface"], relief="solid", borderwidth=1, padding=(6, 3))
+        background=COLOR["surface"], relief="solid", borderwidth=1,
+        font=FONTS["base"], padding=(6, 3))
+    style.map("TSpinbox",
+        bordercolor=[("focus", COLOR["accent"])],
+        foreground=[("disabled", COLOR["text_muted"])])
 
-    # 勾选框
+    # 勾选框 / 单选框
     style.configure("TCheckbutton",
-        background=COLOR["bg"], foreground=COLOR["text"], font=FONTS["base"])
+        background=COLOR["bg"], foreground=COLOR["text"], font=FONTS["base"],
+        padding=(2, 2), focuscolor=COLOR["bg"])
     style.map("TCheckbutton", background=[("active", COLOR["bg"])])
+
+    style.configure("TRadiobutton",
+        background=COLOR["bg"], foreground=COLOR["text"], font=FONTS["base"],
+        padding=(2, 2), indicatorcolor=COLOR["surface_bright"],
+        focuscolor=COLOR["bg"])
+    style.map("TRadiobutton",
+        background=[("active", COLOR["bg"])],
+        indicatorcolor=[("selected", COLOR["accent"]),
+                        ("!selected", COLOR["surface_bright"])],
+        foreground=[("disabled", COLOR["text_muted"])])
+
+    # 滑条（图片压缩选项）
+    style.configure("TScale",
+        background=COLOR["bg"], troughcolor=COLOR["surface_alt"],
+        bordercolor=COLOR["border"], lightcolor=COLOR["accent"],
+        darkcolor=COLOR["accent"], sliderlength=18, sliderrelief="flat",
+        borderwidth=0)
+
+    # 下拉菜单按钮 / 分隔线
+    style.configure("TMenubutton",
+        background=COLOR["surface_bright"], foreground=COLOR["text"],
+        bordercolor=COLOR["border_strong"], relief="solid", borderwidth=1,
+        font=FONTS["base"], padding=(8, 4))
+    style.map("TMenubutton",
+        background=[("active", COLOR["surface_alt"])])
+    style.configure("TSeparator", background=COLOR["border"])
 
     # 笔记本（如有）
     style.configure("TNotebook", background=COLOR["bg"], bordercolor=COLOR["border"])
@@ -168,10 +246,11 @@ def apply_theme(root):
     style.configure("Treeview",
         background=COLOR["surface_bright"], foreground=COLOR["text"],
         fieldbackground=COLOR["surface_bright"], bordercolor=COLOR["border"],
-        rowheight=28, font=FONTS["base"])
+        rowheight=30, font=FONTS["base"])
     style.configure("Treeview.Heading",
-        background=COLOR["surface_alt"], foreground=COLOR["text_secondary"],
-        font=FONTS["sm"], relief="flat", borderwidth=1)
+        background=COLOR["surface_alt"], foreground=COLOR["text"],
+        font=FONTS["table_head"], relief="flat", borderwidth=1,
+        padding=(6, 4))
     style.map("Treeview",
         background=[("selected", COLOR["accent"])],
         foreground=[("selected", COLOR["text_on_accent"])])
@@ -190,7 +269,11 @@ def apply_theme(root):
         bordercolor=COLOR["bg"], lightcolor=COLOR["accent"],
         darkcolor=COLOR["accent"])
 
-    # 应用底色
+    # 应用底色：CTk 根窗口必须设置 fg_color，透明子控件的颜色探测才能取到白色
+    try:
+        root.configure(fg_color=COLOR["bg"])
+    except Exception:
+        pass
     try:
         root.configure(background=COLOR["bg"])
     except Exception:

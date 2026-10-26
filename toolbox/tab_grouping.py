@@ -395,10 +395,15 @@ def build_flatten_tab(parent):
 
 
 def build_empty_tab(parent):
-    parent.grid_rowconfigure(3, weight=1)
-    make_tip(parent, 0, "循环删除目录下的所有空文件夹（包括嵌套的空目录），根目录本身会保留。")
-    var_src = make_path_row(parent, 1, "目标目录：", title="选择目标目录")
-    text_log, log = make_log_panel(parent, 3)
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "循环删除目录下的所有空文件夹（包括嵌套的空目录），根目录本身会保留。",
+             colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
+    var_src = make_path_row(form, 0, "目标目录：", title="选择目标目录")
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         src = clean_path(var_src.get())
@@ -411,4 +416,4 @@ def build_empty_tab(parent):
         run_task(btn, log, lambda: remove_empty_dirs_loop(src, log),
                  on_done=lambda err: None if err else messagebox.showinfo("完成", "清理结束，详情见日志。"))
 
-    btn = make_start_button(parent, 2, "开始清理", start)
+    btn = make_start_button(form, 1, "开始清理", start)

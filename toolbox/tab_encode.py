@@ -1563,7 +1563,7 @@ def build_encode_tab(parent, app=None):
     btn_redetect.grid(row=0, column=3, padx=2)
 
     # ---------------- 压制设置（模式 + 编码参数 + 选项，紧凑几行） ----------------
-    settings_box = ui.LabelFrame(parent, text=" 压制设置 ", padding=(6, 4))
+    settings_box = ui.LabelFrame(parent, text="压制设置", padding=(6, 4))
     settings_box.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 4))
 
     # 第 1 行：模式
@@ -1713,7 +1713,7 @@ def build_encode_tab(parent, app=None):
     log_body.grid_rowconfigure(0, weight=1)
     log_body.grid_columnconfigure(0, weight=1)
     text_log = ui.Textbox(log_body, height=10, state="disabled", wrap=tk.WORD,
-                                         font=("Consolas", 9))
+                          font=FONTS["log"])
     text_log.grid(row=0, column=0, sticky="nsew")
     log = make_logger(text_log)
 
@@ -1870,8 +1870,14 @@ def build_encode_tab(parent, app=None):
             return
         var_ff.set(ff)
         ver = ffmpeg_version(ff)
-        lbl_ff.config(text=("✓ " + ver.replace("ffmpeg version ", "v").split(" Copyright")[0][:46]
-                            if ver else "✓ 已找到 ffmpeg"), foreground=COLOR["success"])
+        ver_txt = ""
+        if ver:
+            ver_txt = ver.replace("ffmpeg version ", "v").split(" Copyright")[0]
+            ver_txt = ver_txt.split("-full")[0]          # 去掉 -full_build-www… 后缀
+            if len(ver_txt) > 34:
+                ver_txt = ver_txt[:33] + "…"
+        lbl_ff.config(text=("✓ " + ver_txt) if ver_txt else "✓ 已找到 ffmpeg",
+                      foreground=COLOR["success"])
         lbl_enc.config(text="编码器：检测中…", foreground=COLOR["text_secondary"])
         log(f"FFmpeg：{ff}")
         if ver:

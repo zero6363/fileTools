@@ -678,10 +678,9 @@ def build_translate_tab(parent, app=None):
     parent.grid_rowconfigure(2, weight=1)
     parent.grid_rowconfigure(7, weight=1)
     make_tip(parent, 0,
-             "把 .txt / .lrc / .srt / .ass / .vtt 等文本文件拖到下方列表（也可点按钮添加），"
-             "调用免费在线接口翻译成中文，译文写回同名文件，原文件重命名为「原名.old」。\n"
-             "混合文本（一大段中文夹几个日文/英文）：【片段模式】只把非中文片段送去翻译，中文一字不动；"
-             "源语言可手动指定为『日本語』『English』等，混合文件建议手动指定，比自动检测更稳。",
+             "把 .txt / .lrc / .srt / .ass / .vtt 拖入下方列表（也可点按钮添加），"
+             "调用免费在线接口翻译成中文，译文写回同名文件，原文件备份为「原名.old」。\n"
+             "混合文本建议手动指定源语言并开启【片段模式】：只翻译非中文片段，中文一字不动，比自动检测更稳。",
              colspan=1, autowrap=True)
 
     file_list = []
@@ -696,7 +695,7 @@ def build_translate_tab(parent, app=None):
     list_frame.grid(row=2, column=0, sticky="nsew", padx=6, pady=4)
     list_frame.grid_rowconfigure(0, weight=1)
     list_frame.grid_columnconfigure(0, weight=1)
-    listbox = tk.Listbox(list_frame, selectmode=tk.EXTENDED)
+    listbox = ui.Listbox(list_frame, selectmode=tk.EXTENDED, height=6)
     lb_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=listbox.yview)
     listbox.config(yscrollcommand=lb_scroll.set)
     listbox.grid(row=0, column=0, sticky="nsew")
@@ -713,7 +712,7 @@ def build_translate_tab(parent, app=None):
                      (ENGINE_AUTO, ENGINE_DEEPL, ENGINE_GOOGLE,
                       ENGINE_MYMEMORY, ENGINE_LIBRE)]
     var_engine = make_combo_row(form, 0, "翻译引擎：", engine_values,
-                                ENGINE_NAMES[ENGINE_AUTO], width=30,
+                                ENGINE_NAMES[ENGINE_AUTO], width=40,
                                 note="自动：一个失败自动切换下一个（均免费、无需注册）")
     var_src = make_combo_row(form, 1, "源语言：", SRC_LIST, SRC_AUTO, width=18,
                              note="混合文本建议手动指定，如『日本語』『English』")
@@ -731,35 +730,34 @@ def build_translate_tab(parent, app=None):
 
     form_label(form, 5, "选项：")
     frame_opt = ui.Frame(form)
-    frame_opt.grid(row=5, column=1, sticky="w", pady=3)
-    var_backup = make_check(frame_opt, "原文件重命名为「原名.old」（覆盖旧备份）", default=True)
-    var_skip = make_check(frame_opt, "跳过无需翻译的行（仅整行模式）", default=True)
-    var_rec = make_check(frame_opt, "添加文件夹时遍历子目录", default=True)
+    frame_opt.grid(row=5, column=1, columnspan=3, sticky="w", pady=3)
+    var_backup = make_check(frame_opt, "备份原文件为「原名.old」", default=True)
+    var_skip = make_check(frame_opt, "跳过无需翻译的行", default=True)
+    var_rec = make_check(frame_opt, "遍历子目录", default=True)
     for w in frame_opt.winfo_children():
         w.pack_configure(side=tk.LEFT)
 
     form_label(form, 6, "混合文本：")
     frame_mix = ui.Frame(form)
-    frame_mix.grid(row=6, column=1, sticky="w", pady=3)
-    var_seg = make_check(frame_mix, "片段模式：只翻译非目标语言片段（中文原样保留）",
-                         default=True)
-    var_cjk = make_check(frame_mix, "连纯汉字片段也翻译（处理无假名的日文词）", default=False)
+    frame_mix.grid(row=6, column=1, columnspan=3, sticky="w", pady=3)
+    var_seg = make_check(frame_mix, "片段模式（中文原样保留）", default=True)
+    var_cjk = make_check(frame_mix, "翻译纯汉字片段", default=False)
     for w in frame_mix.winfo_children():
         w.pack_configure(side=tk.LEFT)
-    ui.Label(frame_mix, text="关闭片段模式 = 整行交给引擎（不再保留中文原句）",
+    ui.Label(frame_mix, text="关闭片段模式 = 整行交给引擎",
               foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(10, 0))
 
-    form_label(form, 7, "可选端点：")
+    form_label(form, 7, "接口设置：")
+    frame_api = ui.Frame(form)
+    frame_api.grid(row=7, column=1, columnspan=3, sticky="w", pady=3)
+    ttk.Label(frame_api, text="端点").pack(side=tk.LEFT)
     var_endpoint = tk.StringVar(value="https://libretranslate.com/translate")
-    ttk.Entry(form, textvariable=var_endpoint, width=34).grid(
-        row=7, column=1, sticky="w", padx=(0, 6), pady=5)
-    form_note(form, 7, "仅 LibreTranslate 引擎需要")
-
-    form_label(form, 8, "邮箱 / Key：")
+    ttk.Entry(frame_api, textvariable=var_endpoint, width=36).pack(
+        side=tk.LEFT, padx=(4, 14))
+    ttk.Label(frame_api, text="邮箱 / Key（可选）").pack(side=tk.LEFT)
     var_email = tk.StringVar(value="")
-    ttk.Entry(form, textvariable=var_email, width=34).grid(
-        row=8, column=1, sticky="w", padx=(0, 6), pady=5)
-    form_note(form, 8, "可选：MyMemory 填邮箱可提额度；LibreTranslate 填 API Key")
+    ttk.Entry(frame_api, textvariable=var_email, width=20).pack(
+        side=tk.LEFT, padx=(4, 0))
 
     # ---- 执行 / 停止 ----
     frame_run = ui.Frame(parent)
@@ -774,7 +772,7 @@ def build_translate_tab(parent, app=None):
     label_prog = ui.Label(frame_prog, text="")
     label_prog.grid(row=1, column=0, sticky="w")
 
-    text_log, log = make_log_panel(parent, 7, colspan=1, title="运行日志", height=9)
+    text_log, log = make_log_panel(parent, 7, colspan=1, title="运行日志", height=5)
 
     # ---- 功能函数 ----
     def refresh_list():

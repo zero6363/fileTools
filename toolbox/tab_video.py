@@ -890,7 +890,7 @@ def build_video_tab(parent, app=None):
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(2, weight=1)
     make_tip(parent, 0, "识别指定文件夹下的视频是横屏还是竖屏，分别移动到「横屏」「竖屏」子文件夹。"
-                        "只处理当前文件夹，不进入子文件夹；只读视频头信息，速度极快、不改画质。",
+                        "只处理当前文件夹，只读视频头信息，速度快、不改画质。",
              colspan=1, autowrap=True)
 
     form = make_form(parent)

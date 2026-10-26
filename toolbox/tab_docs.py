@@ -16,7 +16,6 @@ from .common import (_module_available, clean_path, clear_log, form_label,
                      form_note, make_check, make_entry_row, make_file_row,
                      make_form, make_log_panel, make_path_row, make_spin_row,
                      make_start_button, make_tip, natural_key, run_task)
-from .theme import COLOR
 
 
 # ⑩ 图片生成MD —— 原 记录md.py
@@ -604,7 +603,7 @@ def build_md_tab(parent):
 
     # 三个复选框放在输入列，与上方输入框左对齐
     check_row = ui.Frame(form)
-    check_row.grid(row=2, column=1, sticky="w", pady=2)
+    check_row.grid(row=2, column=1, columnspan=3, sticky="w", pady=2)
     var_sub = make_check(check_row, "递归遍历子目录", default=True, row=0, column=0)
     var_folder = make_check(check_row, "md添加文件夹名称", default=True, row=0, column=1)
     var_fname = make_check(check_row, "md添加原图名称", default=True, row=0, column=2)
@@ -650,15 +649,20 @@ def build_md_tab(parent):
 
 
 def build_txt2img_tab(parent):
-    parent.grid_rowconfigure(8, weight=1)
-    make_tip(parent, 0, "把 TXT 文件批量渲染为 PNG 图片（中文自动换行）。需要 pillow 依赖。")
-    var_in = make_path_row(parent, 1, "TXT目录：", title="选择TXT目录")
-    var_out = make_path_row(parent, 2, "输出目录：", title="选择输出目录")
-    var_font = make_file_row(parent, 3, "字体文件：", default="C:/Windows/Fonts/simhei.ttf", title="选择字体文件")
-    var_size = make_spin_row(parent, 4, "字体大小：", 16, 6, 200)
-    var_chars = make_spin_row(parent, 5, "每行字数：", 50, 5, 500)
-    var_workers = make_spin_row(parent, 6, "并发线程：", 8, 1, 64)
-    text_log, log = make_log_panel(parent, 8)
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "把 TXT 文件批量渲染为 PNG 图片（中文自动换行）。需要 pillow 依赖。",
+             colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
+    var_in = make_path_row(form, 0, "TXT目录：", title="选择TXT目录")
+    var_out = make_path_row(form, 1, "输出目录：", title="选择输出目录")
+    var_font = make_file_row(form, 2, "字体文件：", default="C:/Windows/Fonts/simhei.ttf", title="选择字体文件")
+    var_size = make_spin_row(form, 3, "字体大小：", 16, 6, 200)
+    var_chars = make_spin_row(form, 4, "每行字数：", 50, 5, 500)
+    var_workers = make_spin_row(form, 5, "并发线程：", 8, 1, 64)
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         in_dir = clean_path(var_in.get())
@@ -685,20 +689,26 @@ def build_txt2img_tab(parent):
                  lambda: txt_to_images(in_dir, out_dir, font, size, chars, workers, log),
                  on_done=lambda err: None if err else messagebox.showinfo("完成", "转换结束，详情见日志。"))
 
-    btn = make_start_button(parent, 7, "开始转换", start)
+    btn = make_start_button(form, 6, "开始转换", start)
 
 
 def build_merge_tab(parent):
-    parent.grid_rowconfigure(4, weight=1)
-    make_tip(parent, 0, "把指定后缀的文件合并为一个文件，每个文件前会带上原文件名与路径。")
-    var_dir = make_path_row(parent, 1, "目标文件夹：", title="选择目标文件夹")
-    ui.Label(parent, text="目标后缀：").grid(row=2, column=0, sticky="w", padx=6, pady=5)
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "把指定后缀的文件合并为一个文件，每个文件前会带上原文件名与路径。",
+             colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
+    var_dir = make_path_row(form, 0, "目标文件夹：", title="选择目标文件夹")
+    form_label(form, 1, "目标后缀：")
     var_suffix = tk.StringVar(value=".txt")
-    ttk.Combobox(parent, textvariable=var_suffix, width=12,
-                 values=[".txt", ".srt", ".md", ".log"]).grid(row=2, column=1, sticky="w", padx=6)
-    ui.Label(parent, text="可直接输入自定义后缀", foreground=COLOR["text_secondary"]).grid(row=2, column=2, sticky="w", padx=4)
-    var_sub = make_check(parent, "递归遍历子目录", default=False, row=2, column=3)
-    text_log, log = make_log_panel(parent, 4)
+    ttk.Combobox(form, textvariable=var_suffix, width=12,
+                 values=[".txt", ".srt", ".md", ".log"]).grid(
+                     row=1, column=1, sticky="w", padx=(0, 6), pady=5)
+    form_note(form, 1, "可直接输入自定义后缀")
+    var_sub = make_check(form, "递归遍历子目录", default=False, row=2, column=1)
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         dir_path = clean_path(var_dir.get())
@@ -720,14 +730,19 @@ def build_merge_tab(parent):
                  on_done=lambda err: (messagebox.showerror("失败", "合并失败，详情见日志。") if err
                                       else messagebox.showinfo("完成", "合并结束，详情见日志。")))
 
-    btn = make_start_button(parent, 3, "开始合并", start)
+    btn = make_start_button(form, 3, "开始合并", start)
 
 
 def build_txt_rename_tab(parent):
-    parent.grid_rowconfigure(3, weight=1)
-    make_tip(parent, 0, "把 TXT 文件用它第一行的文字重命名（自动清理非法字符、自动去重）。")
-    var_dir = make_path_row(parent, 1, "目标文件夹：", title="选择目标文件夹")
-    text_log, log = make_log_panel(parent, 3)
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(2, weight=1)
+    make_tip(parent, 0, "把 TXT 文件用它第一行的文字重命名（自动清理非法字符、自动去重）。",
+             colspan=1, autowrap=True)
+
+    form = make_form(parent)
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
+    var_dir = make_path_row(form, 0, "目标文件夹：", title="选择目标文件夹")
+    text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():
         dir_path = clean_path(var_dir.get())
@@ -738,4 +753,4 @@ def build_txt_rename_tab(parent):
         run_task(btn, log, lambda: rename_txt_by_first_line(dir_path, log),
                  on_done=lambda err: None if err else messagebox.showinfo("完成", "重命名结束，详情见日志。"))
 
-    btn = make_start_button(parent, 2, "开始重命名", start)
+    btn = make_start_button(form, 1, "开始重命名", start)

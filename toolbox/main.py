@@ -76,9 +76,17 @@ from .theme import apply_theme, COLOR, FONTS
 from . import ui, ui as ttk
 
 # 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）
-NAV_DEFAULT_WIDTH = 184
+NAV_DEFAULT_WIDTH = 192
 NAV_MIN_WIDTH = 132
 NAV_MAX_WIDTH = 320
+
+# 导航分组：按使用场景归类，顺序即左侧显示顺序（工具编号保持不变）
+NAV_GROUPS = [
+    ("文件整理", [0, 1, 2, 3, 4, 5, 8]),
+    ("媒体处理", [6, 7, 13, 15]),
+    ("文本与文档", [9, 10, 11, 12, 17]),
+    ("校验与备份", [14, 16, 18]),
+]
 from .tab_grouping import build_empty_tab, build_flatten_tab, build_group_tab
 from .tab_live import build_live_tab
 from .tab_rename import build_rename_tab, build_seq_rename_tab, build_trim_tab
@@ -115,9 +123,9 @@ class ToolboxApp:
         nav_width = saved_nav_w if isinstance(saved_nav_w, int) \
             and NAV_MIN_WIDTH <= saved_nav_w <= NAV_MAX_WIDTH else NAV_DEFAULT_WIDTH
 
-        # 主体：左侧细竖向导航 + 右侧工具内容区
+        # 主体：左侧竖向导航 + 右侧工具内容区
         body = ui.Frame(root)
-        body.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 4))
 
         # 左侧导航：细竖向滚动栏（CTkScrollableFrame），宽度可拖拽调整
         nav = ui.ScrollableFrame(body, width=nav_width)
@@ -126,11 +134,13 @@ class ToolboxApp:
         # CTk 6.x：可滚动容器实例自身即为内容容器，子控件直接放入它
         nav_inner = nav
 
-        ui.Label(nav_inner, text="文件工具箱", font=FONTS["md"],
-                 text_color=COLOR["text"]).pack(anchor="w", padx=12, pady=(10, 2))
+        ui.Label(nav_inner, text="文件工具箱", font=FONTS["nav_title"],
+                 text_color=COLOR["text"]).pack(anchor="w", padx=16, pady=(14, 0))
+        ui.Label(nav_inner, text="19 个实用工具", font=FONTS["xs"],
+                 text_color=COLOR["text_muted"]).pack(anchor="w", padx=16, pady=(0, 6))
 
         # 分隔条：拖拽调整导航宽度（限制在 NAV_MIN~NAV_MAX），双击恢复默认宽度
-        sash = tk.Frame(body, width=5, bg=COLOR["border_strong"], cursor="sb_h_double_arrow")
+        sash = tk.Frame(body, width=2, bg=COLOR["border"], cursor="sb_h_double_arrow")
         sash.pack(side=tk.LEFT, fill=tk.Y)
         sash.bind("<ButtonPress-1>", self._on_nav_resize_start)
         sash.bind("<B1-Motion>", self._on_nav_resize_move)
@@ -138,10 +148,26 @@ class ToolboxApp:
         sash.bind("<Double-Button-1>", self._on_nav_reset_width)
 
         content = ui.Frame(body)
-        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(14, 0))
+
+        # 内容页头：当前工具标题 + 所属分组 + 发丝分隔线
+        header = ui.Frame(content)
+        header.pack(fill=tk.X, padx=2, pady=(0, 2))
+        self.page_title = ui.Label(header, text="", font=FONTS["page_title"],
+                                   text_color=COLOR["text"])
+        self.page_title.pack(side=tk.LEFT, anchor="w")
+        self.page_group = ui.Label(header, text="", font=FONTS["sm"],
+                                   text_color=COLOR["text_muted"])
+        self.page_group.pack(side=tk.RIGHT, anchor="e", pady=(8, 0))
+        tk.Frame(content, height=1, bg=COLOR["border"]).pack(
+            fill=tk.X, padx=2, pady=(0, 6))
+
+        page_host = real_ttk.Frame(content)
+        page_host.pack(fill=tk.BOTH, expand=True)
 
         self.tool_frames = []
-        self.nav_items = []  # [(button, frame, title), ...]
+        self.nav_items = []  # 按工具编号索引：[None] * 19 → (button, frame, title)
+        self._tool_groups = [""] * 19
         self._drop_handlers = {}  # {frame: handler} 各工具页注册的拖放处理器
         self._show_handlers = {}  # {frame: handler} 各工具页注册的「切换到该页时」回调
         self._current_index = 0
@@ -167,7 +193,7 @@ class ToolboxApp:
             ("⑲ 硬盘哈希扫描", build_hash_tab),
         ]
         for index, (title, builder) in enumerate(builders):
-            frame = real_ttk.Frame(content, padding=8)
+            frame = real_ttk.Frame(page_host, padding=(4, 4, 4, 4))
             if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
                             build_compress_tab, build_rsbackup_tab, build_encode_tab,
                             build_translate_tab, build_hash_tab):
@@ -178,21 +204,54 @@ class ToolboxApp:
             else:
                 builder(frame)
             self.tool_frames.append(frame)
-            btn = ui.Button(
-                nav_inner, text=" " + title, anchor="w",
-                command=lambda i=index: self.show_tool(i),
-                bg=COLOR["nav_bg"], fg=COLOR["text"],
-                activebackground=COLOR["nav_item_hover"], activeforeground=COLOR["text"],
-                font=FONTS["nav"], padx=10, pady=6, cursor="hand2",
-            )
-            btn._active = False
-            btn.pack(fill=tk.X, padx=6, pady=2)
-            self.nav_items.append((btn, frame, title))
+
+        # 导航按场景分组显示；nav_items 仍按工具编号索引，
+        # show_tool 的编号映射不受左侧显示顺序影响。
+        self.nav_items = [None] * len(builders)
+        for group_name, indices in NAV_GROUPS:
+            ui.Label(nav_inner, text=group_name, font=FONTS["nav_group"],
+                     text_color=COLOR["text_muted"]).pack(
+                         fill=tk.X, padx=18, pady=(10, 3))
+            for index in indices:
+                title = builders[index][0]
+                self._tool_groups[index] = group_name
+                btn = ui.Button(
+                    nav_inner, text=title, anchor="w", height=32,
+                    command=lambda i=index: self.show_tool(i),
+                    bg=COLOR["nav_bg"], fg=COLOR["text"],
+                    activebackground=COLOR["nav_item_hover"],
+                    font=FONTS["nav"], cursor="hand2",
+                )
+                btn._active = False
+                btn.pack(fill=tk.X, padx=10, pady=1)
+                self.nav_items[index] = (btn, self.tool_frames[index], title)
+
+        # 导航内容不足一屏时隐藏滚动条，避免右侧多出一条灰条；
+        # 窗口变矮、内容超出时自动恢复（CTkScrollableFrame 默认始终显示滚动条）。
+        def _sync_nav_scrollbar(_event=None):
+            try:
+                canvas = nav._parent_canvas
+                bar = nav._scrollbar
+                bbox = canvas.bbox("all")
+                need = bool(bbox and bbox[3] - bbox[1] > canvas.winfo_height() + 4)
+                if need:
+                    bar.grid()
+                else:
+                    bar.grid_remove()
+            except Exception:
+                pass
+
+        nav.bind("<Configure>",
+                 lambda _e: root.after_idle(_sync_nav_scrollbar), add="+")
+        root.after(300, _sync_nav_scrollbar)
 
         self.status = ui.Label(
-            root, text="就绪", anchor="w", padx=10, pady=5,
+            root, text="就绪", anchor="w", padx=12, pady=4,
             bg=COLOR["status_bg"], fg=COLOR["text_secondary"], font=FONTS["sm"])
         self.status.pack(fill=tk.X, side=tk.BOTTOM)
+        # 发丝分隔线放在状态栏上方（pack side=bottom 的后加入者位于先加入者上方）
+        tk.Frame(root, height=1, bg=COLOR["border"]).pack(
+            fill=tk.X, side=tk.BOTTOM, padx=10)
 
         # 注册 Windows 文件拖放（自实现，经队列在正常事件循环中处理）
         install_drop_support(root, self._on_files_dropped)
@@ -231,16 +290,18 @@ class ToolboxApp:
                 f.pack_forget()
         frame.pack(fill=tk.BOTH, expand=True)
         current_title = self.nav_items[index][2]
+        self.page_title.configure(text=current_title)
+        self.page_group.configure(text=self._tool_groups[index])
         for i, (btn, _f, _title) in enumerate(self.nav_items):
             if i == index:
                 btn._active = True
-                btn.config(fg_color=COLOR["accent"], text_color=COLOR["text_on_accent"],
-                           font=FONTS["nav_active"])
+                btn.config(fg_color=COLOR["accent_soft"], text_color=COLOR["accent_active"],
+                           hover_color=COLOR["accent_soft"], font=FONTS["nav_active"])
             else:
                 btn._active = False
-                btn.config(fg_color=COLOR["nav_bg"], text_color=COLOR["text_secondary"],
-                           font=FONTS["nav"])
-        self.status.config(text=f"当前工具：{current_title}")
+                btn.config(fg_color=COLOR["nav_bg"], text_color=COLOR["text"],
+                           hover_color=COLOR["nav_item_hover"], font=FONTS["nav"])
+        self.status.config(text=f"当前工具：{current_title}　·　{self._tool_groups[index]}")
         handler = self._show_handlers.get(frame)
         if handler:
             try:

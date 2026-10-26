@@ -12,6 +12,7 @@
   · 颜色 / 字体统一取自 theme 令牌，保证全应用字号、配色一致。
 """
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import ttk
 
 import customtkinter as ctk
@@ -22,6 +23,7 @@ ctk.set_appearance_mode("light")
 
 # 字符宽度 → 像素 的近似换算（CTk 的 width/height 以像素计，旧 ttk 以字符计）
 _CHAR_PX = 7
+_FONT_CACHE = {}
 
 
 def _px(n, scale=_CHAR_PX, minimum=0):
@@ -30,6 +32,25 @@ def _px(n, scale=_CHAR_PX, minimum=0):
     except (TypeError, ValueError):
         return None
     return max(minimum, n * scale)
+
+
+def _text_px(text, font_desc=None):
+    """测量文本像素宽度；失败时按字符数估算（中文按 14px/字）。"""
+    text = "" if text is None else str(text)
+    if not text:
+        return 0
+    font_desc = font_desc or FONTS["base"]
+    try:
+        key = tuple(font_desc) if isinstance(font_desc, (tuple, list)) else None
+        if key is not None:
+            f = _FONT_CACHE.get(key)
+            if f is None:
+                f = tkfont.Font(font=key)
+                _FONT_CACHE[key] = f
+            return f.measure(text)
+    except Exception:
+        pass
+    return len(text) * 14
 
 
 def init_appearance():
@@ -89,13 +110,16 @@ class Button(_CTkCompat, ctk.CTkButton):
         if ab is not None:
             kw["hover_color"] = ab        # 显式给了悬停色才覆盖（否则 CTk 自动派生）
         kw["text_color_disabled"] = dfg
-        kw.setdefault("corner_radius", 8)
-        # 仅当调用方显式给了宽度时换算；否则 CTk 按文字自适应，尺寸更统一
-        w = _px(kw.pop("width", None))
-        if w:
-            kw["width"] = w
+        kw.setdefault("corner_radius", 6)
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
+        # 按钮宽度按文字自动计算（CTk 默认固定 140px，会让「浏览」等小按钮过大）；
+        # 调用方显式给的旧式字符宽度只作为下限。
+        target = _text_px(kw.get("text", ""), kw["font"]) + 30
+        w = _px(kw.pop("width", None))
+        if w:
+            target = max(target, w)
+        kw["width"] = max(56, min(280, target))
         super().__init__(master, **kw)
 
 
@@ -118,6 +142,12 @@ class Label(_CTkCompat, ctk.CTkLabel):
             kw["fg_color"] = "transparent"
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
+        # 说明文字 / 提示默认左对齐，避免多行文字被居中
+        kw.setdefault("anchor", "w")
+        kw.setdefault("justify", "left")
+        w = _px(kw.pop("width", None))
+        if w:
+            kw["width"] = w
         super().__init__(master, **kw)
 
 
@@ -136,11 +166,10 @@ class Frame(_CTkCompat, ctk.CTkFrame):
             kw["fg_color"] = bg
         else:
             kw["fg_color"] = "transparent"
-        kw["bg_color"] = COLOR["bg"]
         if bd not in (None, 0):
             kw["border_width"] = int(bd)
             kw.setdefault("border_color", COLOR["border"])
-        kw.setdefault("corner_radius", 10)
+        kw.setdefault("corner_radius", 8)
         super().__init__(master, **kw)
 
 
@@ -154,14 +183,13 @@ class Entry(_CTkCompat, ctk.CTkEntry):
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
         kw.pop("insertbackground", None)
-        kw.pop("justify", None)
         kw.pop("exportselection", None)
         kw.pop("cursor", None)
 
         kw["text_color"] = fg
-        if bg is not None:
-            kw["fg_color"] = bg
-        kw.setdefault("border_color", COLOR["border"])
+        # 输入框统一白底（CTk 默认是浅灰 #F9F9FA，和纯白卡片不协调）
+        kw["fg_color"] = bg if bg is not None else COLOR["surface_bright"]
+        kw.setdefault("border_color", COLOR["border_strong"])
         kw.setdefault("corner_radius", 6)
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
@@ -194,7 +222,46 @@ class Checkbutton(_CTkCompat, ctk.CTkCheckBox):
         kw["hover_color"] = COLOR["accent_soft"]
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
+        # 按文字自动计算宽度，避免长选项被 CTk 默认的 100px 截断
+        target = _text_px(kw.get("text", ""), kw["font"]) + 48
+        w = _px(kw.pop("width", None))
+        if w:
+            target = max(target, w)
+        kw["width"] = max(80, min(560, target))
+        kw.setdefault("height", 24)
         # ttk.Checkbutton 用 variable=；CTkCheckBox 同样用 variable=
+        super().__init__(master, **kw)
+
+
+class Radiobutton(_CTkCompat, ctk.CTkRadioButton):
+    """ttk.Radiobutton 的 CTk 替代：统一字体、圆点颜色，并按文字自动定宽。"""
+
+    def __init__(self, master=None, **kw):
+        fg = kw.pop("foreground", kw.pop("fg", COLOR["text"]))
+        bg = kw.pop("background", kw.pop("bg", None))
+        kw.pop("relief", None)
+        kw.pop("bd", kw.pop("borderwidth", None))
+        kw.pop("highlightthickness", None)
+        kw.pop("highlightbackground", None)
+        kw.pop("highlightcolor", None)
+        kw.pop("padx", None)
+        kw.pop("pady", None)
+        kw.pop("anchor", None)
+        kw.pop("cursor", None)
+        kw.pop("takefocus", None)
+        kw.pop("width", None)
+
+        kw["text_color"] = fg
+        kw["fg_color"] = COLOR["accent"]
+        kw["hover_color"] = COLOR["accent_soft"]
+        kw["border_color"] = COLOR["border_strong"]
+        if kw.get("font") is None:
+            kw["font"] = FONTS["base"]
+        target = _text_px(kw.get("text", ""), kw["font"]) + 48
+        kw["width"] = max(80, min(620, target))
+        kw.setdefault("height", 24)
+        kw.setdefault("radiobutton_width", 18)
+        kw.setdefault("radiobutton_height", 18)
         super().__init__(master, **kw)
 
 
@@ -204,8 +271,7 @@ class Combobox(_CTkCompat, ctk.CTkComboBox):
         bg = kw.pop("background", kw.pop("bg", None))
         kw.pop("relief", None)
         kw.pop("bd", kw.pop("borderwidth", None))
-        kw.pop("state", None)  # 重新收集
-        state = kw.get("state", "normal")
+        state = kw.pop("state", "normal")
         kw.pop("postcommand", None)
         kw.pop("exportselection", None)
         kw.pop("justify", None)
@@ -214,11 +280,10 @@ class Combobox(_CTkCompat, ctk.CTkComboBox):
         kw.pop("takefocus", None)
 
         kw["text_color"] = fg
-        if bg is not None:
-            kw["fg_color"] = bg
-        kw["border_color"] = COLOR["border"]
-        kw["button_color"] = COLOR["border_strong"]
-        kw["button_hover_color"] = COLOR["text_muted"]
+        kw["fg_color"] = bg if bg is not None else COLOR["surface_bright"]
+        kw["border_color"] = COLOR["border_strong"]
+        kw["button_color"] = COLOR["surface_alt"]
+        kw["button_hover_color"] = COLOR["border"]
         kw["dropdown_fg_color"] = COLOR["surface"]
         kw["dropdown_hover_color"] = COLOR["accent_soft"]
         kw["dropdown_text_color"] = COLOR["text"]
@@ -249,7 +314,6 @@ class Textbox(_CTkCompat, ctk.CTkTextbox):
         kw.pop("highlightthickness", None)
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
-        kw.pop("wrap", None)
         kw.pop("spacing1", None)
         kw.pop("spacing2", None)
         kw.pop("spacing3", None)
@@ -269,6 +333,7 @@ class Textbox(_CTkCompat, ctk.CTkTextbox):
         kw["text_color"] = fg
         kw["fg_color"] = bg
         kw["border_color"] = COLOR["border"]
+        kw.setdefault("border_width", 1)
         kw["scrollbar_button_color"] = COLOR["border_strong"]
         kw["scrollbar_button_hover_color"] = COLOR["text_muted"]
         kw.setdefault("corner_radius", 6)
@@ -303,15 +368,15 @@ class ScrollableFrame(_CTkCompat, ctk.CTkScrollableFrame):
         kw.pop("offset", None)
         kw.pop("closeenough", None)
 
-        if bg is not None:
-            kw["fg_color"] = bg
-        else:
-            kw["fg_color"] = "transparent"
+        # 导航栏必须有明确的白色底：透明容器会让内部透明 Label 取不到正确底色，
+        # 从而出现灰色文字块（CTk 的透明色探测会回退到根窗口颜色）。
+        kw["fg_color"] = bg if bg is not None else COLOR["surface"]
         kw["bg_color"] = COLOR["nav_bg"]
         kw.setdefault("corner_radius", 0)
         kw.setdefault("border_width", 0)
-        kw.setdefault("scrollbar_button_color", COLOR["border_strong"])
-        kw.setdefault("scrollbar_button_hover_color", COLOR["text_muted"])
+        kw.setdefault("scrollbar_fg_color", COLOR["surface"])
+        kw.setdefault("scrollbar_button_color", COLOR["border"])
+        kw.setdefault("scrollbar_button_hover_color", COLOR["border_strong"])
         super().__init__(master, **kw)
 
 
@@ -347,6 +412,26 @@ class Toplevel(_CTkCompat, ctk.CTkToplevel):
     config = configure
 
 
+class Listbox(tk.Listbox):
+    """带统一主题的 Listbox（CTk 没有等价件，这里补齐字体 / 选中色 / 描边）。"""
+
+    def __init__(self, master=None, **kw):
+        kw.setdefault("font", FONTS["base"])
+        kw.setdefault("background", COLOR["surface_bright"])
+        kw.setdefault("foreground", COLOR["text"])
+        kw.setdefault("selectbackground", COLOR["accent_soft"])
+        kw.setdefault("selectforeground", COLOR["text"])
+        kw.setdefault("activestyle", "none")
+        kw.setdefault("exportselection", False)
+        kw.setdefault("borderwidth", 0)
+        kw.setdefault("relief", "flat")
+        kw.setdefault("highlightthickness", 1)
+        kw.setdefault("highlightbackground", COLOR["border"])
+        kw.setdefault("highlightcolor", COLOR["accent"])
+        kw.setdefault("takefocus", True)
+        super().__init__(master, **kw)
+
+
 # ============================================================
 # 透传：其余 ttk 控件保持原样（CTk 无等价件）
 # ============================================================
@@ -362,7 +447,6 @@ Panedwindow = ttk.Panedwindow
 Sizegrip = ttk.Sizegrip
 # 兼容旧代码中的 Tkinter 命名（与 CTk 风格小写并存）
 LabelFrame = ttk.LabelFrame
-Radiobutton = ttk.Radiobutton
 Spinbox = ttk.Spinbox
 Scale = ttk.Scale
 
@@ -370,8 +454,8 @@ Scale = ttk.Scale
 CTk = ctk.CTk
 
 __all__ = [
-    "Button", "Label", "Frame", "Entry", "Checkbutton", "Combobox",
-    "Textbox", "ScrollableFrame", "Toplevel", "CTk",
+    "Button", "Label", "Frame", "Entry", "Checkbutton", "Radiobutton",
+    "Combobox", "Textbox", "Listbox", "ScrollableFrame", "Toplevel", "CTk",
     "Treeview", "Scrollbar", "Style", "Progressbar", "Separator",
     "Notebook", "Labelframe", "Menubutton", "Panedwindow", "Sizegrip",
     "init_appearance", "ctk",
