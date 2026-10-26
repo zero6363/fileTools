@@ -592,7 +592,7 @@ def build_md_tab(parent):
              colspan=1, autowrap=True)
 
     form = make_form(parent)
-    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
 
     var_src = make_path_row(form, 0, "源目录：", title="选择源目录")
     # 输出文件夹名：默认“记录”，下拉可选“a3”，也支持直接输入自定义名称

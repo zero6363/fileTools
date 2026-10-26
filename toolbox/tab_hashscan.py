@@ -84,10 +84,10 @@ MODE_NAMES = {MODE_QUICK: "快速建档", MODE_PRECHECK: "快速预检",
 # 「已管理目录」里记录的模式名（多一个「继承上级」，不是扫描模式）
 ROOT_MODE_NAMES = dict(MODE_NAMES, seed="继承上级")
 MODE_LABELS = {
-    MODE_QUICK: "快速建档（改库 · 不算哈希）",
-    MODE_PRECHECK: "快速预检（只读 · 不算哈希）",
-    MODE_FULL: "完整建档（改库 · 算哈希）",
-    MODE_VERIFY: "完整检查（只读 · 算哈希）",
+    MODE_QUICK: "快速建档 · 改库",
+    MODE_PRECHECK: "快速预检 · 只读",
+    MODE_FULL: "完整建档 · 改库校验",
+    MODE_VERIFY: "完整检查 · 只读校验",
 }
 # 哪些模式会写库 / 哪些会算哈希
 WRITABLE_MODES = (MODE_QUICK, MODE_FULL)
@@ -2326,12 +2326,12 @@ def build_hash_tab(parent, app=None):
 
     # ---------------- 表单 ----------------
     form = make_form(parent)
-    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
 
     # 扫描根（下拉可选已管理目录，也可以直接输入/浏览）
     form_label(form, 0, "扫描根目录：")
     var_root = tk.StringVar()
-    cmb_root = ttk.Combobox(form, textvariable=var_root, width=52, values=[])
+    cmb_root = ttk.Combobox(form, textvariable=var_root, width=46, values=[])
     cmb_root.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=5)
 
     def choose_root():
@@ -2362,7 +2362,7 @@ def build_hash_tab(parent, app=None):
                command=lambda: merge_dbs()).pack(side=tk.LEFT, padx=(4, 0))
     ui.Button(db_btns, text="用上级库", width=9,
                command=lambda: seed_from_parent()).pack(side=tk.LEFT, padx=(4, 0))
-    lbl_scope = ui.Label(form, text="", foreground=COLOR["text_secondary"])
+    lbl_scope = ui.Label(form, text="", foreground=COLOR["text_secondary"], wraplength=330)
     lbl_scope.grid(row=1, column=3, sticky="w", padx=(8, 4), pady=5)
 
     # 模式
@@ -3831,7 +3831,7 @@ def build_hash_tab(parent, app=None):
 
         win = ui.Toplevel(parent)
         win.title("重复文件检查")
-        win.geometry("1060x640")
+        win.geometry("1200x700")
         try:
             win.transient(parent.winfo_toplevel())
             win.grab_set()
@@ -4042,7 +4042,7 @@ def build_hash_tab(parent, app=None):
 
         win = ui.Toplevel(parent)
         win.title("检查不重复（镜像比对）")
-        win.geometry("1120x640")
+        win.geometry("1260x700")
         try:
             win.transient(parent.winfo_toplevel())
             win.grab_set()
@@ -4546,7 +4546,7 @@ def build_hash_tab(parent, app=None):
         def confirm_sync(mode, n_new, n_ovr, n_del, n_touch, n_skip, rows, plan):
             dlg = ui.Toplevel(win)
             dlg.title("确认同步")
-            dlg.geometry("620x520")
+            dlg.geometry("700x580")
             try:
                 dlg.transient(win)
                 dlg.grab_set()
@@ -4681,7 +4681,7 @@ def build_hash_tab(parent, app=None):
             return
         win = ui.Toplevel(parent)
         win.title("校验哈希结果（勾选可写回 / 可统一修改时间）")
-        win.geometry("1180x640")
+        win.geometry("1320x700")
         try:
             win.transient(parent.winfo_toplevel())
             win.grab_set()
@@ -5127,7 +5127,7 @@ def build_hash_tab(parent, app=None):
     def open_manager():
         win = ui.Toplevel(parent)
         win.title("管理扫描目录")
-        win.geometry("960x460")
+        win.geometry("1420x540")
         try:
             win.transient(parent.winfo_toplevel())
             win.grab_set()
@@ -5140,8 +5140,9 @@ def build_hash_tab(parent, app=None):
                             f"　　点最左列的勾选框 / Ctrl / Shift 多选："
                             f"「检查重复」找重复文件，"
                             f"「检查不重复」比对两个目录的镜像差异",
-                  foreground=COLOR["text_secondary"]).grid(
-            row=0, column=0, sticky="w", padx=10, pady=(8, 4))
+                  foreground=COLOR["text_secondary"], wraplength=1080,
+                  justify="left").grid(
+            row=0, column=0, sticky="ew", padx=10, pady=(8, 4))
 
         cols = [("chk", "选", 34, False), ("path", "扫描目录", 280, True),
                 ("db", "数据库", 280, True), ("count", "记录", 110, False),

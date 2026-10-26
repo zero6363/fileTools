@@ -255,7 +255,7 @@ def build_group_tab(parent):
              colspan=1, autowrap=True)
 
     form = make_form(parent)
-    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
 
     form_label(form, 0, "分组方式：")
     var_mode = tk.StringVar(value="按数量分组")
@@ -369,7 +369,7 @@ def build_flatten_tab(parent):
              colspan=1, autowrap=True)
 
     form = make_form(parent)
-    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
 
     var_src = make_path_row(form, 0, "根目录：", title="选择根目录")
     var_rec = make_check(form, "递归所有层级的子目录（取消勾选只处理一级子目录）",

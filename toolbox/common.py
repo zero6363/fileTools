@@ -13,7 +13,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS
 
-APP_VERSION = "1.35"
+APP_VERSION = "1.36"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -230,7 +230,8 @@ def form_note(parent, row, text, column=3, columnspan=1):
     """表单说明文字：固定放第 4 列，不参与列宽计算；
     按主窗口剩余宽度自动换行，避免长说明被裁掉（CTk 下自身 Configure 会
     收敛到过窄宽度，这里改为跟随顶层窗口宽度计算可用空间）。"""
-    lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"], justify="left")
+    lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"],
+                    wraplength=340, justify="left")
     lbl.grid(row=row, column=column, columnspan=columnspan,
              sticky="w", padx=(8, 4), pady=5)
 

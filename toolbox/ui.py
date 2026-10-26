@@ -225,6 +225,7 @@ class Combobox(_CTkCompat, ctk.CTkComboBox):
         kw.setdefault("corner_radius", 6)
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
+        kw.setdefault("dropdown_font", FONTS["base"])   # 下拉列表选项字号
         # ttk.Combobox 用 textvariable=，CTkComboBox 用 variable=
         if "textvariable" in kw:
             kw["variable"] = kw.pop("textvariable")

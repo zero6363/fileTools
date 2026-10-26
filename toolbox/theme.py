@@ -1,49 +1,49 @@
 # -*- coding: utf-8 -*-
-"""文件工具箱 · 统一设计系统（Design Tokens + CustomTkinter 官方浅色主题）
+"""文件工具箱 · 统一设计系统（Design Tokens + 白底黑字浅色主题）
 ============================================================
 集中管理颜色 / 字体 / 间距 / 圆角令牌，并把它们落地为 ttk 主题与
 可复用的组件样式。所有界面元素从这里取色，杜绝散落的硬编码值。
 
-风格方向：CustomTkinter 官方示例同款浅色（白天模式）
-  · 窗口 #EBEBEB + 卡片 #DBDBDB + 输入框/按钮面 #F9F9FA + 日志内嵌 #F9F9FA
-  · 官方蓝强调色 #3B8ED0（悬停 #36719F），文字 #1A1A1A
-  · 圆角卡片、轻描边、扁平按钮、清晰层级
-  · 语义色：成功 / 警告 / 错误（GitHub Light 亮度档，浅底可读）
+风格方向：白底黑字（简洁高对比浅色）
+  · 窗口 / 卡片 / 按钮面全部纯白 #FFFFFF，仅用发丝描边区分层次
+  · 主文字纯黑 #000000；悬停/表头用极浅灰 #F5F5F5 点缀（非灰底大块）
+  · 官方蓝强调色 #3B8ED0；语义色成功/警告/错误（浅底可读档）
+  · 字号：导航 15 > 正文 14，层级清晰
 """
 import tkinter as tk
 from tkinter import ttk
 
 # ============================================================
-# 1. 颜色令牌（Color Tokens）—— 与 CTk 官方 blue.json 浅色值对齐
+# 1. 颜色令牌（Color Tokens）—— 白底黑字
 # ============================================================
 COLOR = {
-    # 背景层
-    "bg":            "#EBEBEB",   # 应用主背景（CTk gray92）
-    "surface":       "#DBDBDB",   # 卡片 / 面板表面（CTk gray86）
-    "surface_bright": "#F9F9FA",  # 亮表面（次级按钮底、表格行，CTk 官方值）
-    "surface_inset": "#F9F9FA",   # 内嵌表面（日志框，浅色下即近白）
-    "surface_alt":   "#CFCFCF",   # 次级表面（悬停态、表头，CTk gray81）
-    "nav_bg":        "#EBEBEB",   # 左侧导航栏背景（与窗口同色，靠选中态分区）
-    "nav_item_hover":"#CFCFCF",   # 导航项悬停
+    # 背景层（全部纯白，靠描边分区）
+    "bg":            "#FFFFFF",   # 应用主背景
+    "surface":       "#FFFFFF",   # 卡片 / 面板表面
+    "surface_bright": "#FFFFFF",  # 亮表面（次级按钮底、表格行）
+    "surface_inset": "#FFFFFF",   # 内嵌表面（日志框）
+    "surface_alt":   "#F5F5F5",   # 交互点缀（悬停态、表头、选中底——极浅灰）
+    "nav_bg":        "#FFFFFF",   # 左侧导航栏背景（与窗口同色，靠选中态分区）
+    "nav_item_hover":"#F0F0F0",   # 导航项悬停
 
-    # 描边 / 分隔
-    "border":        "#A6A6A6",   # 常规描边（CTk gray65）
-    "border_strong": "#979DA2",   # 强调描边 / 输入框描边（CTk 官方值）
+    # 描边 / 分隔（发丝线，非灰色块）
+    "border":        "#E0E0E0",   # 常规描边
+    "border_strong": "#C8C8C8",   # 强调描边 / 输入框描边
 
     # 文字
-    "text":           "#1A1A1A",  # 主文字（CTk gray10）
-    "text_secondary": "#57606A",  # 次要文字 / 说明
-    "text_muted":     "#8C959F",  # 占位 / 禁用
-    "text_on_accent": "#DCE4EE",  # 强调色上的文字（CTk 官方值）
+    "text":           "#000000",  # 主文字（纯黑）
+    "text_secondary": "#444444",  # 次要文字 / 说明
+    "text_muted":     "#888888",  # 占位 / 禁用
+    "text_on_accent": "#FFFFFF",  # 强调色上的文字
 
-    # 强调色（CTk 官方浅色蓝）
+    # 强调色（官方浅色蓝）
     "accent":         "#3B8ED0",
     "accent_hover":   "#36719F",
     "accent_active":  "#325882",
-    "accent_soft":    "#CDE1F5",  # 强调色淡底（选中 / 标签 / 激活项）
+    "accent_soft":    "#D5E8F7",  # 强调色淡底（选中 / 标签 / 激活项）
 
     # 状态栏
-    "status_bg":      "#E3E3E3",
+    "status_bg":      "#FFFFFF",
 
     # 语义色（浅底可读的亮度档）
     "success":        "#1A7F37",
@@ -68,17 +68,17 @@ def font(size=12, weight="normal"):
 
 
 FONTS = {
-    "xs":          font(11),
-    "sm":          font(12),
-    "base":        font(13),
-    "md":          font(14),
-    "lg":          font(16),
-    "xl":          font(19, "bold"),
-    "title":       font(21, "bold"),
-    "nav_title":   font(16, "bold"),
-    "nav":         font(14),          # 导航项：比内容正文(base 13)大一号
-    "nav_active":  font(14, "bold"),
-    "log":         (FONT_MONO, 10),
+    "xs":          font(12),
+    "sm":          font(13),
+    "base":        font(14),
+    "md":          font(15),
+    "lg":          font(17),
+    "xl":          font(20, "bold"),
+    "title":       font(22, "bold"),
+    "nav_title":   font(17, "bold"),
+    "nav":         font(15),          # 导航项：比内容正文(base 14)大一号
+    "nav_active":  font(15, "bold"),
+    "log":         (FONT_MONO, 11),
 }
 
 # ============================================================
@@ -93,7 +93,7 @@ RADIUS = {"sm": 4, "md": 6, "lg": 10, "pill": 999}
 # ============================================================
 def apply_theme(root):
     """把设计令牌写入 ttk 主题（基于 clam，跨平台可控），并设定应用底色。
-    须在创建任何 ttk 控件之前调用。浅色主题（CTk 官方示例同款，白天模式）。"""
+    须在创建任何 ttk 控件之前调用。白底黑字浅色主题。"""
     style = ttk.Style(root)
     try:
         style.theme_use("clam")

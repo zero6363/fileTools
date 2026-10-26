@@ -190,7 +190,7 @@ def build_webp_tab(parent):
     make_tip(parent, 0, "把 WebP 图片转换为 JPG。需要 pillow 依赖。", colspan=1, autowrap=True)
 
     form = make_form(parent)
-    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
 
     var_src = make_path_row(form, 0, "源目录：", title="选择源目录")
     var_out = make_path_row(form, 1, "输出目录：", title="选择输出目录", note="留空则输出到源目录")
@@ -224,7 +224,7 @@ def build_zip_tab(parent):
                         "rar/7z 需要 rarfile / py7zr。", colspan=1, autowrap=True)
 
     form = make_form(parent)
-    form.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 2))
+    form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
 
     var_dir = make_path_row(form, 0, "扫描目录：", title="选择扫描目录")
     var_suffix = make_entry_row(form, 1, "压缩包后缀：", default=".zip .rar .7z",

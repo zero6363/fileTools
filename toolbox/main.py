@@ -319,6 +319,14 @@ def main():
     except Exception:
         pass
     root = ui.CTk()
+    # 统一缩放：CTk 默认会按 Windows 显示缩放再放大自己的控件字体，
+    # 而 ttk/tk 控件不缩放，混用后「选项字体比文本大」。归一到 1.0，
+    # 让 CTk 与 ttk 渲染尺寸一致（应用已开启 DPI 感知）。
+    try:
+        ui.ctk.set_widget_scaling(1.0)
+        ui.ctk.set_window_scaling(1.0)
+    except Exception:
+        pass
     app = ToolboxApp(root)
     try:
         root.mainloop()

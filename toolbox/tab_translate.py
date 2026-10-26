@@ -707,7 +707,7 @@ def build_translate_tab(parent, app=None):
 
     # ---- 参数区 ----
     form = make_form(parent)
-    form.grid(row=4, column=0, sticky="w", padx=6, pady=(0, 2))
+    form.grid(row=4, column=0, sticky="ew", padx=6, pady=(0, 2))
 
     engine_values = [ENGINE_NAMES[k] for k in
                      (ENGINE_AUTO, ENGINE_DEEPL, ENGINE_GOOGLE,
