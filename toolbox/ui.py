@@ -18,7 +18,7 @@ import customtkinter as ctk
 from .theme import COLOR, FONTS
 
 # CustomTkinter 默认外观：浅色模式（与现有设计系统一致）
-ctk.set_appearance_mode("dark")
+ctk.set_appearance_mode("light")
 
 # 字符宽度 → 像素 的近似换算（CTk 的 width/height 以像素计，旧 ttk 以字符计）
 _CHAR_PX = 7
@@ -34,7 +34,7 @@ def _px(n, scale=_CHAR_PX, minimum=0):
 
 def init_appearance():
     """显式初始化外观（在创建任何控件前调用一次即可）。"""
-    ctk.set_appearance_mode("dark")
+    ctk.set_appearance_mode("light")
 
 
 # ============================================================
@@ -74,8 +74,8 @@ class Button(_CTkCompat, ctk.CTkButton):
 
         if bg is None:
             # 次级按钮（未显式指定底色，如「浏览...」「添加文件」）：
-            # 白底描边，与设计系统 TButton 一致，避免满屏蓝色主按钮
-            bg = COLOR["surface"]
+            # 亮底描边，与设计系统 TButton 一致，避免满屏蓝色主按钮
+            bg = COLOR["surface_bright"]
             fg = fg or COLOR["text"]
             dfg = dfg or COLOR["text_muted"]
             kw["border_width"] = 1
