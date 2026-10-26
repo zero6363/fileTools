@@ -7,7 +7,9 @@ import json
 import os
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
+from . import ui, ui as ttk
+from .theme import FONTS
 
 from .common import (clean_path, clear_log, form_label, form_note,
                      get_unique_path, make_form, make_log_panel, make_num_row,
@@ -688,7 +690,7 @@ def build_rsbackup_tab(parent, app=None):
     state = {"busy": False}
 
     # ================= 备份区 =================
-    box_backup = ttk.LabelFrame(parent, text=" 备份 ", padding=(10, 8))
+    box_backup = ui.LabelFrame(parent, text=" 备份 ", padding=(10, 8))
     box_backup.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
     box_backup.grid_columnconfigure(0, weight=1)
     form_b = make_form(box_backup)
@@ -698,7 +700,7 @@ def build_rsbackup_tab(parent, app=None):
     bk_input = tk.StringVar()
     ttk.Entry(form_b, textvariable=bk_input, width=52).grid(
         row=0, column=1, sticky="w", padx=(0, 6), pady=5)
-    ttk.Button(form_b, text="浏览...",
+    ui.Button(form_b, text="浏览...",
                command=lambda: _pick_file(bk_input, "选择要备份的文件")).grid(
         row=0, column=2, sticky="w", padx=(0, 4), pady=5)
 
@@ -709,11 +711,11 @@ def build_rsbackup_tab(parent, app=None):
                                  1, RS_MAX_SHARES, note="任意这么多份即可恢复")
 
     # 加密选项（放在输入列，与上方输入框左对齐）
-    crypto = ttk.Frame(form_b)
+    crypto = ui.Frame(form_b)
     crypto.grid(row=3, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=3)
     var_encrypt = tk.BooleanVar(value=False)
     ttk.Checkbutton(crypto, text="加密 (AES-256-GCM)", variable=var_encrypt).pack(side="left")
-    ttk.Label(crypto, text="密码：").pack(side="left", padx=(12, 4))
+    ui.Label(crypto, text="密码：").pack(side="left", padx=(12, 4))
     var_password = tk.StringVar()
     ttk.Entry(crypto, textvariable=var_password, width=20, show="*").pack(side="left")
     var_enc_name = tk.BooleanVar(value=False)
@@ -724,12 +726,12 @@ def build_rsbackup_tab(parent, app=None):
     bk_outdir = tk.StringVar()
     ttk.Entry(form_b, textvariable=bk_outdir, width=52).grid(
         row=4, column=1, sticky="w", padx=(0, 6), pady=5)
-    ttk.Button(form_b, text="浏览...",
+    ui.Button(form_b, text="浏览...",
                command=lambda: _pick_dir(bk_outdir, "选择分片输出目录")).grid(
         row=4, column=2, sticky="w", padx=(0, 4), pady=5)
     form_note(form_b, 4, "留空 = 源文件所在目录")
 
-    label_warn = ttk.Label(form_b, text="", foreground=COLOR["warning"], justify="left")
+    label_warn = ui.Label(form_b, text="", foreground=COLOR["warning"], justify="left")
     label_warn.grid(row=5, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=(2, 4))
 
     def _warn_wrap(event):
@@ -762,7 +764,7 @@ def build_rsbackup_tab(parent, app=None):
     refresh_warn()
 
     # ================= 恢复区 =================
-    box_restore = ttk.LabelFrame(parent, text=" 恢复 ", padding=(10, 8))
+    box_restore = ui.LabelFrame(parent, text=" 恢复 ", padding=(10, 8))
     box_restore.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
     box_restore.grid_columnconfigure(0, weight=1)
     form_r = make_form(box_restore)
@@ -772,7 +774,7 @@ def build_rsbackup_tab(parent, app=None):
     rs_input = tk.StringVar()
     ttk.Entry(form_r, textvariable=rs_input, width=52).grid(
         row=0, column=1, sticky="w", padx=(0, 6), pady=5)
-    ttk.Button(form_r, text="浏览...",
+    ui.Button(form_r, text="浏览...",
                command=lambda: _pick_file(rs_input, "选择任意 .rs.NNN 或 .rsmeta 文件")).grid(
         row=0, column=2, sticky="w", padx=(0, 4), pady=5)
     form_note(form_r, 0, "选一个分片或 .rsmeta（只查同目录）")
@@ -787,7 +789,7 @@ def build_rsbackup_tab(parent, app=None):
     rs_outdir = tk.StringVar()
     ttk.Entry(form_r, textvariable=rs_outdir, width=52).grid(
         row=2, column=1, sticky="w", padx=(0, 6), pady=5)
-    ttk.Button(form_r, text="浏览...",
+    ui.Button(form_r, text="浏览...",
                command=lambda: _pick_dir(rs_outdir, "选择恢复输出目录")).grid(
         row=2, column=2, sticky="w", padx=(0, 4), pady=5)
     form_note(form_r, 2, "留空 = 分片目录\\rebuild，不覆盖")
@@ -921,19 +923,19 @@ def build_rsbackup_tab(parent, app=None):
 
     form_btn = make_form(parent)
     form_btn.grid(row=3, column=0, sticky="w", padx=6, pady=(0, 2))
-    frame_btn = ttk.Frame(form_btn)
+    frame_btn = ui.Frame(form_btn)
     frame_btn.grid(row=0, column=1, columnspan=2, sticky="w", pady=(4, 2))
-    btn_backup = tk.Button(frame_btn, text="开始备份", command=lambda: do_backup(),
+    btn_backup = ui.Button(frame_btn, text="开始备份", command=lambda: do_backup(),
                            bg=COLOR["accent"], fg=COLOR["text_on_accent"],
                            disabledforeground=COLOR["text_on_accent"],
                            activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
-                           font=("Microsoft YaHei", 10, "bold"), padx=16, pady=4, cursor="hand2")
+                           font=FONTS["base"], padx=16, pady=4, cursor="hand2")
     btn_backup.pack(side="left", padx=(0, 8))
-    btn_restore = tk.Button(frame_btn, text="开始恢复", command=lambda: do_restore(),
+    btn_restore = ui.Button(frame_btn, text="开始恢复", command=lambda: do_restore(),
                             bg=COLOR["success"], fg=COLOR["text_on_accent"],
                             disabledforeground=COLOR["text_on_accent"],
                             activebackground=COLOR["success_active"], activeforeground=COLOR["text_on_accent"],
-                            font=("Microsoft YaHei", 10, "bold"), padx=16, pady=4, cursor="hand2")
+                            font=FONTS["base"], padx=16, pady=4, cursor="hand2")
     btn_restore.pack(side="left")
 
     if app is not None:

@@ -10,7 +10,9 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
+from . import ui, ui as ttk
+from .theme import FONTS
 
 from . import config
 from .common import (APP_TITLE, _module_available, clean_path, clear_log,
@@ -551,7 +553,7 @@ def _size_of(text):
     return None
 
 
-class CompressOptionsDialog(tk.Toplevel):
+class CompressOptionsDialog(ui.Toplevel):
     """图片压缩操作选项对话框"""
 
     def __init__(self, master, options):
@@ -567,35 +569,35 @@ class CompressOptionsDialog(tk.Toplevel):
         pad = dict(padx=10, pady=4)
 
         # ---- 保存路径 ----
-        box1 = ttk.LabelFrame(self, text=" 保存路径 ")
+        box1 = ui.LabelFrame(self, text=" 保存路径 ")
         box1.pack(fill="x", **pad)
         self.var_save_mode = tk.IntVar(value=options['save_mode'])
         for val, text in ((0, "覆盖原图"), (1, "原路径重命名"), (2, "保存到指定路径")):
             ttk.Radiobutton(box1, text=text, variable=self.var_save_mode,
                             value=val, command=self._pick_dir_state).pack(side="left", padx=8, pady=6)
-        row = ttk.Frame(box1)
+        row = ui.Frame(box1)
         row.pack(fill="x", padx=8, pady=(0, 6))
         self.var_outdir = tk.StringVar(value=options.get('outdir', '') or '')
         self.ent_outdir = ttk.Entry(row, textvariable=self.var_outdir, width=32, state="disabled")
         self.ent_outdir.pack(side="left", fill="x", expand=True)
-        self.btn_pick = ttk.Button(row, text="浏览…", width=8, command=self._pick_dir, state="disabled")
+        self.btn_pick = ui.Button(row, text="浏览…", width=8, command=self._pick_dir, state="disabled")
         self.btn_pick.pack(side="left", padx=(6, 0))
-        ttk.Label(box1, text="说明: 执行覆盖操作不可逆, 请确认已备份。",
+        ui.Label(box1, text="说明: 执行覆盖操作不可逆, 请确认已备份。",
                   foreground=COLOR["text_muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
         # ---- 压缩设置 ----
-        box2 = ttk.LabelFrame(self, text="  压缩设置 ")
+        box2 = ui.LabelFrame(self, text="  压缩设置 ")
         box2.pack(fill="x", **pad)
-        row2 = ttk.Frame(box2)
+        row2 = ui.Frame(box2)
         row2.pack(fill="x", padx=8, pady=6)
         self.var_enable = tk.BooleanVar(value=options.get('enable_compress', True))
         ttk.Checkbutton(row2, text="设置图片压缩", variable=self.var_enable).pack(side="left")
         self.var_keep_exif = tk.BooleanVar(value=options.get('keep_exif', True))
         ttk.Checkbutton(row2, text="保留 Exif", variable=self.var_keep_exif).pack(side="left", padx=(20, 0))
 
-        row_enc = ttk.Frame(box2)
+        row_enc = ui.Frame(box2)
         row_enc.pack(fill="x", padx=8, pady=(0, 6))
-        ttk.Label(row_enc, text="编码器:").pack(side="left")
+        ui.Label(row_enc, text="编码器:").pack(side="left")
         self.var_encoder = tk.IntVar(value=options.get('encoder', 0))
         ttk.Radiobutton(row_enc, text="mozjpeg (默认·体积更小)", variable=self.var_encoder,
                         value=0).pack(side="left", padx=(8, 0))
@@ -603,44 +605,44 @@ class CompressOptionsDialog(tk.Toplevel):
                         value=1).pack(side="left", padx=(12, 0))
 
         # 失败收集
-        box_fail = ttk.LabelFrame(self, text=" 压缩失败收集 ")
+        box_fail = ui.LabelFrame(self, text=" 压缩失败收集 ")
         box_fail.pack(fill="x", **pad)
         self.var_collect = tk.BooleanVar(value=options.get('collect_failed', False))
         ttk.Checkbutton(box_fail, text="压缩失败的文件复制到",
                         variable=self.var_collect).pack(side="left", padx=8, pady=6)
         self.var_faildir = tk.StringVar(value=options.get('faildir', 'dist') or 'dist')
         ttk.Entry(box_fail, textvariable=self.var_faildir, width=26).pack(side="left", padx=4, pady=6)
-        ttk.Label(box_fail, text="(相对源文件目录或绝对路径)", foreground=COLOR["text_muted"]).pack(side="left", pady=6)
+        ui.Label(box_fail, text="(相对源文件目录或绝对路径)", foreground=COLOR["text_muted"]).pack(side="left", pady=6)
 
-        box_fmt = ttk.LabelFrame(self, text=" 结果格式 ")
+        box_fmt = ui.LabelFrame(self, text=" 结果格式 ")
         box_fmt.pack(fill="x", **pad)
         self.var_out_fmt = tk.IntVar(value=options.get('out_fmt', 1))
         ttk.Radiobutton(box_fmt, text="保持原格式", variable=self.var_out_fmt,
                         value=0).pack(side="left", padx=8, pady=6)
         ttk.Radiobutton(box_fmt, text="统一为 JPG", variable=self.var_out_fmt,
                         value=1).pack(side="left", padx=8, pady=6)
-        ttk.Label(box_fmt, text="统一为 JPG 时, PNG/WebP/TIFF/BMP 均按质量重压缩为 JPEG",
+        ui.Label(box_fmt, text="统一为 JPG 时, PNG/WebP/TIFF/BMP 均按质量重压缩为 JPEG",
                   foreground=COLOR["text_muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
-        box3 = ttk.LabelFrame(self, text=" 图片质量 ")
+        box3 = ui.LabelFrame(self, text=" 图片质量 ")
         box3.pack(fill="x", **pad)
-        qrow = ttk.Frame(box3)
+        qrow = ui.Frame(box3)
         qrow.pack(fill="x", padx=10, pady=(4, 0))
-        ttk.Label(qrow, text="低").pack(side="left")
+        ui.Label(qrow, text="低").pack(side="left")
         self.var_quality = tk.IntVar(value=options.get('quality', 100))
         self.qscale = ttk.Scale(qrow, from_=50, to=100, orient="horizontal",
                                 variable=self.var_quality, command=self._qlabel)
         self.qscale.pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Label(qrow, text="高").pack(side="left")
-        self.qlabel = ttk.Label(qrow, text="", width=5)
+        ui.Label(qrow, text="高").pack(side="left")
+        self.qlabel = ui.Label(qrow, text="", width=5)
         self.qlabel.pack(side="left")
         self._qlabel()
-        ttk.Label(box3, text="说明: 默认 mozjpeg 对 JPEG 做无损优化(Huffman 重排, 画质不变体积更小);\n"
+        ui.Label(box3, text="说明: 默认 mozjpeg 对 JPEG 做无损优化(Huffman 重排, 画质不变体积更小);\n"
                              "质量滑条调低才触发有损重编码; PNG / TIFF 始终无损压缩。",
                   foreground=COLOR["text_muted"]).pack(anchor="w", padx=10, pady=(0, 6))
 
         # ---- 其他 ----
-        box4 = ttk.Frame(self)
+        box4 = ui.Frame(self)
         box4.pack(fill="x", **pad)
         self.var_thread = tk.BooleanVar(value=options.get('multithread', True))
         ttk.Checkbutton(box4, text="多线程", variable=self.var_thread).pack(side="left")
@@ -651,11 +653,11 @@ class CompressOptionsDialog(tk.Toplevel):
         self.var_log = tk.BooleanVar(value=options.get('enable_log', False))
         ttk.Checkbutton(box4, text="开启日志(compressor.log)", variable=self.var_log).pack(side="left", padx=(20, 0))
 
-        btnrow = ttk.Frame(self)
+        btnrow = ui.Frame(self)
         btnrow.pack(fill="x", padx=10, pady=10)
         # 与系统 messagebox 统一：主操作（确定）在左，取消在右
-        ttk.Button(btnrow, text="取消", command=self.destroy, width=10).pack(side="right", padx=6)
-        ttk.Button(btnrow, text="确定", command=self._ok, width=10).pack(side="right")
+        ui.Button(btnrow, text="取消", command=self.destroy, width=10).pack(side="right", padx=6)
+        ui.Button(btnrow, text="确定", command=self._ok, width=10).pack(side="right")
 
         self._pick_dir_state()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
@@ -735,7 +737,7 @@ def build_compress_tab(parent, app=None):
     state = {"compressing": False}
 
     # ---- 文件树 ----
-    tree_frame = ttk.Frame(parent)
+    tree_frame = ui.Frame(parent)
     tree_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", padx=6, pady=4)
     tree_frame.grid_rowconfigure(0, weight=1)
     tree_frame.grid_columnconfigure(0, weight=1)
@@ -759,31 +761,31 @@ def build_compress_tab(parent, app=None):
     tree.tag_configure("fail", foreground="#c62828")
 
     # ---- 按钮行 ----
-    frame_btn = ttk.Frame(parent)
+    frame_btn = ui.Frame(parent)
     frame_btn.grid(row=2, column=0, columnspan=3, sticky="w", padx=6, pady=4)
-    btn_add_files = ttk.Button(frame_btn, text="添加图片", command=lambda: add_files_dialog())
+    btn_add_files = ui.Button(frame_btn, text="添加图片", command=lambda: add_files_dialog())
     btn_add_files.pack(side="left")
-    btn_add_dir = ttk.Button(frame_btn, text="添加文件夹", command=lambda: add_folder_dialog())
+    btn_add_dir = ui.Button(frame_btn, text="添加文件夹", command=lambda: add_folder_dialog())
     btn_add_dir.pack(side="left", padx=6)
-    btn_options = ttk.Button(frame_btn, text="操作选项", command=lambda: show_options())
+    btn_options = ui.Button(frame_btn, text="操作选项", command=lambda: show_options())
     btn_options.pack(side="left")
-    btn_compress = tk.Button(frame_btn, text="一键压缩", command=lambda: start_compress(),
+    btn_compress = ui.Button(frame_btn, text="一键压缩", command=lambda: start_compress(),
                              bg=COLOR["accent"], fg=COLOR["text_on_accent"],
                              disabledforeground=COLOR["text_on_accent"],
                              activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
-                             font=("Microsoft YaHei", 10, "bold"),
+                             font=FONTS["base"],
                              padx=12, pady=2, cursor="hand2")
     btn_compress.pack(side="right")
-    btn_clear = ttk.Button(frame_btn, text="清空列表", command=lambda: clear_list())
+    btn_clear = ui.Button(frame_btn, text="清空列表", command=lambda: clear_list())
     btn_clear.pack(side="right", padx=6)
 
     # ---- 进度行 ----
-    frame_prog = ttk.Frame(parent)
+    frame_prog = ui.Frame(parent)
     frame_prog.grid(row=3, column=0, columnspan=3, sticky="ew", padx=6, pady=(0, 6))
     frame_prog.grid_columnconfigure(0, weight=1)
     pbar = ttk.Progressbar(frame_prog, mode="determinate")
     pbar.grid(row=0, column=0, sticky="ew")
-    label_status = ttk.Label(frame_prog, text="就绪", width=46, anchor="e")
+    label_status = ui.Label(frame_prog, text="就绪", width=46, anchor="e")
     label_status.grid(row=0, column=1, sticky="e", padx=(10, 0))
 
     # ---- 功能函数 ----

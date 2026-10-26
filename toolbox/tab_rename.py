@@ -2,7 +2,8 @@
 """⑤ 文件名添加路径 / ⑥ 序号重命名（拖放 + 数值化自然排序 + 两阶段防覆盖）"""
 import os
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
+from . import ui, ui as ttk
 
 from .common import (clean_path, clear_log, make_check, make_log_panel,
                      make_num_box, make_path_row, make_spin_row,
@@ -191,16 +192,16 @@ def execute_seq_plan(plan, log):
 
 def build_rename_tab(parent):
     # 本页控件较多，统一使用 pack 布局
-    ttk.Label(parent, text="把文件名改成带目录层级的名称（如 根目录-子目录-原名），先预览确认后再执行。",
+    ui.Label(parent, text="把文件名改成带目录层级的名称（如 根目录-子目录-原名），先预览确认后再执行。",
               foreground=COLOR["text_secondary"]).pack(anchor="w", padx=8, pady=(0, 6))
 
     var_path = tk.StringVar()
     var_rec = tk.BooleanVar(value=True)
     var_root = tk.BooleanVar(value=True)
 
-    frame_top = ttk.Frame(parent, padding=6)
+    frame_top = ui.Frame(parent, padding=6)
     frame_top.pack(fill=tk.X)
-    ttk.Label(frame_top, text="目标文件夹：").pack(side=tk.LEFT)
+    ui.Label(frame_top, text="目标文件夹：").pack(side=tk.LEFT)
     ttk.Entry(frame_top, textvariable=var_path, width=60).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
     def browse():
@@ -208,23 +209,23 @@ def build_rename_tab(parent):
         if p:
             var_path.set(p)
 
-    ttk.Button(frame_top, text="选择文件夹", command=browse).pack(side=tk.LEFT)
+    ui.Button(frame_top, text="选择文件夹", command=browse).pack(side=tk.LEFT)
 
-    frame_check = ttk.Frame(parent, padding=4)
+    frame_check = ui.Frame(parent, padding=4)
     frame_check.pack(anchor="w", padx=6)
     ttk.Checkbutton(frame_check, text="递归遍历子目录", variable=var_rec).pack(side=tk.LEFT, padx=10)
     ttk.Checkbutton(frame_check, text="带上输入文件夹名称", variable=var_root).pack(side=tk.LEFT, padx=10)
 
-    frame_btn = ttk.Frame(parent, padding=4)
+    frame_btn = ui.Frame(parent, padding=4)
     frame_btn.pack()
 
-    table_frame = ttk.Frame(parent)
+    table_frame = ui.Frame(parent)
     table_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
     table_frame.grid_columnconfigure(0, weight=1)
     table_frame.grid_columnconfigure(1, weight=1)
     table_frame.grid_rowconfigure(0, weight=1)
 
-    left_frame = ttk.Frame(table_frame)
+    left_frame = ui.Frame(table_frame)
     left_frame.grid(row=0, column=0, sticky="nsew", padx=2)
     left_frame.grid_rowconfigure(0, weight=1)
     left_frame.grid_columnconfigure(0, weight=1)
@@ -239,7 +240,7 @@ def build_rename_tab(parent):
     v_scroll_old.grid(row=0, column=1, sticky="ns")
     h_scroll_old.grid(row=1, column=0, sticky="ew")
 
-    right_frame = ttk.Frame(table_frame)
+    right_frame = ui.Frame(table_frame)
     right_frame.grid(row=0, column=1, sticky="nsew", padx=2)
     right_frame.grid_rowconfigure(0, weight=1)
     right_frame.grid_columnconfigure(0, weight=1)
@@ -263,7 +264,7 @@ def build_rename_tab(parent):
     tree_old.configure(yscrollcommand=lambda *a: (v_scroll_old.set(*a), sync_y_old(*a)))
     tree_new.configure(yscrollcommand=lambda *a: (v_scroll_new.set(*a), sync_y_new(*a)))
 
-    frame_long = ttk.LabelFrame(parent, text="因重命名后路径超过255字符被跳过的文件", padding=4)
+    frame_long = ui.LabelFrame(parent, text="因重命名后路径超过255字符被跳过的文件", padding=4)
     frame_long.pack(fill=tk.X, padx=6, pady=4)
     frame_long.grid_columnconfigure(0, weight=1)
     frame_long.grid_rowconfigure(0, weight=1)
@@ -326,9 +327,9 @@ def build_rename_tab(parent):
         messagebox.showinfo("执行完成", msg)
         clear_preview()
 
-    ttk.Button(frame_btn, text="预览重命名结果", command=preview_rename).pack(side=tk.LEFT, padx=8)
-    ttk.Button(frame_btn, text="执行重命名", command=do_rename).pack(side=tk.LEFT, padx=8)
-    ttk.Button(frame_btn, text="清空预览", command=clear_preview).pack(side=tk.LEFT, padx=8)
+    ui.Button(frame_btn, text="预览重命名结果", command=preview_rename).pack(side=tk.LEFT, padx=8)
+    ui.Button(frame_btn, text="执行重命名", command=do_rename).pack(side=tk.LEFT, padx=8)
+    ui.Button(frame_btn, text="清空预览", command=clear_preview).pack(side=tk.LEFT, padx=8)
 
 
 def trim_filename(name, start, count, from_end):
@@ -392,7 +393,7 @@ def build_seq_rename_tab(parent, app=None):
     preview_plan = []   # [(old, new)]
 
     # ---- 第一行：添加按钮 ----
-    frame_add = ttk.Frame(parent)
+    frame_add = ui.Frame(parent)
     frame_add.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=4)
 
     def on_add_files():
@@ -405,14 +406,14 @@ def build_seq_rename_tab(parent, app=None):
         if p:
             add_paths([p])
 
-    btn_add_files = ttk.Button(frame_add, text="添加文件", command=on_add_files)
+    btn_add_files = ui.Button(frame_add, text="添加文件", command=on_add_files)
     btn_add_files.pack(side=tk.LEFT, padx=4)
-    ttk.Button(frame_add, text="添加文件夹", command=on_add_folder).pack(side=tk.LEFT, padx=4)
-    ttk.Button(frame_add, text="清空列表", command=lambda: (file_list.clear(), clear_preview(), refresh_list())
+    ui.Button(frame_add, text="添加文件夹", command=on_add_folder).pack(side=tk.LEFT, padx=4)
+    ui.Button(frame_add, text="清空列表", command=lambda: (file_list.clear(), clear_preview(), refresh_list())
                ).pack(side=tk.LEFT, padx=4)
 
     # ---- 文件列表框 ----
-    list_frame = ttk.Frame(parent)
+    list_frame = ui.Frame(parent)
     list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=6, pady=4)
     list_frame.grid_rowconfigure(0, weight=1)
     list_frame.grid_columnconfigure(0, weight=1)
@@ -422,7 +423,7 @@ def build_seq_rename_tab(parent, app=None):
     listbox.grid(row=0, column=0, sticky="nsew")
     lb_scroll.grid(row=0, column=1, sticky="ns")
 
-    label_count = ttk.Label(parent, text="共 0 个文件")
+    label_count = ui.Label(parent, text="共 0 个文件")
     label_count.grid(row=3, column=0, sticky="w", padx=8)
     var_rec = tk.BooleanVar(value=True)
     chk_rec = ttk.Checkbutton(parent, text="添加文件夹时遍历子目录", variable=var_rec)
@@ -440,23 +441,23 @@ def build_seq_rename_tab(parent, app=None):
                     ).grid(row=4, column=2, sticky="w", padx=(24, 0))
 
     # 位数/起始序号放入独立子框架，避免父容器列宽被其他行的宽控件撑开导致错位
-    frame_params = ttk.Frame(parent)
+    frame_params = ui.Frame(parent)
     frame_params.grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=5)
-    ttk.Label(frame_params, text="序号位数：").grid(row=0, column=0, sticky="w", padx=8)
+    ui.Label(frame_params, text="序号位数：").grid(row=0, column=0, sticky="w", padx=8)
     box_w, var_width = make_num_box(frame_params, 3, 1, 10)
     box_w.grid(row=0, column=1, sticky="w")
-    ttk.Label(frame_params, text="起始序号：").grid(row=0, column=2, sticky="w", padx=(24, 0))
+    ui.Label(frame_params, text="起始序号：").grid(row=0, column=2, sticky="w", padx=(24, 0))
     box_s, var_start = make_num_box(frame_params, 1, 1, 99999999, width=10)
     box_s.grid(row=0, column=3, sticky="w")
-    ttk.Label(frame_params, text="（位数 1-10；起始序号默认 1，可改成任意正整数）",
+    ui.Label(frame_params, text="（位数 1-10；起始序号默认 1，可改成任意正整数）",
               foreground=COLOR["text_secondary"]).grid(row=0, column=4, sticky="w", padx=8)
 
     # ---- 预览 / 执行 ----
-    frame_run = ttk.Frame(parent)
+    frame_run = ui.Frame(parent)
     frame_run.grid(row=6, column=0, columnspan=3, sticky="w", padx=6, pady=4)
 
     # ---- 预览表格 ----
-    table_frame = ttk.Frame(parent)
+    table_frame = ui.Frame(parent)
     table_frame.grid(row=7, column=0, columnspan=3, sticky="nsew", padx=6, pady=4)
     table_frame.grid_rowconfigure(0, weight=1)
     table_frame.grid_columnconfigure(0, weight=1)
@@ -473,7 +474,7 @@ def build_seq_rename_tab(parent, app=None):
     v_scroll.grid(row=0, column=1, sticky="ns")
     h_scroll.grid(row=1, column=0, sticky="ew")
 
-    label_preview = ttk.Label(parent, text="", foreground=COLOR["text_secondary"])
+    label_preview = ui.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
 
     text_log, log = make_log_panel(parent, 9, title="执行日志", height=6)
@@ -578,8 +579,8 @@ def build_seq_rename_tab(parent, app=None):
                                 f"成功 {success} 个，失败/跳过 {fail} 个\n"
                                 f"（失败项保留在列表里，可修正后重试）")
 
-    ttk.Button(frame_run, text="预览重命名结果", command=do_preview).pack(side=tk.LEFT, padx=8)
-    ttk.Button(frame_run, text="执行重命名", command=do_execute).pack(side=tk.LEFT, padx=8)
+    ui.Button(frame_run, text="预览重命名结果", command=do_preview).pack(side=tk.LEFT, padx=8)
+    ui.Button(frame_run, text="执行重命名", command=do_execute).pack(side=tk.LEFT, padx=8)
 
     # 注册拖放：拖入文件/文件夹直接加入列表（修复⑥序号重命名无法拖入的问题）
     if app is not None:
@@ -599,7 +600,7 @@ def build_trim_tab(parent, app=None):
     preview_plan = []   # [(old, new)]
 
     # ---- 第一行：添加按钮 ----
-    frame_add = ttk.Frame(parent)
+    frame_add = ui.Frame(parent)
     frame_add.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=4)
 
     def on_add_files():
@@ -612,14 +613,14 @@ def build_trim_tab(parent, app=None):
         if p:
             add_paths([p])
 
-    btn_add_files = ttk.Button(frame_add, text="添加文件", command=on_add_files)
+    btn_add_files = ui.Button(frame_add, text="添加文件", command=on_add_files)
     btn_add_files.pack(side=tk.LEFT, padx=4)
-    ttk.Button(frame_add, text="添加文件夹", command=on_add_folder).pack(side=tk.LEFT, padx=4)
-    ttk.Button(frame_add, text="清空列表", command=lambda: (file_list.clear(), clear_preview(), refresh_list())
+    ui.Button(frame_add, text="添加文件夹", command=on_add_folder).pack(side=tk.LEFT, padx=4)
+    ui.Button(frame_add, text="清空列表", command=lambda: (file_list.clear(), clear_preview(), refresh_list())
                ).pack(side=tk.LEFT, padx=4)
 
     # ---- 列表框 ----
-    list_frame = ttk.Frame(parent)
+    list_frame = ui.Frame(parent)
     list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=6, pady=4)
     list_frame.grid_rowconfigure(0, weight=1)
     list_frame.grid_columnconfigure(0, weight=1)
@@ -629,7 +630,7 @@ def build_trim_tab(parent, app=None):
     listbox.grid(row=0, column=0, sticky="nsew")
     lb_scroll.grid(row=0, column=1, sticky="ns")
 
-    label_count = ttk.Label(parent, text="共 0 个文件")
+    label_count = ui.Label(parent, text="共 0 个文件")
     label_count.grid(row=3, column=0, sticky="w", padx=8)
     var_rec = tk.BooleanVar(value=True)
     chk_rec = ttk.Checkbutton(parent, text="添加文件夹时遍历子目录", variable=var_rec)
@@ -642,12 +643,12 @@ def build_trim_tab(parent, app=None):
                     ).grid(row=4, column=0, sticky="w", padx=8)
 
     # 参数行放独立子框架，避免列宽互相干扰
-    frame_params = ttk.Frame(parent)
+    frame_params = ui.Frame(parent)
     frame_params.grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=5)
-    ttk.Label(frame_params, text="从第几位开始：").grid(row=0, column=0, sticky="w", padx=8)
+    ui.Label(frame_params, text="从第几位开始：").grid(row=0, column=0, sticky="w", padx=8)
     box_start, var_start = make_num_box(frame_params, 1, 1, 999)
     box_start.grid(row=0, column=1, sticky="w")
-    ttk.Label(frame_params, text="删除几个字：").grid(row=0, column=2, sticky="w", padx=(16, 0))
+    ui.Label(frame_params, text="删除几个字：").grid(row=0, column=2, sticky="w", padx=(16, 0))
     box_count, var_count = make_num_box(frame_params, 2, 0, 999)
     box_count.grid(row=0, column=3, sticky="w")
     var_from_end = tk.BooleanVar(value=False)
@@ -655,14 +656,14 @@ def build_trim_tab(parent, app=None):
                     ).grid(row=0, column=4, sticky="w", padx=(20, 0))
     ttk.Radiobutton(frame_params, text="从后", variable=var_from_end, value=True
                     ).grid(row=0, column=5, sticky="w", padx=(12, 0))
-    ttk.Label(frame_params, text="（位数从 1 开始数；文件只删主名不动后缀；删后为空的自动跳过）",
+    ui.Label(frame_params, text="（位数从 1 开始数；文件只删主名不动后缀；删后为空的自动跳过）",
               foreground=COLOR["text_secondary"]).grid(row=0, column=6, sticky="w", padx=8)
 
     # ---- 预览 / 执行 ----
-    frame_run = ttk.Frame(parent)
+    frame_run = ui.Frame(parent)
     frame_run.grid(row=6, column=0, columnspan=3, sticky="w", padx=6, pady=4)
 
-    table_frame = ttk.Frame(parent)
+    table_frame = ui.Frame(parent)
     table_frame.grid(row=7, column=0, columnspan=3, sticky="nsew", padx=6, pady=4)
     table_frame.grid_rowconfigure(0, weight=1)
     table_frame.grid_columnconfigure(0, weight=1)
@@ -678,7 +679,7 @@ def build_trim_tab(parent, app=None):
     v_scroll.grid(row=0, column=1, sticky="ns")
     h_scroll.grid(row=1, column=0, sticky="ew")
 
-    label_preview = ttk.Label(parent, text="", foreground=COLOR["text_secondary"])
+    label_preview = ui.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
 
     text_log, log = make_log_panel(parent, 9, title="执行日志", height=6)
@@ -772,8 +773,8 @@ def build_trim_tab(parent, app=None):
         clear_preview()
         messagebox.showinfo("执行完成", f"成功 {success} 个，失败/跳过 {fail} 个")
 
-    ttk.Button(frame_run, text="预览重命名结果", command=do_preview).pack(side=tk.LEFT, padx=8)
-    ttk.Button(frame_run, text="执行重命名", command=do_execute).pack(side=tk.LEFT, padx=8)
+    ui.Button(frame_run, text="预览重命名结果", command=do_preview).pack(side=tk.LEFT, padx=8)
+    ui.Button(frame_run, text="执行重命名", command=do_execute).pack(side=tk.LEFT, padx=8)
 
     # 注册拖放：拖入文件/文件夹直接加入列表
     if app is not None:

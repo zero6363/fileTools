@@ -31,7 +31,8 @@ from collections import Counter
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
+from . import ui, ui as ttk
 
 from .common import (clean_path, clear_log, form_label, form_note, make_check,
                      make_form, make_log_panel, make_start_button, make_tip,
@@ -687,11 +688,11 @@ def build_translate_tab(parent, app=None):
     stop_event = threading.Event()
 
     # ---- 添加按钮 ----
-    frame_add = ttk.Frame(parent)
+    frame_add = ui.Frame(parent)
     frame_add.grid(row=1, column=0, sticky="w", padx=6, pady=4)
 
     # ---- 文件列表 ----
-    list_frame = ttk.Frame(parent)
+    list_frame = ui.Frame(parent)
     list_frame.grid(row=2, column=0, sticky="nsew", padx=6, pady=4)
     list_frame.grid_rowconfigure(0, weight=1)
     list_frame.grid_columnconfigure(0, weight=1)
@@ -701,7 +702,7 @@ def build_translate_tab(parent, app=None):
     listbox.grid(row=0, column=0, sticky="nsew")
     lb_scroll.grid(row=0, column=1, sticky="ns")
 
-    label_count = ttk.Label(parent, text="共 0 个文件")
+    label_count = ui.Label(parent, text="共 0 个文件")
     label_count.grid(row=3, column=0, sticky="w", padx=8)
 
     # ---- 参数区 ----
@@ -729,7 +730,7 @@ def build_translate_tab(parent, app=None):
     form_note(form, 4, "空格分隔，拖入文件夹时只收这些后缀")
 
     form_label(form, 5, "选项：")
-    frame_opt = ttk.Frame(form)
+    frame_opt = ui.Frame(form)
     frame_opt.grid(row=5, column=1, sticky="w", pady=3)
     var_backup = make_check(frame_opt, "原文件重命名为「原名.old」（覆盖旧备份）", default=True)
     var_skip = make_check(frame_opt, "跳过无需翻译的行（仅整行模式）", default=True)
@@ -738,14 +739,14 @@ def build_translate_tab(parent, app=None):
         w.pack_configure(side=tk.LEFT)
 
     form_label(form, 6, "混合文本：")
-    frame_mix = ttk.Frame(form)
+    frame_mix = ui.Frame(form)
     frame_mix.grid(row=6, column=1, sticky="w", pady=3)
     var_seg = make_check(frame_mix, "片段模式：只翻译非目标语言片段（中文原样保留）",
                          default=True)
     var_cjk = make_check(frame_mix, "连纯汉字片段也翻译（处理无假名的日文词）", default=False)
     for w in frame_mix.winfo_children():
         w.pack_configure(side=tk.LEFT)
-    ttk.Label(frame_mix, text="关闭片段模式 = 整行交给引擎（不再保留中文原句）",
+    ui.Label(frame_mix, text="关闭片段模式 = 整行交给引擎（不再保留中文原句）",
               foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(10, 0))
 
     form_label(form, 7, "可选端点：")
@@ -761,16 +762,16 @@ def build_translate_tab(parent, app=None):
     form_note(form, 8, "可选：MyMemory 填邮箱可提额度；LibreTranslate 填 API Key")
 
     # ---- 执行 / 停止 ----
-    frame_run = ttk.Frame(parent)
+    frame_run = ui.Frame(parent)
     frame_run.grid(row=5, column=0, sticky="w", padx=6, pady=4)
 
     # ---- 进度 ----
-    frame_prog = ttk.Frame(parent)
+    frame_prog = ui.Frame(parent)
     frame_prog.grid(row=6, column=0, sticky="ew", padx=8, pady=2)
     frame_prog.grid_columnconfigure(0, weight=1)
     pbar = ttk.Progressbar(frame_prog, mode="determinate", maximum=100)
     pbar.grid(row=0, column=0, sticky="ew")
-    label_prog = ttk.Label(frame_prog, text="")
+    label_prog = ui.Label(frame_prog, text="")
     label_prog.grid(row=1, column=0, sticky="w")
 
     text_log, log = make_log_panel(parent, 7, colspan=1, title="运行日志", height=9)
@@ -840,10 +841,10 @@ def build_translate_tab(parent, app=None):
                 file_list.pop(i)
         refresh_list()
 
-    ttk.Button(frame_add, text="添加文件", command=on_add_files).pack(side=tk.LEFT, padx=4)
-    ttk.Button(frame_add, text="添加文件夹", command=on_add_folder).pack(side=tk.LEFT, padx=4)
-    ttk.Button(frame_add, text="移除选中", command=on_remove_selected).pack(side=tk.LEFT, padx=4)
-    ttk.Button(frame_add, text="清空列表",
+    ui.Button(frame_add, text="添加文件", command=on_add_files).pack(side=tk.LEFT, padx=4)
+    ui.Button(frame_add, text="添加文件夹", command=on_add_folder).pack(side=tk.LEFT, padx=4)
+    ui.Button(frame_add, text="移除选中", command=on_remove_selected).pack(side=tk.LEFT, padx=4)
+    ui.Button(frame_add, text="清空列表",
                command=lambda: (file_list.clear(), refresh_list())).pack(side=tk.LEFT, padx=4)
 
     def selected_engine_key():
@@ -946,7 +947,7 @@ def build_translate_tab(parent, app=None):
         stop_event.set()
         log("正在停止…（当前文件处理完即退出）")
 
-    btn_stop = ttk.Button(frame_run, text="停止", width=8, state="disabled", command=on_stop)
+    btn_stop = ui.Button(frame_run, text="停止", width=8, state="disabled", command=on_stop)
     btn_stop.grid(row=0, column=2, sticky="w", padx=(12, 0))
 
     def on_start():

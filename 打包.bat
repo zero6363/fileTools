@@ -35,6 +35,7 @@ echo [2/3] PyInstaller 打包中（约 1 分钟，请稍候）...
     --add-data "%CD%\bin\mozjpeg;bin/mozjpeg" ^
     --add-binary "%CD%\bin\mediainfo\MediaInfo.dll;bin/mediainfo" ^
     --add-binary "%CD%\bin\mediainfo\LIBCURL.DLL;bin/mediainfo" ^
+    --collect-all customtkinter ^
     --hidden-import PIL.Image ^
     --hidden-import PIL.ImageDraw ^
     --hidden-import PIL.ImageFont ^

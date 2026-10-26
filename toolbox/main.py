@@ -66,17 +66,19 @@ import os
 import sys
 import traceback
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
+from tkinter import ttk as real_ttk
 
 from .common import (APP_TITLE, _module_available, install_drop_support,
                      load_window_config, restore_window_geometry,
                      save_window_geometry)
 from .theme import apply_theme, COLOR, FONTS
+from . import ui, ui as ttk
 
 # 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）
-NAV_DEFAULT_WIDTH = 210
-NAV_MIN_WIDTH = 160
-NAV_MAX_WIDTH = 360
+NAV_DEFAULT_WIDTH = 184
+NAV_MIN_WIDTH = 132
+NAV_MAX_WIDTH = 320
 from .tab_grouping import build_empty_tab, build_flatten_tab, build_group_tab
 from .tab_live import build_live_tab
 from .tab_rename import build_rename_tab, build_seq_rename_tab, build_trim_tab
@@ -113,97 +115,21 @@ class ToolboxApp:
         nav_width = saved_nav_w if isinstance(saved_nav_w, int) \
             and NAV_MIN_WIDTH <= saved_nav_w <= NAV_MAX_WIDTH else NAV_DEFAULT_WIDTH
 
-        # 主体：左侧纵向菜单 + 右侧工具内容区
-        body = ttk.Frame(root)
-        body.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        # 主体：左侧细竖向导航 + 右侧工具内容区
+        body = ui.Frame(root)
+        body.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
-        # 左侧菜单：宽度可拖拽调整；按钮放画布内，超出高度时可滚动
-        nav = ttk.Frame(body, width=nav_width, style="Nav.TFrame")
+        # 左侧导航：细竖向滚动栏（CTkScrollableFrame），宽度可拖拽调整
+        nav = ui.ScrollableFrame(body, width=nav_width)
         nav.pack(side=tk.LEFT, fill=tk.Y)
-        nav.pack_propagate(False)
         self.nav = nav
+        # CTk 6.x：可滚动容器实例自身即为内容容器，子控件直接放入它
+        nav_inner = nav
 
-        ttk.Label(nav, text="工具箱", font=FONTS["nav_title"],
-                  background=COLOR["nav_bg"]).pack(pady=(12, 2), fill=tk.X)
-        ttk.Label(nav, text="点击左侧菜单切换工具",
-                  foreground=COLOR["text_muted"], font=FONTS["sm"],
-                  background=COLOR["nav_bg"]).pack(pady=(0, 8), fill=tk.X)
+        ui.Label(nav_inner, text="文件工具箱", font=FONTS["md"],
+                 text_color=COLOR["text"]).pack(anchor="w", padx=12, pady=(10, 2))
 
-        menu_scroll = ttk.Frame(nav)
-        menu_scroll.pack(fill=tk.BOTH, expand=True)
-        menu_vsb = ttk.Scrollbar(menu_scroll, orient=tk.VERTICAL)
-        menu_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        menu_canvas = tk.Canvas(menu_scroll, yscrollcommand=menu_vsb.set,
-                                highlightthickness=0, bg=COLOR["nav_bg"])
-        menu_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        menu_vsb.config(command=menu_canvas.yview)
-
-        menu = tk.Frame(menu_canvas, bg=COLOR["nav_bg"])
-        menu_win = menu_canvas.create_window((0, 0), window=menu, anchor="nw")
-
-        def _menu_slack():
-            """可滚动余量 = 内容总高 - 视口高（<=0 表示全部按钮都放得下）"""
-            return menu.winfo_reqheight() - menu_canvas.winfo_height()
-
-        def _sync_menu_window(_e=None):
-            """同步嵌入画布的菜单窗口尺寸、滚动区、滚动条与滚动位置：
-            宽跟随画布、高 = 内容请求高（16 个按钮总高），滚动区 = 内容尺寸。
-            显式设置高度（而非放任自动跟踪）可避免个别环境下嵌入帧被画布高度
-            夹短，导致下方按钮被裁掉。最后还要：
-            1) 内容放得下时隐藏滚动条、并把视图钳制回顶部；
-            2) 内容放得下时画布会允许"越界滚动"（canvasy(0) 越出 0..slack），
-               表现为滚轮/缩放窗口后列表被推出视口、第一个按钮上方（或下方）
-               露出一块空白，这里统一钳回来。"""
-            w = menu_canvas.winfo_width()
-            h = menu.winfo_reqheight()
-            if w <= 1 or h <= 1:
-                return
-            menu_canvas.itemconfigure(menu_win, width=w, height=h)
-            menu_canvas.configure(scrollregion=(0, 0, w, h))
-            slack = max(0, _menu_slack())
-            # 滚动条只在真的需要滚动时出现，免得"看着能滚却只滚出空白"
-            if slack > 0:
-                if not menu_vsb.winfo_ismapped():
-                    # before= 保持原有打包顺序（滚动条在画布右侧），
-                    # 否则重新 pack 会排到画布之后、被 expand 的画布挤成 0 宽
-                    menu_vsb.pack(side=tk.RIGHT, fill=tk.Y, before=menu_canvas)
-            elif menu_vsb.winfo_ismapped():
-                menu_vsb.pack_forget()
-            offset = menu_canvas.canvasy(0)
-            if offset < 0 or offset > slack:
-                menu_canvas.yview_moveto(max(0, min(slack, offset)) / h)
-
-        menu.bind("<Configure>", _sync_menu_window)
-        menu_canvas.bind("<Configure>", _sync_menu_window)
-        root.after_idle(_sync_menu_window)
-        self._menu = menu
-
-        # 鼠标悬停左侧菜单时滚轮滚动菜单（全局监听 + 指针位置判断，
-        # 覆盖按钮/标题/空白各处；内容区滚轮不受影响）
-        def _on_menu_wheel(e):
-            try:
-                x, y = e.x_root, e.y_root
-                nx, ny = nav.winfo_rootx(), nav.winfo_rooty()
-                if not (nx <= x <= nx + nav.winfo_width()
-                        and ny <= y <= ny + nav.winfo_height()):
-                    return
-            except Exception:
-                return
-            if not e.delta:
-                return
-            slack = _menu_slack()
-            if slack <= 0:
-                # 内容放得下：直接不滚（否则画布会越界，把列表推出视口露出空白）
-                return
-            step = max(1, menu_canvas.winfo_height() // 10)  # 与画布默认滚动单位一致
-            offset = menu_canvas.canvasy(0) + (-step if e.delta > 0 else step)
-            offset = max(0, min(slack, offset))
-            menu_canvas.yview_moveto(offset / menu.winfo_reqheight())
-
-        root.bind_all("<MouseWheel>", _on_menu_wheel)
-        self._on_menu_wheel = _on_menu_wheel
-
-        # 分隔条：拖拽调整菜单宽度（限制在 160–360），双击恢复默认宽度
+        # 分隔条：拖拽调整导航宽度（限制在 NAV_MIN~NAV_MAX），双击恢复默认宽度
         sash = tk.Frame(body, width=5, bg=COLOR["border_strong"], cursor="sb_h_double_arrow")
         sash.pack(side=tk.LEFT, fill=tk.Y)
         sash.bind("<ButtonPress-1>", self._on_nav_resize_start)
@@ -211,7 +137,7 @@ class ToolboxApp:
         sash.bind("<ButtonRelease-1>", self._on_nav_resize_end)
         sash.bind("<Double-Button-1>", self._on_nav_reset_width)
 
-        content = ttk.Frame(body)
+        content = ui.Frame(body)
         content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self.tool_frames = []
@@ -241,7 +167,7 @@ class ToolboxApp:
             ("⑲ 硬盘哈希扫描", build_hash_tab),
         ]
         for index, (title, builder) in enumerate(builders):
-            frame = ttk.Frame(content, padding=10)
+            frame = real_ttk.Frame(content, padding=8)
             if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
                             build_compress_tab, build_rsbackup_tab, build_encode_tab,
                             build_translate_tab, build_hash_tab):
@@ -252,32 +178,20 @@ class ToolboxApp:
             else:
                 builder(frame)
             self.tool_frames.append(frame)
-            btn = tk.Button(
-                menu, text="  " + title, anchor="w", command=lambda i=index: self.show_tool(i),
-                bg=COLOR["nav_bg"], fg=COLOR["text"], relief=tk.FLAT,
-                activebackground=COLOR["surface_alt"], activeforeground=COLOR["text"],
+            btn = ui.Button(
+                nav_inner, text=" " + title, anchor="w",
+                command=lambda i=index: self.show_tool(i),
+                bg=COLOR["nav_bg"], fg=COLOR["text"],
+                activebackground=COLOR["nav_item_hover"], activeforeground=COLOR["text"],
                 font=FONTS["nav"], padx=10, pady=6, cursor="hand2",
             )
             btn._active = False
-
-            def _enter(e, b=btn):
-                if not b._active:
-                    b.configure(bg=COLOR["nav_item_hover"])
-
-            def _leave(e, b=btn):
-                if not b._active:
-                    b.configure(bg=COLOR["nav_bg"])
-
-            btn.bind("<Enter>", _enter)
-            btn.bind("<Leave>", _leave)
-            btn.pack(fill=tk.X, pady=1)
+            btn.pack(fill=tk.X, padx=6, pady=2)
             self.nav_items.append((btn, frame, title))
 
-        self.status = tk.Label(
-            root, text="就绪", anchor="w", relief=tk.FLAT, padx=8, pady=4,
-            bg=COLOR["status_bg"], fg=COLOR["text_secondary"], font=FONTS["sm"],
-            highlightthickness=1, highlightbackground=COLOR["border"],
-            highlightcolor=COLOR["border"])
+        self.status = ui.Label(
+            root, text="就绪", anchor="w", padx=10, pady=5,
+            bg=COLOR["status_bg"], fg=COLOR["text_secondary"], font=FONTS["sm"])
         self.status.pack(fill=tk.X, side=tk.BOTTOM)
 
         # 注册 Windows 文件拖放（自实现，经队列在正常事件循环中处理）
@@ -320,10 +234,12 @@ class ToolboxApp:
         for i, (btn, _f, _title) in enumerate(self.nav_items):
             if i == index:
                 btn._active = True
-                btn.config(bg=COLOR["accent"], fg=COLOR["text_on_accent"], font=FONTS["nav_active"])
+                btn.config(fg_color=COLOR["accent"], text_color=COLOR["text_on_accent"],
+                           font=FONTS["nav_active"])
             else:
                 btn._active = False
-                btn.config(bg=COLOR["nav_bg"], fg=COLOR["text_secondary"], font=FONTS["nav"])
+                btn.config(fg_color=COLOR["nav_bg"], text_color=COLOR["text_secondary"],
+                           font=FONTS["nav"])
         self.status.config(text=f"当前工具：{current_title}")
         handler = self._show_handlers.get(frame)
         if handler:
@@ -402,7 +318,7 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
-    root = tk.Tk()
+    root = ui.CTk()
     app = ToolboxApp(root)
     try:
         root.mainloop()

@@ -4,7 +4,8 @@ import os
 import shutil
 from datetime import datetime
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
+from . import ui, ui as ttk
 
 from .common import (APP_TITLE, DEFAULT_IMAGE_FORMATS, clean_path, clear_log,
                      form_label, form_note, make_check, make_form, make_log_panel,
