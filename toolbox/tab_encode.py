@@ -29,8 +29,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
+from . import config
 from .common import (clean_path, clear_log, get_unique_path, make_logger,
                      make_num_box, natural_key)
+from .theme import COLOR
 
 # ============================================================
 # 常量
@@ -215,7 +217,7 @@ def mediainfo_frame_rate_mode(path):
     return mediainfo_cli_frame_rate_mode(path)
 
 
-FFMPEG_CONFIG_PATH = os.path.join(_base_dir(), "ffmpeg_config.json")
+# 保存的 ffmpeg 路径统一存在 toolbox_config.json 的 ffmpeg 分区
 
 
 # ============================================================
@@ -230,16 +232,14 @@ def _run(cmd, timeout=30, cwd=None):
 def load_ffmpeg_hint():
     """读取上次手动指定的 ffmpeg 路径"""
     try:
-        with open(FFMPEG_CONFIG_PATH, "r", encoding="utf-8") as f:
-            return str(json.load(f).get("ffmpeg", "") or "")
+        return str(config.get_section("ffmpeg").get("ffmpeg", "") or "")
     except Exception:
         return ""
 
 
 def save_ffmpeg_hint(path):
     try:
-        with open(FFMPEG_CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump({"ffmpeg": path}, f, ensure_ascii=False, indent=2)
+        config.update_section("ffmpeg", ffmpeg=path)
     except Exception:
         pass
 
@@ -1544,7 +1544,7 @@ def build_encode_tab(parent, app=None):
     ent_ff = ttk.Entry(ff_row, textvariable=var_ff)
     ent_ff.grid(row=0, column=1, sticky="ew", padx=4)
 
-    lbl_ff = ttk.Label(ff_row, text="检测中…", foreground="#666666")
+    lbl_ff = ttk.Label(ff_row, text="检测中…", foreground=COLOR["text_secondary"])
     lbl_ff.grid(row=0, column=4, sticky="w", padx=6)
 
     def _pick_ff():
@@ -1608,7 +1608,7 @@ def build_encode_tab(parent, app=None):
     ttk.Button(opt_line, text="浏览…", width=7,
                command=lambda: var_outdir.set(filedialog.askdirectory(title="选择输出目录") or
                                               var_outdir.get())).pack(side=tk.LEFT, padx=3)
-    ttk.Label(opt_line, text="留空=源目录", foreground="#666666").pack(side=tk.LEFT, padx=(0, 10))
+    ttk.Label(opt_line, text="留空=源目录", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(0, 10))
 
     var_burn = tk.BooleanVar(value=True)
     ttk.Checkbutton(opt_line, text="硬烧字幕", variable=var_burn).pack(side=tk.LEFT, padx=(0, 10))
@@ -1620,7 +1620,7 @@ def build_encode_tab(parent, app=None):
     # 第 3 行：归档动作开关（默认全开；关掉就地把文件留在原位）
     move_line = ttk.Frame(settings_box)
     move_line.grid(row=3, column=0, columnspan=6, sticky="w", pady=(4, 0))
-    ttk.Label(move_line, text="完成后移动：", foreground="#666666").pack(side=tk.LEFT, padx=(4, 2))
+    ttk.Label(move_line, text="完成后移动：", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(4, 2))
     var_move_ok = tk.BooleanVar(value=True)
     ttk.Checkbutton(move_line, text="成功 → success/", variable=var_move_ok).pack(side=tk.LEFT, padx=(0, 10))
     var_move_fail = tk.BooleanVar(value=True)
@@ -1657,7 +1657,7 @@ def build_encode_tab(parent, app=None):
     ttk.Button(list_bar, text="移除选中", command=lambda: remove_selected()).pack(side=tk.LEFT, padx=3)
     ttk.Button(list_bar, text="清空列表", command=lambda: clear_list()).pack(side=tk.LEFT, padx=3)
     ttk.Label(list_bar, text="可拖放视频/文件夹",
-              foreground="#666666").pack(side=tk.LEFT, padx=8)
+              foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=8)
 
     tree_frame = ttk.Frame(parent)
     tree_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=8, pady=2)
@@ -1676,8 +1676,9 @@ def build_encode_tab(parent, app=None):
     # ---------------- 按钮 + 总进度 ----------------
     btn_row = ttk.Frame(parent)
     btn_row.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
-    btn_start = tk.Button(btn_row, text="开始压制", bg="#2f6bff", fg="white",
-                          activebackground="#2455cc", activeforeground="white",
+    btn_start = tk.Button(btn_row, text="开始压制", bg=COLOR["accent"], fg=COLOR["text_on_accent"],
+                          disabledforeground=COLOR["text_on_accent"],
+                          activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
                           font=("Microsoft YaHei", 10, "bold"), padx=18, pady=4,
                           cursor="hand2", command=lambda: start_batch())
     btn_start.pack(side=tk.LEFT, padx=4)
@@ -1689,7 +1690,7 @@ def build_encode_tab(parent, app=None):
     bar_prog = ttk.Progressbar(btn_row, orient=tk.HORIZONTAL, mode="determinate",
                                length=300, maximum=1, value=0)
     bar_prog.pack(side=tk.LEFT, padx=(18, 8))
-    lbl_prog = ttk.Label(btn_row, text="未开始", foreground="#444444")
+    lbl_prog = ttk.Label(btn_row, text="未开始", foreground=COLOR["text_secondary"])
     lbl_prog.pack(side=tk.LEFT)
 
     # ---------------- 运行日志（可折叠，默认收起，把空间让给文件列表） ----------------
@@ -1869,7 +1870,7 @@ def build_encode_tab(parent, app=None):
         ver = ffmpeg_version(ff)
         lbl_ff.config(text=("✓ " + ver.replace("ffmpeg version ", "v").split(" Copyright")[0][:46]
                             if ver else "✓ 已找到 ffmpeg"), foreground="#1a6b1a")
-        lbl_enc.config(text="编码器：检测中…", foreground="#666666")
+        lbl_enc.config(text="编码器：检测中…", foreground=COLOR["text_secondary"])
         log(f"FFmpeg：{ff}")
         if ver:
             log("  " + ver[:120])

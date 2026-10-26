@@ -15,6 +15,7 @@ from .common import (_module_available, clean_path, clear_log, form_label,
                      form_note, make_check, make_entry_row, make_file_row,
                      make_form, make_log_panel, make_path_row, make_spin_row,
                      make_start_button, make_tip, natural_key, run_task)
+from .theme import COLOR
 
 
 # ⑩ 图片生成MD —— 原 记录md.py
@@ -694,7 +695,7 @@ def build_merge_tab(parent):
     var_suffix = tk.StringVar(value=".txt")
     ttk.Combobox(parent, textvariable=var_suffix, width=12,
                  values=[".txt", ".srt", ".md", ".log"]).grid(row=2, column=1, sticky="w", padx=6)
-    ttk.Label(parent, text="可直接输入自定义后缀", foreground="#666666").grid(row=2, column=2, sticky="w", padx=4)
+    ttk.Label(parent, text="可直接输入自定义后缀", foreground=COLOR["text_secondary"]).grid(row=2, column=2, sticky="w", padx=4)
     var_sub = make_check(parent, "递归遍历子目录", default=False, row=2, column=3)
     text_log, log = make_log_panel(parent, 4)
 

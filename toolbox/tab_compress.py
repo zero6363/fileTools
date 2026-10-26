@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """⑯ 图片压缩（移植自 image_compressor）
 mozjpeg 静态二进制随包分发（bin/mozjpeg/），Pillow(libjpeg-turbo) 为备选编码器"""
-import json
 import logging
 import os
 import shutil
@@ -13,8 +12,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from . import config
 from .common import (APP_TITLE, _module_available, clean_path, clear_log,
                      make_log_panel, make_tip, run_task)
+from .theme import COLOR
 
 
 # ⑯ 图片压缩（移植自 image_compressor）
@@ -41,7 +42,7 @@ def _bundled(rel):
 MOZ_CJPEG = _bundled(os.path.join("bin", "mozjpeg", "cjpeg.exe"))
 MOZ_JPEGTRAN = _bundled(os.path.join("bin", "mozjpeg", "jpegtran.exe"))
 
-CONFIG_PATH = os.path.join(_tool_base_dir(), "compressor_config.json")
+# 配置统一存 toolbox_config.json 的 compress 分区（见 toolbox/config.py）
 COMPRESS_LOG_PATH = os.path.join(_tool_base_dir(), "compressor.log")
 
 clogger = logging.getLogger("imgpress")
@@ -96,13 +97,11 @@ def load_compress_config():
         'faildir': 'dist',
         'remember': True,
     }
-    if not os.path.exists(CONFIG_PATH):
-        return default
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        default.update({k: v for k, v in data.items() if k in default})
-        clogger.info("已读取上一次设置")
+        data = config.get_section("compress")
+        if data:
+            default.update({k: v for k, v in data.items() if k in default})
+            clogger.info("已读取上一次设置")
     except Exception as e:
         clogger.warning("读取配置失败, 使用默认: %s", e)
     return default
@@ -112,9 +111,8 @@ def save_compress_config(options):
     if not options.get('remember', False):
         return
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(options, f, ensure_ascii=False, indent=2)
-        clogger.info("已保存设置到 %s", CONFIG_PATH)
+        config.set_section("compress", options)
+        clogger.info("已保存设置到 %s", config.config_path())
     except Exception as e:
         clogger.warning("保存配置失败: %s", e)
 
@@ -564,7 +562,7 @@ class CompressOptionsDialog(tk.Toplevel):
         self.resizable(False, False)
         self.transient(master)
         self.grab_set()
-        self.configure(bg="#f0f0f0")
+        self.configure(bg=COLOR["surface_alt"])
 
         pad = dict(padx=10, pady=4)
 
@@ -583,7 +581,7 @@ class CompressOptionsDialog(tk.Toplevel):
         self.btn_pick = ttk.Button(row, text="浏览…", width=8, command=self._pick_dir, state="disabled")
         self.btn_pick.pack(side="left", padx=(6, 0))
         ttk.Label(box1, text="说明: 执行覆盖操作不可逆, 请确认已备份。",
-                  foreground="#888").pack(anchor="w", padx=8, pady=(0, 6))
+                  foreground=COLOR["text_muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
         # ---- 压缩设置 ----
         box2 = ttk.LabelFrame(self, text="  压缩设置 ")
@@ -612,7 +610,7 @@ class CompressOptionsDialog(tk.Toplevel):
                         variable=self.var_collect).pack(side="left", padx=8, pady=6)
         self.var_faildir = tk.StringVar(value=options.get('faildir', 'dist') or 'dist')
         ttk.Entry(box_fail, textvariable=self.var_faildir, width=26).pack(side="left", padx=4, pady=6)
-        ttk.Label(box_fail, text="(相对源文件目录或绝对路径)", foreground="#888").pack(side="left", pady=6)
+        ttk.Label(box_fail, text="(相对源文件目录或绝对路径)", foreground=COLOR["text_muted"]).pack(side="left", pady=6)
 
         box_fmt = ttk.LabelFrame(self, text=" 结果格式 ")
         box_fmt.pack(fill="x", **pad)
@@ -622,7 +620,7 @@ class CompressOptionsDialog(tk.Toplevel):
         ttk.Radiobutton(box_fmt, text="统一为 JPG", variable=self.var_out_fmt,
                         value=1).pack(side="left", padx=8, pady=6)
         ttk.Label(box_fmt, text="统一为 JPG 时, PNG/WebP/TIFF/BMP 均按质量重压缩为 JPEG",
-                  foreground="#888").pack(anchor="w", padx=8, pady=(0, 6))
+                  foreground=COLOR["text_muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
         box3 = ttk.LabelFrame(self, text=" 图片质量 ")
         box3.pack(fill="x", **pad)
@@ -639,7 +637,7 @@ class CompressOptionsDialog(tk.Toplevel):
         self._qlabel()
         ttk.Label(box3, text="说明: 默认 mozjpeg 对 JPEG 做无损优化(Huffman 重排, 画质不变体积更小);\n"
                              "质量滑条调低才触发有损重编码; PNG / TIFF 始终无损压缩。",
-                  foreground="#888").pack(anchor="w", padx=10, pady=(0, 6))
+                  foreground=COLOR["text_muted"]).pack(anchor="w", padx=10, pady=(0, 6))
 
         # ---- 其他 ----
         box4 = ttk.Frame(self)
@@ -770,8 +768,10 @@ def build_compress_tab(parent, app=None):
     btn_options = ttk.Button(frame_btn, text="操作选项", command=lambda: show_options())
     btn_options.pack(side="left")
     btn_compress = tk.Button(frame_btn, text="一键压缩", command=lambda: start_compress(),
-                             bg="#2f6bff", fg="white", activebackground="#2455cc",
-                             activeforeground="white", font=("Microsoft YaHei", 10, "bold"),
+                             bg=COLOR["accent"], fg=COLOR["text_on_accent"],
+                             disabledforeground=COLOR["text_on_accent"],
+                             activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
+                             font=("Microsoft YaHei", 10, "bold"),
                              padx=12, pady=2, cursor="hand2")
     btn_compress.pack(side="right")
     btn_clear = ttk.Button(frame_btn, text="清空列表", command=lambda: clear_list())

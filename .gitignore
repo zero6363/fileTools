@@ -10,9 +10,13 @@ __pycache__/
 *.py[cod]
 
 # 运行期生成的状态与配置（删掉会恢复默认）
+toolbox_config.json
+toolbox_config.json.tmp
+# 旧版分散配置（首次启动会并入 toolbox_config.json 后删除，这里只是防止漏网）
 toolbox_window.json
 compressor_config.json
 ffmpeg_config.json
+hashscan_roots.json
 
 # 迁移前的旧版本代码，不纳入版本库
 /old/

@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 from .common import (clean_path, clear_log, make_check, make_log_panel,
                      make_num_box, make_path_row, make_spin_row,
                      make_start_button, make_tip, natural_key, run_task)
+from .theme import COLOR
 
 
 # ⑤ 文件夹重命名 —— 原 重命名.py
@@ -191,7 +192,7 @@ def execute_seq_plan(plan, log):
 def build_rename_tab(parent):
     # 本页控件较多，统一使用 pack 布局
     ttk.Label(parent, text="把文件名改成带目录层级的名称（如 根目录-子目录-原名），先预览确认后再执行。",
-              foreground="#666666").pack(anchor="w", padx=8, pady=(0, 6))
+              foreground=COLOR["text_secondary"]).pack(anchor="w", padx=8, pady=(0, 6))
 
     var_path = tk.StringVar()
     var_rec = tk.BooleanVar(value=True)
@@ -448,7 +449,7 @@ def build_seq_rename_tab(parent, app=None):
     box_s, var_start = make_num_box(frame_params, 1, 1, 99999999, width=10)
     box_s.grid(row=0, column=3, sticky="w")
     ttk.Label(frame_params, text="（位数 1-10；起始序号默认 1，可改成任意正整数）",
-              foreground="#666666").grid(row=0, column=4, sticky="w", padx=8)
+              foreground=COLOR["text_secondary"]).grid(row=0, column=4, sticky="w", padx=8)
 
     # ---- 预览 / 执行 ----
     frame_run = ttk.Frame(parent)
@@ -472,7 +473,7 @@ def build_seq_rename_tab(parent, app=None):
     v_scroll.grid(row=0, column=1, sticky="ns")
     h_scroll.grid(row=1, column=0, sticky="ew")
 
-    label_preview = ttk.Label(parent, text="", foreground="#666666")
+    label_preview = ttk.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
 
     text_log, log = make_log_panel(parent, 9, title="执行日志", height=6)
@@ -655,7 +656,7 @@ def build_trim_tab(parent, app=None):
     ttk.Radiobutton(frame_params, text="从后", variable=var_from_end, value=True
                     ).grid(row=0, column=5, sticky="w", padx=(12, 0))
     ttk.Label(frame_params, text="（位数从 1 开始数；文件只删主名不动后缀；删后为空的自动跳过）",
-              foreground="#666666").grid(row=0, column=6, sticky="w", padx=8)
+              foreground=COLOR["text_secondary"]).grid(row=0, column=6, sticky="w", padx=8)
 
     # ---- 预览 / 执行 ----
     frame_run = ttk.Frame(parent)
@@ -677,7 +678,7 @@ def build_trim_tab(parent, app=None):
     v_scroll.grid(row=0, column=1, sticky="ns")
     h_scroll.grid(row=1, column=0, sticky="ew")
 
-    label_preview = ttk.Label(parent, text="", foreground="#666666")
+    label_preview = ttk.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
 
     text_log, log = make_log_panel(parent, 9, title="执行日志", height=6)

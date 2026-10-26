@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 """通用基础设施：日志 / 后台任务 / 常用输入行 / Windows 文件拖放"""
-import json
-import os
 import queue
 import re
 import shutil
@@ -11,7 +9,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-APP_VERSION = "1.07"
+from . import config
+from .theme import COLOR, FONTS
+
+APP_VERSION = "1.32"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -227,7 +228,7 @@ def form_label(parent, row, text):
 def form_note(parent, row, text, column=3, columnspan=1):
     """表单说明文字：固定放第 4 列，不参与列宽计算；
     窗口变窄时自动按可用宽度换行，避免长说明被裁掉。"""
-    lbl = ttk.Label(parent, text=text, foreground="#666666", justify="left")
+    lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"], justify="left")
     lbl.grid(row=row, column=column, columnspan=columnspan,
              sticky="w", padx=(8, 4), pady=5)
 
@@ -341,12 +342,26 @@ def make_check(parent, text, default=False, row=None, column=None, var=None):
 
 
 def make_start_button(parent, row, text, command, colspan=3):
-    """主操作按钮：统一放在输入列，左边缘与输入框对齐"""
+    """主操作按钮：统一放在输入列，左边缘与输入框对齐。
+    使用设计系统令牌：扁平蓝 + 悬停加深 + 禁用仍可读（白字）。"""
     btn = tk.Button(
         parent, text=text, command=command,
-        bg="#2f6bff", fg="white", activebackground="#2455cc", activeforeground="white",
-        font=("Microsoft YaHei", 10, "bold"), height=1, padx=16, pady=4, cursor="hand2",
+        bg=COLOR["accent"], fg=COLOR["text_on_accent"],
+        activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
+        disabledforeground=COLOR["text_on_accent"],
+        relief=tk.FLAT, borderwidth=0,
+        font=FONTS["base"], padx=18, pady=6, cursor="hand2",
     )
+
+    def _enter(e):
+        if str(btn.cget("state")) != tk.DISABLED:
+            btn.configure(bg=COLOR["accent_hover"])
+
+    def _leave(e):
+        btn.configure(bg=COLOR["accent"])
+
+    btn.bind("<Enter>", _enter)
+    btn.bind("<Leave>", _leave)
     btn.grid(row=row, column=1, sticky="w", padx=(0, 6), pady=(12, 6))
     return btn
 
@@ -357,7 +372,13 @@ def make_log_panel(parent, row, colspan=3, title="运行日志", height=12):
     frame.grid_rowconfigure(0, weight=1)
     frame.grid_columnconfigure(0, weight=1)
     text = scrolledtext.ScrolledText(frame, height=height, state="disabled", wrap=tk.WORD,
-                                     font=("Consolas", 9))
+                                     font=FONTS["log"],
+                                     background=COLOR["surface"], foreground=COLOR["text"],
+                                     insertbackground=COLOR["text"],
+                                     relief=tk.FLAT, borderwidth=1,
+                                     highlightthickness=1,
+                                     highlightbackground=COLOR["border"],
+                                     highlightcolor=COLOR["border"])
     text.grid(row=0, column=0, sticky="nsew")
     return text, make_logger(text)
 
@@ -365,7 +386,7 @@ def make_log_panel(parent, row, colspan=3, title="运行日志", height=12):
 def make_tip(parent, row, text, colspan=3, autowrap=False):
     """提示文字：autowrap=True 时随容器宽度自动换行，避免文字被裁掉；
     配合 colspan=1 使用可避免跨列提示把表单列宽撑开。"""
-    lbl = ttk.Label(parent, text=text, foreground="#666666",
+    lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"],
                     wraplength=820 if autowrap else 1120, justify="left")
     lbl.grid(row=row, column=0, columnspan=colspan,
              sticky="we" if autowrap else "w", padx=8, pady=(0, 6))
@@ -417,30 +438,27 @@ def get_unique_path(target_path):
         counter += 1
 
 
-def load_window_config(path):
-    """读取窗口配置文件（不存在/损坏时返回 {}）"""
+def load_window_config():
+    """窗口相关配置（toolbox_config.json 的 window 分区；缺失时返回 {}）"""
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        return config.get_section("window")
     except Exception:
         return {}
 
 
-def save_window_geometry(path, root, extra=None):
+def save_window_geometry(root, extra=None):
     """保存主窗口几何（位置+大小）与最大化状态，供下次启动恢复。
-    extra 可附加额外字段（如左侧菜单宽度 nav_width）。"""
+    extra 可附加额外字段（如左侧菜单宽度 nav_width）。
+    只更新 window 分区，不碰配置文件里的其它分区。"""
     try:
         data = {"geometry": root.geometry()}
         try:
-            if root.wm_state() == "zoomed":
-                data["zoomed"] = True
+            data["zoomed"] = (root.wm_state() == "zoomed")
         except Exception:
-            pass
+            data["zoomed"] = False
         if extra:
             data.update(extra)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        config.update_section("window", **data)
     except Exception:
         pass
 
@@ -487,11 +505,10 @@ def _patch_messagebox_parent():
             pass
 
 
-def restore_window_geometry(path, root, default="1280x900", min_w=720, min_h=420):
+def restore_window_geometry(root, default="1280x900", min_w=720, min_h=420):
     """恢复上次窗口几何；配置缺失/越界/超出屏幕时返回 False（调用方用默认）"""
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = config.get_section("window")
     except Exception:
         return False
     geo = data.get("geometry", "")

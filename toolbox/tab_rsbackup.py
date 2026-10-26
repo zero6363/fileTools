@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 from .common import (clean_path, clear_log, form_label, form_note,
                      get_unique_path, make_form, make_log_panel, make_num_row,
                      make_tip, run_task)
+from .theme import COLOR
 
 
 # ⑰ ReSoBackup 备份（迁移自 Go 版 ReSoBackup，Python 重实现）
@@ -728,7 +729,7 @@ def build_rsbackup_tab(parent, app=None):
         row=4, column=2, sticky="w", padx=(0, 4), pady=5)
     form_note(form_b, 4, "留空 = 源文件所在目录")
 
-    label_warn = ttk.Label(form_b, text="", foreground="#b26a00", justify="left")
+    label_warn = ttk.Label(form_b, text="", foreground=COLOR["warning"], justify="left")
     label_warn.grid(row=5, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=(2, 4))
 
     def _warn_wrap(event):
@@ -923,14 +924,16 @@ def build_rsbackup_tab(parent, app=None):
     frame_btn = ttk.Frame(form_btn)
     frame_btn.grid(row=0, column=1, columnspan=2, sticky="w", pady=(4, 2))
     btn_backup = tk.Button(frame_btn, text="开始备份", command=lambda: do_backup(),
-                           bg="#2f6bff", fg="white", activebackground="#2455cc",
-                           activeforeground="white", font=("Microsoft YaHei", 10, "bold"),
-                           padx=16, pady=4, cursor="hand2")
+                           bg=COLOR["accent"], fg=COLOR["text_on_accent"],
+                           disabledforeground=COLOR["text_on_accent"],
+                           activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
+                           font=("Microsoft YaHei", 10, "bold"), padx=16, pady=4, cursor="hand2")
     btn_backup.pack(side="left", padx=(0, 8))
     btn_restore = tk.Button(frame_btn, text="开始恢复", command=lambda: do_restore(),
-                            bg="#1a7f37", fg="white", activebackground="#15662b",
-                            activeforeground="white", font=("Microsoft YaHei", 10, "bold"),
-                            padx=16, pady=4, cursor="hand2")
+                            bg=COLOR["success"], fg=COLOR["text_on_accent"],
+                            disabledforeground=COLOR["text_on_accent"],
+                            activebackground=COLOR["success_active"], activeforeground=COLOR["text_on_accent"],
+                            font=("Microsoft YaHei", 10, "bold"), padx=16, pady=4, cursor="hand2")
     btn_restore.pack(side="left")
 
     if app is not None:

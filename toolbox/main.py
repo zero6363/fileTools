@@ -30,14 +30,32 @@
   ⑮ 加密包分类    <- zipTestPsw.py
   ⑯ 图片压缩      <- image_compressor（D:/code/pigc）：mozjpeg 无损优化 + libjpeg-turbo 备选
   ⑰ ReSoBackup备份 <- ReSoBackup-main（Go 项目，Python 重实现）：RS 纠删码分片 + AES-256-GCM
+  ⑱ 文本翻译      <- 新增：拖入 txt/lrc/srt/ass/vtt 等文本文件，调用免费翻译接口
+                      （DeepL 免费网页版 / 谷歌免费接口 / MyMemory / LibreTranslate，
+                        一个失败自动切换下一个）翻译成中文；保留字幕序号与时间轴、
+                      LRC 时间标签，译文写回同名文件，原文件重命名为「原名.old」
+  ⑲ 硬盘哈希扫描  <- 新增：冷数据建档校验。数据库 filehash.db 直接建在
+                      扫描根目录下（一块盘/一个根目录一个库）。四种模式按
+                      「改不改库 × 算不算哈希」组合：快速建档 / 快速预检 /
+                      完整建档 / 完整检查；只读模式（预检、检查）扫出的差异
+                      清单可多选后「写入数据库」，底部可按 新增 / 更新 / 删除 /
+                      已计算 / 未计算 筛选，列表分页（默认 500 条/页可改）；
+                      扫描根可从下拉选已管理目录；管理弹窗里多选目录还能查重复
+                      文件、两个目录镜像比对；扫描过的目录记在
+                      toolbox_config.json 的 hashscan 分区里，可统一管理、跨库
+                      检索；「合并数据库」把子目录的库并进来，「用上级库」按上级
+                      库给子目录建库（两者都只动数据库、不读文件）
 
 模块划分：
   common.py         通用基础设施 + 拖放支持
+  config.py         统一配置（toolbox_config.json，按 window/compress/ffmpeg/hashscan 分区，
+                    老版本分散的四个 json 首次启动自动并入）
   tab_grouping.py   ①②③   tab_live.py ④   tab_rename.py ⑤⑥⑨
   tab_encode.py ⑦         tab_video.py ⑧
   tab_docs.py ⑩⑪⑫⑬       tab_media.py ⑭⑮
-  tab_compress.py ⑯       tab_rsbackup.py ⑰
-  （⑦ tab_encode.py 依赖外部 FFmpeg）
+  tab_compress.py ⑯       tab_rsbackup.py ⑰   tab_translate.py ⑱
+  tab_hashscan.py ⑲
+  （⑦ tab_encode.py 依赖外部 FFmpeg；⑱ 只需标准库 + 联网；⑲ 只需标准库）
 
 所有涉及文件移动/重命名的操作均防覆盖：同名跳过或自动改名，两阶段重命名，绝不丢失数据。
 依赖（按需安装，缺失时对应标签页会在运行时提示）：
@@ -53,12 +71,7 @@ from tkinter import messagebox, ttk
 from .common import (APP_TITLE, _module_available, install_drop_support,
                      load_window_config, restore_window_geometry,
                      save_window_geometry)
-
-# 窗口几何（位置/大小/最大化）记忆文件，与 exe 同目录
-WINDOW_GEOMETRY_PATH = os.path.join(
-    os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
-    else os.path.dirname(os.path.abspath(__file__)),
-    "toolbox_window.json")
+from .theme import apply_theme, COLOR, FONTS
 
 # 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）
 NAV_DEFAULT_WIDTH = 210
@@ -74,6 +87,8 @@ from .tab_media import build_webp_tab, build_zip_tab
 from .tab_compress import build_compress_tab
 from .tab_encode import build_encode_tab
 from .tab_rsbackup import build_rsbackup_tab
+from .tab_translate import build_translate_tab
+from .tab_hashscan import build_hash_tab
 
 
 # 主窗口
@@ -84,40 +99,46 @@ class ToolboxApp:
         self.root = root
         root.title(APP_TITLE)
         # 恢复上次窗口位置与大小；无记录或越界时用默认
-        if not restore_window_geometry(WINDOW_GEOMETRY_PATH, root):
+        if not restore_window_geometry(root):
             root.geometry("1280x900")
         root.minsize(1080, 720)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        # 注入统一设计系统（现代浅色主题）：须在创建任何 ttk 控件前调用
+        apply_theme(root)
+
         # 恢复上次左侧菜单宽度（越界/缺失时用默认）
-        cfg = load_window_config(WINDOW_GEOMETRY_PATH)
+        cfg = load_window_config()
         saved_nav_w = cfg.get("nav_width")
         nav_width = saved_nav_w if isinstance(saved_nav_w, int) \
             and NAV_MIN_WIDTH <= saved_nav_w <= NAV_MAX_WIDTH else NAV_DEFAULT_WIDTH
 
         # 主体：左侧纵向菜单 + 右侧工具内容区
         body = ttk.Frame(root)
-        body.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        body.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
         # 左侧菜单：宽度可拖拽调整；按钮放画布内，超出高度时可滚动
-        nav = ttk.Frame(body, width=nav_width)
+        nav = ttk.Frame(body, width=nav_width, style="Nav.TFrame")
         nav.pack(side=tk.LEFT, fill=tk.Y)
         nav.pack_propagate(False)
         self.nav = nav
 
-        ttk.Label(nav, text="工具箱", font=("Microsoft YaHei", 15, "bold")).pack(pady=(12, 2))
-        ttk.Label(nav, text="点击左侧菜单切换工具", foreground="#888888").pack(pady=(0, 8))
+        ttk.Label(nav, text="工具箱", font=FONTS["nav_title"],
+                  background=COLOR["nav_bg"]).pack(pady=(12, 2), fill=tk.X)
+        ttk.Label(nav, text="点击左侧菜单切换工具",
+                  foreground=COLOR["text_muted"], font=FONTS["sm"],
+                  background=COLOR["nav_bg"]).pack(pady=(0, 8), fill=tk.X)
 
         menu_scroll = ttk.Frame(nav)
         menu_scroll.pack(fill=tk.BOTH, expand=True)
         menu_vsb = ttk.Scrollbar(menu_scroll, orient=tk.VERTICAL)
         menu_vsb.pack(side=tk.RIGHT, fill=tk.Y)
         menu_canvas = tk.Canvas(menu_scroll, yscrollcommand=menu_vsb.set,
-                                highlightthickness=0, bg="#f2f2f2")
+                                highlightthickness=0, bg=COLOR["nav_bg"])
         menu_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         menu_vsb.config(command=menu_canvas.yview)
 
-        menu = tk.Frame(menu_canvas, bg="#f2f2f2")
+        menu = tk.Frame(menu_canvas, bg=COLOR["nav_bg"])
         menu_win = menu_canvas.create_window((0, 0), window=menu, anchor="nw")
 
         def _menu_slack():
@@ -183,7 +204,7 @@ class ToolboxApp:
         self._on_menu_wheel = _on_menu_wheel
 
         # 分隔条：拖拽调整菜单宽度（限制在 160–360），双击恢复默认宽度
-        sash = tk.Frame(body, width=5, cursor="sb_h_double_arrow")
+        sash = tk.Frame(body, width=5, bg=COLOR["border_strong"], cursor="sb_h_double_arrow")
         sash.pack(side=tk.LEFT, fill=tk.Y)
         sash.bind("<ButtonPress-1>", self._on_nav_resize_start)
         sash.bind("<B1-Motion>", self._on_nav_resize_move)
@@ -216,24 +237,47 @@ class ToolboxApp:
             ("⑮ 加密包分类", build_zip_tab),
             ("⑯ 图片压缩", build_compress_tab),
             ("⑰ ReSoBackup备份", build_rsbackup_tab),
+            ("⑱ 文本翻译", build_translate_tab),
+            ("⑲ 硬盘哈希扫描", build_hash_tab),
         ]
         for index, (title, builder) in enumerate(builders):
-            frame = ttk.Frame(content, padding=8)
+            frame = ttk.Frame(content, padding=10)
             if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
-                            build_compress_tab, build_rsbackup_tab, build_encode_tab):
-                builder(frame, self)
+                            build_compress_tab, build_rsbackup_tab, build_encode_tab,
+                            build_translate_tab, build_hash_tab):
+                result = builder(frame, self)
+                if builder is build_hash_tab:
+                    # 暴露给自动化冒烟测试（不影响正常使用）
+                    self._hash_api = result
             else:
                 builder(frame)
             self.tool_frames.append(frame)
             btn = tk.Button(
                 menu, text="  " + title, anchor="w", command=lambda i=index: self.show_tool(i),
-                bg="#f2f2f2", fg="#333333", relief=tk.FLAT, activebackground="#e4e4e4",
-                font=("Microsoft YaHei", 10), padx=10, pady=6, cursor="hand2",
+                bg=COLOR["nav_bg"], fg=COLOR["text"], relief=tk.FLAT,
+                activebackground=COLOR["surface_alt"], activeforeground=COLOR["text"],
+                font=FONTS["nav"], padx=10, pady=6, cursor="hand2",
             )
+            btn._active = False
+
+            def _enter(e, b=btn):
+                if not b._active:
+                    b.configure(bg=COLOR["nav_item_hover"])
+
+            def _leave(e, b=btn):
+                if not b._active:
+                    b.configure(bg=COLOR["nav_bg"])
+
+            btn.bind("<Enter>", _enter)
+            btn.bind("<Leave>", _leave)
             btn.pack(fill=tk.X, pady=1)
             self.nav_items.append((btn, frame, title))
 
-        self.status = tk.Label(root, text="就绪", anchor="w", relief=tk.SUNKEN, padx=8, pady=3)
+        self.status = tk.Label(
+            root, text="就绪", anchor="w", relief=tk.FLAT, padx=8, pady=4,
+            bg=COLOR["status_bg"], fg=COLOR["text_secondary"], font=FONTS["sm"],
+            highlightthickness=1, highlightbackground=COLOR["border"],
+            highlightcolor=COLOR["border"])
         self.status.pack(fill=tk.X, side=tk.BOTTOM)
 
         # 注册 Windows 文件拖放（自实现，经队列在正常事件循环中处理）
@@ -261,7 +305,8 @@ class ToolboxApp:
         if handler:
             handler(paths)
         else:
-            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑦视频常用压制 / ⑧视频横竖屏 / ⑯图片压缩）")
+            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑦视频常用压制 / "
+                                    "⑧视频横竖屏 / ⑯图片压缩 / ⑱文本翻译 / ⑲硬盘哈希扫描）")
 
     def show_tool(self, index):
         """切换到指定工具：隐藏其他页，显示对应页，并高亮菜单按钮"""
@@ -274,9 +319,11 @@ class ToolboxApp:
         current_title = self.nav_items[index][2]
         for i, (btn, _f, _title) in enumerate(self.nav_items):
             if i == index:
-                btn.config(bg="#2f6bff", fg="white", font=("Microsoft YaHei", 10, "bold"))
+                btn._active = True
+                btn.config(bg=COLOR["accent"], fg=COLOR["text_on_accent"], font=FONTS["nav_active"])
             else:
-                btn.config(bg="#f2f2f2", fg="#333333", font=("Microsoft YaHei", 10))
+                btn._active = False
+                btn.config(bg=COLOR["nav_bg"], fg=COLOR["text_secondary"], font=FONTS["nav"])
         self.status.config(text=f"当前工具：{current_title}")
         handler = self._show_handlers.get(frame)
         if handler:
@@ -305,8 +352,7 @@ class ToolboxApp:
         """保存窗口几何 + 左侧菜单宽度（拖拽/双击调整后立即持久化）"""
         try:
             save_window_geometry(
-                WINDOW_GEOMETRY_PATH, self.root,
-                extra={"nav_width": self.nav.winfo_width()})
+                self.root, extra={"nav_width": self.nav.winfo_width()})
         except Exception:
             pass
 
@@ -384,7 +430,7 @@ def main():
                         extra["nav_width"] = w
                 except Exception:
                     pass
-                save_window_geometry(WINDOW_GEOMETRY_PATH, root, extra=extra)
+                save_window_geometry(root, extra=extra)
         except Exception:
             pass
 
