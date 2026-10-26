@@ -1416,13 +1416,13 @@ def run_encode(settings, info, plan, src, dst, work_dir, on_progress, stop_event
 # ============================================================
 
 COLS = (
-    ("name", "文件", 290),
-    ("dur", "时长", 76),
-    ("res", "分辨率", 100),
-    ("fps", "帧率", 84),
-    ("codec", "编码", 150),
-    ("sub", "字幕", 90),
-    ("status", "状态", 300),
+    ("name", "文件", 200),
+    ("dur", "时长", 56),
+    ("res", "分辨率", 76),
+    ("fps", "帧率", 56),
+    ("codec", "编码", 100),
+    ("sub", "字幕", 60),
+    ("status", "状态", 200),
 )
 
 
@@ -1570,10 +1570,10 @@ def build_encode_tab(parent, app=None):
     mode_line = ui.Frame(settings_box)
     mode_line.grid(row=0, column=0, columnspan=6, sticky="w")
     var_mode = tk.StringVar(value="640")
-    for i, (val, text) in enumerate((("640", "640p（最长边 640）"),
-                                     ("hd", "高清（原分辨率）"),
+    for i, (val, text) in enumerate((("640", "640p"),
+                                     ("hd", "高清"),
                                      ("custom", "自定义"),
-                                     (MODE_REMUX, "极速转封装（-c copy）"))):
+                                     (MODE_REMUX, "极速转封装"))):
         ttk.Radiobutton(mode_line, text=text, value=val, variable=var_mode,
                         command=lambda: refresh_mode_ui()).pack(side=tk.LEFT, padx=(4, 14))
 
@@ -1606,7 +1606,7 @@ def build_encode_tab(parent, app=None):
     opt_line.grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
     ui.Label(opt_line, text="输出目录：").pack(side=tk.LEFT, padx=(4, 2))
     var_outdir = tk.StringVar()
-    ttk.Entry(opt_line, textvariable=var_outdir, width=24).pack(side=tk.LEFT)
+    ttk.Entry(opt_line, textvariable=var_outdir, width=20).pack(side=tk.LEFT)
     ui.Button(opt_line, text="浏览…", width=7,
                command=lambda: var_outdir.set(filedialog.askdirectory(title="选择输出目录") or
                                               var_outdir.get())).pack(side=tk.LEFT, padx=3)
@@ -1615,24 +1615,27 @@ def build_encode_tab(parent, app=None):
     var_burn = tk.BooleanVar(value=True)
     ttk.Checkbutton(opt_line, text="硬烧字幕", variable=var_burn).pack(side=tk.LEFT, padx=(0, 10))
     var_keepdv = tk.BooleanVar(value=False)
-    ttk.Checkbutton(opt_line, text="保留杜比视界（很慢）", variable=var_keepdv).pack(side=tk.LEFT, padx=(0, 10))
-    var_console = tk.BooleanVar(value=False)
-    ttk.Checkbutton(opt_line, text="显示 ffmpeg 窗口", variable=var_console).pack(side=tk.LEFT)
+    ttk.Checkbutton(opt_line, text="杜比视界", variable=var_keepdv).pack(side=tk.LEFT, padx=(0, 10))
 
     # 第 3 行：归档动作开关（默认全开；关掉就地把文件留在原位）
     move_line = ui.Frame(settings_box)
     move_line.grid(row=3, column=0, columnspan=6, sticky="w", pady=(4, 0))
-    ui.Label(move_line, text="完成后移动：", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(4, 2))
+    ui.Label(move_line, text="完成后：", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(4, 2))
     var_move_ok = tk.BooleanVar(value=True)
     ttk.Checkbutton(move_line, text="成功 → success/", variable=var_move_ok).pack(side=tk.LEFT, padx=(0, 10))
     var_move_fail = tk.BooleanVar(value=True)
     ttk.Checkbutton(move_line, text="失败 → error/", variable=var_move_fail).pack(side=tk.LEFT, padx=(0, 10))
     var_move_grow = tk.BooleanVar(value=True)
-    ttk.Checkbutton(move_line, text="变大 → oversize/", variable=var_move_grow).pack(side=tk.LEFT)
+    ttk.Checkbutton(move_line, text="变大 → oversize/", variable=var_move_grow).pack(side=tk.LEFT, padx=(0, 10))
 
-    # 第 4 行：编码器状态（一行小字）
-    lbl_enc = ui.Label(settings_box, text="编码器：检测中…", foreground=COLOR["success"])
-    lbl_enc.grid(row=4, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
+    # 第 4 行：控制台开关 + 编码器状态
+    status_line = ui.Frame(settings_box)
+    status_line.grid(row=4, column=0, columnspan=6, sticky="w", pady=(4, 0))
+    var_console = tk.BooleanVar(value=False)
+    ttk.Checkbutton(status_line, text="显示 ffmpeg 窗口", variable=var_console).pack(
+        side=tk.LEFT, padx=(4, 16))
+    lbl_enc = ui.Label(status_line, text="编码器：检测中…", foreground=COLOR["success"])
+    lbl_enc.pack(side=tk.LEFT)
 
     # ---------------- 文件列表 ----------------
     list_bar = ui.Frame(parent)

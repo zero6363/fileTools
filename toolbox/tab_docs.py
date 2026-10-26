@@ -707,7 +707,8 @@ def build_merge_tab(parent):
                  values=[".txt", ".srt", ".md", ".log"]).grid(
                      row=1, column=1, sticky="w", padx=(0, 6), pady=5)
     form_note(form, 1, "可直接输入自定义后缀")
-    var_sub = make_check(form, "递归遍历子目录", default=False, row=2, column=1)
+    var_sub = make_check(form, "递归遍历子目录", default=False, row=2, column=1,
+                         columnspan=3)
     text_log, log = make_log_panel(parent, 2, colspan=1)
 
     def start():

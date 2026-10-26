@@ -62,7 +62,7 @@ from . import ui, ui as ttk
 from .theme import FONTS
 
 from . import config
-from .common import (clean_path, clear_log, form_label, form_note, make_form,
+from .common import (clean_path, clear_log, form_label, make_form,
                      make_logger, make_tip)
 from .theme import COLOR
 
@@ -214,6 +214,16 @@ def fmt_time(ts):
         return "—"
     try:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(ts)))
+    except (ValueError, OverflowError, OSError):
+        return "—"
+
+
+def fmt_date(ts):
+    """表格用短日期（完整时间仍在导出/详情里显示），避免列被撑宽。"""
+    if not ts:
+        return "—"
+    try:
+        return time.strftime("%Y-%m-%d", time.localtime(float(ts)))
     except (ValueError, OverflowError, OSError):
         return "—"
 
@@ -2276,19 +2286,18 @@ STATUS_TEXT = {"active": "有效", "deleted": "缺失"}
 
 # 表格列：single = 只搜当前目录；multi = 跨库搜索时多一列「所属目录」
 # 第一列是复选框（点一下即勾选，与 Treeview 的 selection 同步）；
-# 路径最宽（唯一可伸缩列），哈希状态在中间，完整 SHA256 放最后且只显示前 16 位。
-COLS = [("chk", "选", 34, 30, False),
-        ("root", "所属目录", 180, 130, False),
-        ("rel", "相对路径", 380, 140, True),
-        ("size", "文件大小", 84, 74, False),
-        ("mtime", "修改时间", 132, 118, False),
-        ("last", "上次哈希校验", 132, 118, False),
-        ("hash", "哈希", 76, 66, False),
-        ("sha", "SHA256（前 16 位）", 176, 150, False),
-        ("status", "状态", 86, 70, False)]
-COLS_SINGLE = ("chk", "rel", "size", "mtime", "last", "hash", "sha", "status")
-COLS_MULTI = ("chk", "root", "rel", "size", "mtime", "last", "hash", "sha", "status")
-FIXED_W_SINGLE = 34 + 84 + 132 + 132 + 76 + 176 + 86
+# 路径最宽（唯一可伸缩列），SHA256 只显示前 10 位，未计算时显示「未计算」。
+COLS = [("chk", "选", 32, 30, False),
+        ("root", "所属目录", 150, 110, False),
+        ("rel", "相对路径", 260, 120, True),
+        ("size", "文件大小", 96, 80, False),
+        ("mtime", "修改时间", 126, 110, False),
+        ("last", "上次校验", 126, 110, False),
+        ("sha", "SHA256", 170, 120, False),
+        ("status", "状态", 64, 56, False)]
+COLS_SINGLE = ("chk", "rel", "size", "mtime", "last", "sha", "status")
+COLS_MULTI = ("chk", "root", "rel", "size", "mtime", "last", "sha", "status")
+FIXED_W_SINGLE = sum(c[2] for c in COLS if c[0] not in ("root", "rel"))
 FIXED_W_MULTI = FIXED_W_SINGLE + 180
 
 
@@ -2298,14 +2307,9 @@ def build_hash_tab(parent, app=None):
     parent.grid_rowconfigure(4, weight=1)
 
     make_tip(parent, 0,
-             "冷数据建档与校验：扫描根可以直接从下拉框选已管理的目录（也可输入/浏览），"
-             "数据库 filehash.db 建在该目录下。模式按「改不改库 / 算不算哈希」组合："
-             "【快速预检】只读·不算哈希，【快速建档】改库·不算哈希（秒级建索引），"
-             "【完整检查】只读·算哈希，【完整建档】改库·算哈希并标记缺失。"
-             "两种只读模式扫完的差异清单可多选后「写入数据库」，底部按 新增 / 更新 / 删除 / 已计算 / 未计算 分类看；"
-             "「管理…」里按住 Ctrl/Shift 多选目录，还能做重复文件检查与镜像比对；"
-             "「合并数据库」把子目录的库并进来，「用上级库」反过来按上级库生成本目录的库（都不读文件）。",
-             colspan=1, autowrap=True)
+             "冷数据建档与校验：数据库 filehash.db 建在扫描根目录。快速模式只建索引，完整模式计算 SHA256；"
+             "差异可多选写回。「管理…」支持多选目录、查重与镜像比对。",
+             colspan=1, autowrap=True, font=FONTS["sm"])
 
     state = {
         "running": False,
@@ -2328,11 +2332,16 @@ def build_hash_tab(parent, app=None):
     form = make_form(parent)
     form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
 
+    def _form_label(row, text):
+        lbl = form_label(form, row, text)
+        lbl.grid_configure(pady=2)
+        return lbl
+
     # 扫描根（下拉可选已管理目录，也可以直接输入/浏览）
-    form_label(form, 0, "扫描根目录：")
+    _form_label(0, "扫描根目录：")
     var_root = tk.StringVar()
     cmb_root = ttk.Combobox(form, textvariable=var_root, width=46, values=[])
-    cmb_root.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=5)
+    cmb_root.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=2)
 
     def choose_root():
         p = filedialog.askdirectory(title="选择扫描根目录（盘符或任意文件夹）")
@@ -2341,38 +2350,41 @@ def build_hash_tab(parent, app=None):
             refresh_db_info()
 
     btn_box = ui.Frame(form)
-    btn_box.grid(row=0, column=2, sticky="w", padx=(0, 4), pady=5)
+    btn_box.grid(row=0, column=2, sticky="w", padx=(0, 4), pady=2)
     ui.Button(btn_box, text="浏览…", command=choose_root).pack(side=tk.LEFT)
     ui.Button(btn_box, text="管理…", width=7,
                command=lambda: open_manager()).pack(side=tk.LEFT, padx=(4, 0))
-    form_note(form, 0, "库文件：根目录\\filehash.db")
 
-    # 数据库
-    form_label(form, 1, "当前数据库：")
+    # 数据库：路径只读展示；四个操作按钮单独一行，窄窗口也不会被裁掉
+    _form_label(1, "当前数据库：")
     var_db = tk.StringVar(value="（先选择扫描根目录）")
-    ttk.Entry(form, textvariable=var_db, width=52, state="readonly").grid(
-        row=1, column=1, sticky="w", padx=(0, 6), pady=5)
-    db_menu = tk.Menu(form, tearoff=0)
-    db_menu.add_command(label="查看数据库…", command=lambda: view_db())
-    db_menu.add_command(label="补全缺失哈希…", command=lambda: fill_hashes())
-    db_menu.add_separator()
-    db_menu.add_command(label="合并子目录数据库…", command=lambda: merge_dbs())
-    db_menu.add_command(label="用上级库生成…", command=lambda: seed_from_parent())
-    ttk.Menubutton(form, text="数据库操作 ▾", menu=db_menu).grid(
-        row=1, column=2, sticky="w", padx=(0, 4), pady=5)
-    lbl_scope = ui.Label(form, text="", foreground=COLOR["text_secondary"], wraplength=520)
-    lbl_scope.grid(row=2, column=1, columnspan=3, sticky="w", padx=(0, 4), pady=(0, 2))
+    ttk.Entry(form, textvariable=var_db, width=40, state="readonly").grid(
+        row=1, column=1, sticky="w", padx=(0, 6), pady=2)
+    db_btns = ui.Frame(form)
+    db_btns.grid(row=2, column=1, columnspan=3, sticky="w",
+                 padx=(0, 4), pady=(0, 2))
+    for _text, _cmd in (
+            ("查看", lambda: view_db()),
+            ("补全哈希", lambda: fill_hashes()),
+            ("合并数据库", lambda: merge_dbs()),
+            ("用上级库", lambda: seed_from_parent())):
+        ui.Button(db_btns, text=_text, command=_cmd).pack(
+            side=tk.LEFT, padx=(0, 4))
+
+    lbl_scope = ui.Label(form, text="", foreground=COLOR["text_secondary"],
+                         font=FONTS["sm"], wraplength=760)
+    lbl_scope.grid(row=3, column=1, columnspan=3, sticky="w",
+                   padx=(0, 4), pady=(0, 1))
 
     # 模式
-    form_label(form, 3, "扫描模式：")
+    _form_label(4, "扫描模式：")
     frame_mode = ui.Frame(form)
-    frame_mode.grid(row=3, column=1, columnspan=3, sticky="w", pady=3)
+    frame_mode.grid(row=4, column=1, columnspan=3, sticky="w", pady=1)
     var_mode = tk.StringVar(value=MODE_PRECHECK)     # 默认快速预检（只读、不算哈希）
     for _i, _key in enumerate(MODE_ORDER):
         ttk.Radiobutton(frame_mode, text=MODE_LABELS[_key], value=_key,
                         variable=var_mode).grid(
-            row=_i // 2, column=_i % 2, sticky="w", padx=(0, 18), pady=1)
-    form_note(form, 4, "只读模式扫完可多选写回数据库")
+            row=_i // 2, column=_i % 2, sticky="w", padx=(0, 18), pady=0)
 
     # ---------------- 执行 / 进度 ----------------
     run_row = ui.Frame(parent)
@@ -2401,13 +2413,13 @@ def build_hash_tab(parent, app=None):
     search_row.grid(row=3, column=0, sticky="ew", padx=8, pady=(2, 2))
     ui.Label(search_row, text="搜索：").pack(side=tk.LEFT)
     var_kw = tk.StringVar()
-    ent_kw = ttk.Entry(search_row, textvariable=var_kw, width=34)
+    ent_kw = ttk.Entry(search_row, textvariable=var_kw, width=30)
     ent_kw.pack(side=tk.LEFT, padx=(0, 6))
     var_kind = tk.StringVar(value="按路径模糊")
-    ttk.Combobox(search_row, textvariable=var_kind, width=15, state="readonly",
+    ttk.Combobox(search_row, textvariable=var_kind, width=13, state="readonly",
                  values=["按路径模糊", "按 SHA256"]).pack(side=tk.LEFT, padx=(0, 6))
     var_scope = tk.StringVar(value="当前目录")
-    ttk.Combobox(search_row, textvariable=var_scope, width=16, state="readonly",
+    ttk.Combobox(search_row, textvariable=var_scope, width=15, state="readonly",
                  values=["当前目录", "全部已管理目录"]).pack(side=tk.LEFT, padx=(0, 6))
     ui.Button(search_row, text="搜索", width=6, command=lambda: do_search()).pack(
         side=tk.LEFT, padx=(0, 6))
@@ -2461,7 +2473,7 @@ def build_hash_tab(parent, app=None):
         if w <= 1:
             return
         fixed = FIXED_W_MULTI if state["multi"] else FIXED_W_SINGLE
-        rel_w = max(160, w - fixed - 14)
+        rel_w = max(100, w - fixed - 14)
         try:
             if int(tree.column("rel", "width")) != rel_w:
                 tree.column("rel", width=rel_w)
@@ -2664,9 +2676,9 @@ def build_hash_tab(parent, app=None):
             tree.insert("", tk.END, iid=f"r{start + k}",
                         values=("☐", short_path(root), rel,
                                 fmt_size(size_b) if size_b is not None else "—",
-                                fmt_time(mtime) if mtime else "—",
-                                fmt_time(last) if last else "—",
-                                hashed, short_sha(sha), text),
+                                fmt_date(mtime) if mtime else "—",
+                                fmt_date(last) if last else "—",
+                                short_sha(sha, 10) or hashed, text),
                         tags=(tag,) if tag else ())
 
         # 分类计数 + 高亮当前筛选

@@ -54,7 +54,7 @@ ENGINE_MYMEMORY = "mymemory"
 ENGINE_LIBRE = "libre"
 
 ENGINE_NAMES = {
-    ENGINE_AUTO: "自动（DeepL → 谷歌 → MyMemory）",
+    ENGINE_AUTO: "自动（推荐）",
     ENGINE_DEEPL: "DeepL 免费网页版",
     ENGINE_GOOGLE: "谷歌翻译（免费接口）",
     ENGINE_MYMEMORY: "MyMemory（免费）",
@@ -665,7 +665,7 @@ def make_combo_row(parent, row, label, values, default, width=18, note=None):
     form_label(parent, row, label)
     var = tk.StringVar(value=default)
     cb = ttk.Combobox(parent, textvariable=var, values=values, state="readonly", width=width)
-    cb.grid(row=row, column=1, sticky="w", padx=(0, 6), pady=5)
+    cb.grid(row=row, column=1, sticky="w", padx=(0, 6), pady=3)
     if note:
         form_note(parent, row, note)
     return var
@@ -678,9 +678,8 @@ def build_translate_tab(parent, app=None):
     parent.grid_rowconfigure(2, weight=1)
     parent.grid_rowconfigure(7, weight=1)
     make_tip(parent, 0,
-             "把 .txt / .lrc / .srt / .ass / .vtt 拖入下方列表（也可点按钮添加），"
-             "调用免费在线接口翻译成中文，译文写回同名文件，原文件备份为「原名.old」。\n"
-             "混合文本建议手动指定源语言并开启【片段模式】：只翻译非中文片段，中文一字不动，比自动检测更稳。",
+             "拖入 txt/lrc/srt 等文件，免费接口译为中文，原文件备份为「原名.old」。\n"
+             "混合文本建议指定源语言并开启片段模式（只翻译非中文片段）。",
              colspan=1, autowrap=True)
 
     file_list = []
@@ -695,7 +694,7 @@ def build_translate_tab(parent, app=None):
     list_frame.grid(row=2, column=0, sticky="nsew", padx=6, pady=4)
     list_frame.grid_rowconfigure(0, weight=1)
     list_frame.grid_columnconfigure(0, weight=1)
-    listbox = ui.Listbox(list_frame, selectmode=tk.EXTENDED, height=6)
+    listbox = ui.Listbox(list_frame, selectmode=tk.EXTENDED, height=3)
     lb_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=listbox.yview)
     listbox.config(yscrollcommand=lb_scroll.set)
     listbox.grid(row=0, column=0, sticky="nsew")
@@ -713,55 +712,61 @@ def build_translate_tab(parent, app=None):
                       ENGINE_MYMEMORY, ENGINE_LIBRE)]
     var_engine = make_combo_row(form, 0, "翻译引擎：", engine_values,
                                 ENGINE_NAMES[ENGINE_AUTO], width=40,
-                                note="自动：一个失败自动切换下一个（均免费、无需注册）")
-    var_src = make_combo_row(form, 1, "源语言：", SRC_LIST, SRC_AUTO, width=18,
-                             note="混合文本建议手动指定，如『日本語』『English』")
-    var_tgt = make_combo_row(form, 2, "目标语言：", LANG_LIST, "简体中文", width=18,
-                             note="混合文本的目标是「全中文」")
-    var_enc = make_combo_row(form, 3, "输出编码：",
-                             ["UTF-8", "UTF-8 BOM", "GBK", "跟随原文件"],
-                             "UTF-8", width=18,
-                             note="播放器不认中文时可改 UTF-8 BOM")
-    form_label(form, 4, "文件后缀：")
-    var_suffix = tk.StringVar(value=DEFAULT_SUFFIXES)
-    ttk.Entry(form, textvariable=var_suffix, width=30).grid(
-        row=4, column=1, sticky="w", padx=(0, 6), pady=5)
-    form_note(form, 4, "空格分隔，拖入文件夹时只收这些后缀")
+                                note="自动：失败自动切换（免费）")
 
-    form_label(form, 5, "选项：")
+    # 源语言 / 目标语言 / 输出编码合并为一行，节省高度
+    form_label(form, 1, "语言/编码：")
+    lang_row = ui.Frame(form)
+    lang_row.grid(row=1, column=1, columnspan=3, sticky="w", pady=3)
+    ui.Label(lang_row, text="源").pack(side=tk.LEFT)
+    var_src = tk.StringVar(value=SRC_AUTO)
+    ttk.Combobox(lang_row, textvariable=var_src, values=SRC_LIST,
+                 state="readonly", width=16).pack(side=tk.LEFT, padx=(4, 12))
+    ui.Label(lang_row, text="目标").pack(side=tk.LEFT)
+    var_tgt = tk.StringVar(value="简体中文")
+    ttk.Combobox(lang_row, textvariable=var_tgt, values=LANG_LIST,
+                 state="readonly", width=16).pack(side=tk.LEFT, padx=(4, 12))
+    ui.Label(lang_row, text="编码").pack(side=tk.LEFT)
+    var_enc = tk.StringVar(value="UTF-8")
+    ttk.Combobox(lang_row, textvariable=var_enc,
+                 values=["UTF-8", "UTF-8 BOM", "GBK", "跟随原文件"],
+                 state="readonly", width=14).pack(side=tk.LEFT, padx=(4, 0))
+
+    form_label(form, 2, "选项：")
     frame_opt = ui.Frame(form)
-    frame_opt.grid(row=5, column=1, columnspan=3, sticky="w", pady=3)
-    var_backup = make_check(frame_opt, "备份原文件为「原名.old」", default=True)
-    var_skip = make_check(frame_opt, "跳过无需翻译的行", default=True)
+    frame_opt.grid(row=2, column=1, columnspan=3, sticky="w", pady=3)
+    var_backup = make_check(frame_opt, "备份 .old", default=True)
+    var_skip = make_check(frame_opt, "跳过无需翻译", default=True)
     var_rec = make_check(frame_opt, "遍历子目录", default=True)
     for w in frame_opt.winfo_children():
         w.pack_configure(side=tk.LEFT)
 
-    form_label(form, 6, "混合文本：")
+    form_label(form, 3, "混合文本：")
     frame_mix = ui.Frame(form)
-    frame_mix.grid(row=6, column=1, columnspan=3, sticky="w", pady=3)
-    var_seg = make_check(frame_mix, "片段模式（中文原样保留）", default=True)
+    frame_mix.grid(row=3, column=1, columnspan=3, sticky="w", pady=3)
+    var_seg = make_check(frame_mix, "片段模式", default=True)
     var_cjk = make_check(frame_mix, "翻译纯汉字片段", default=False)
     for w in frame_mix.winfo_children():
         w.pack_configure(side=tk.LEFT)
-    ui.Label(frame_mix, text="关闭片段模式 = 整行交给引擎",
-              foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(10, 0))
+    ui.Label(frame_mix, text="后缀").pack(side=tk.LEFT, padx=(12, 2))
+    var_suffix = tk.StringVar(value=DEFAULT_SUFFIXES)
+    ttk.Entry(frame_mix, textvariable=var_suffix, width=22).pack(side=tk.LEFT)
 
-    form_label(form, 7, "接口设置：")
+    form_label(form, 4, "接口设置：")
     frame_api = ui.Frame(form)
-    frame_api.grid(row=7, column=1, columnspan=3, sticky="w", pady=3)
+    frame_api.grid(row=4, column=1, columnspan=3, sticky="w", pady=3)
     ttk.Label(frame_api, text="端点").pack(side=tk.LEFT)
     var_endpoint = tk.StringVar(value="https://libretranslate.com/translate")
-    ttk.Entry(frame_api, textvariable=var_endpoint, width=36).pack(
+    ttk.Entry(frame_api, textvariable=var_endpoint, width=30).pack(
         side=tk.LEFT, padx=(4, 14))
-    ttk.Label(frame_api, text="邮箱 / Key（可选）").pack(side=tk.LEFT)
+    ttk.Label(frame_api, text="邮箱/Key").pack(side=tk.LEFT)
     var_email = tk.StringVar(value="")
-    ttk.Entry(frame_api, textvariable=var_email, width=20).pack(
+    ttk.Entry(frame_api, textvariable=var_email, width=18).pack(
         side=tk.LEFT, padx=(4, 0))
 
     # ---- 执行 / 停止 ----
     frame_run = ui.Frame(parent)
-    frame_run.grid(row=5, column=0, sticky="w", padx=6, pady=4)
+    frame_run.grid(row=5, column=0, sticky="w", padx=6, pady=2)
 
     # ---- 进度 ----
     frame_prog = ui.Frame(parent)
@@ -770,9 +775,9 @@ def build_translate_tab(parent, app=None):
     pbar = ttk.Progressbar(frame_prog, mode="determinate", maximum=100)
     pbar.grid(row=0, column=0, sticky="ew")
     label_prog = ui.Label(frame_prog, text="")
-    label_prog.grid(row=1, column=0, sticky="w")
+    label_prog.grid(row=0, column=1, sticky="e", padx=(8, 0))
 
-    text_log, log = make_log_panel(parent, 7, colspan=1, title="运行日志", height=5)
+    text_log, log = make_log_panel(parent, 7, colspan=1, title="运行日志", height=3)
 
     # ---- 功能函数 ----
     def refresh_list():

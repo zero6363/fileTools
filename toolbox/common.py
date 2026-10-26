@@ -9,11 +9,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
+from . import config
 from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS
 
-APP_VERSION = "1.37"
+APP_VERSION = "1.38"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -222,7 +223,7 @@ def make_form(parent):
 def form_label(parent, row, text):
     """表单标签：右对齐，使同一容器内的输入框起点一致"""
     lbl = ttk.Label(parent, text=text)
-    lbl.grid(row=row, column=0, sticky="e", padx=(6, 8), pady=5)
+    lbl.grid(row=row, column=0, sticky="e", padx=(6, 8), pady=3)
     return lbl
 
 
@@ -233,7 +234,7 @@ def form_note(parent, row, text, column=3, columnspan=1):
     lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"],
                     wraplength=340, justify="left", anchor="w")
     lbl.grid(row=row, column=column, columnspan=columnspan,
-             sticky="w", padx=(8, 4), pady=5)
+             sticky="w", padx=(8, 4), pady=3)
 
     def _rewrap(_event=None):
         try:
@@ -241,7 +242,7 @@ def form_note(parent, row, text, column=3, columnspan=1):
             if not top.winfo_exists() or top.winfo_width() <= 1:
                 return
             avail = top.winfo_width() - (lbl.winfo_rootx() - top.winfo_rootx()) - 24
-            w = max(200, min(640, avail))
+            w = max(80, min(640, avail))
             cur = int(float(lbl.cget("wraplength") or 0))
             if abs(cur - w) > 12:
                 lbl.configure(wraplength=w)
@@ -251,18 +252,20 @@ def form_note(parent, row, text, column=3, columnspan=1):
     try:
         top = lbl.winfo_toplevel()
         top.bind("<Configure>", _rewrap, add="+")
+        top.after_idle(_rewrap)
         top.after(200, _rewrap)
     except Exception:
         pass
     return lbl
 
 
-def make_path_row(parent, row, label, default="", title="选择文件夹", entry_width=52, note=None):
-    """目录输入行：标签 + 可编辑文本框 + 浏览按钮"""
+def make_path_row(parent, row, label, default="", title="选择文件夹", entry_width=40, note=None):
+    """目录输入行：标签 + 可编辑文本框 + 浏览按钮。
+    默认宽度按 1080 宽的最小窗口取值，保证「浏览…」按钮不会被挤出右边界。"""
     form_label(parent, row, label)
     var = tk.StringVar(value=default)
     ttk.Entry(parent, textvariable=var, width=entry_width).grid(
-        row=row, column=1, sticky="w", padx=(0, 6), pady=5)
+        row=row, column=1, sticky="w", padx=(0, 6), pady=3)
 
     def _browse():
         p = filedialog.askdirectory(title=title)
@@ -270,18 +273,18 @@ def make_path_row(parent, row, label, default="", title="选择文件夹", entry
             var.set(p)
 
     ttk.Button(parent, text="浏览…", command=_browse).grid(
-        row=row, column=2, sticky="w", padx=(0, 4), pady=5)
+        row=row, column=2, sticky="w", padx=(0, 4), pady=3)
     if note:
         form_note(parent, row, note)
     return var
 
 
-def make_file_row(parent, row, label, default="", title="选择文件", entry_width=52, note=None):
+def make_file_row(parent, row, label, default="", title="选择文件", entry_width=40, note=None):
     """文件输入行（用于字体等文件选择）"""
     form_label(parent, row, label)
     var = tk.StringVar(value=default)
     ttk.Entry(parent, textvariable=var, width=entry_width).grid(
-        row=row, column=1, sticky="w", padx=(0, 6), pady=5)
+        row=row, column=1, sticky="w", padx=(0, 6), pady=3)
 
     def _browse():
         p = filedialog.askopenfilename(
@@ -292,7 +295,7 @@ def make_file_row(parent, row, label, default="", title="选择文件", entry_wi
             var.set(p)
 
     ttk.Button(parent, text="浏览…", command=_browse).grid(
-        row=row, column=2, sticky="w", padx=(0, 4), pady=5)
+        row=row, column=2, sticky="w", padx=(0, 4), pady=3)
     if note:
         form_note(parent, row, note)
     return var
@@ -302,7 +305,7 @@ def make_entry_row(parent, row, label, default="", entry_width=30, note=None):
     form_label(parent, row, label)
     var = tk.StringVar(value=default)
     ttk.Entry(parent, textvariable=var, width=entry_width).grid(
-        row=row, column=1, sticky="w", padx=(0, 6), pady=5)
+        row=row, column=1, sticky="w", padx=(0, 6), pady=3)
     if note:
         form_note(parent, row, note)
     return var
@@ -333,7 +336,7 @@ def make_num_row(parent, row, label, default, min_, max_, note=None, width=6, st
     """带标签/说明的整行数字输入（[－] Entry [＋]，方便鼠标操作），返回 StringVar"""
     form_label(parent, row, label)
     box, var = make_num_box(parent, default, min_, max_, width, step)
-    box.grid(row=row, column=1, sticky="w", padx=(0, 6), pady=3)
+    box.grid(row=row, column=1, sticky="w", padx=(0, 6), pady=2)
     if note:
         form_note(parent, row, note)
     return var
@@ -344,12 +347,15 @@ def make_spin_row(parent, row, label, default, from_, to, note=None, width=10, s
     return make_num_row(parent, row, label, default, from_, to, note, width, step)
 
 
-def make_check(parent, text, default=False, row=None, column=None, var=None):
+def make_check(parent, text, default=False, row=None, column=None, var=None,
+               columnspan=1):
+    """复选框；columnspan 用于宽选项横跨输入框/按钮列，避免把第 1 列撑宽。"""
     if var is None:
         var = tk.BooleanVar(value=default)
     cb = ttk.Checkbutton(parent, text=text, variable=var)
     if row is not None:
-        cb.grid(row=row, column=column, sticky="w", padx=(0, 6), pady=3)
+        cb.grid(row=row, column=column, columnspan=columnspan,
+                sticky="w", padx=(0, 6), pady=3)
     else:
         cb.pack(anchor="w", padx=6, pady=2)
     return var
@@ -384,10 +390,11 @@ def make_log_panel(parent, row, colspan=3, title="运行日志", height=12):
     return text, make_logger(text)
 
 
-def make_tip(parent, row, text, colspan=3, autowrap=False):
+def make_tip(parent, row, text, colspan=3, autowrap=False, font=None):
     """提示文字：按容器宽度自动换行，避免长提示在窄窗口被裁掉；
     配合 colspan=1 使用可避免跨列提示把表单列宽撑开。"""
     lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"],
+                    font=font or FONTS["base"],
                     wraplength=820, justify="left", anchor="w")
     lbl.grid(row=row, column=0, columnspan=colspan,
              sticky="we" if autowrap else "w", padx=8, pady=(0, 6))

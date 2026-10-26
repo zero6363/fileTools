@@ -76,9 +76,10 @@ from .theme import apply_theme, COLOR, FONTS
 from . import ui, ui as ttk
 
 # 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）
-NAV_DEFAULT_WIDTH = 192
-NAV_MIN_WIDTH = 132
-NAV_MAX_WIDTH = 320
+# 导航字号加大后需要更宽的默认值，避免最长的「⑰ ReSoBackup备份」被裁切。
+NAV_DEFAULT_WIDTH = 250
+NAV_MIN_WIDTH = 240
+NAV_MAX_WIDTH = 380
 
 # 导航分组：按使用场景归类，顺序即左侧显示顺序（工具编号保持不变）
 NAV_GROUPS = [
@@ -123,6 +124,16 @@ class ToolboxApp:
         nav_width = saved_nav_w if isinstance(saved_nav_w, int) \
             and NAV_MIN_WIDTH <= saved_nav_w <= NAV_MAX_WIDTH else NAV_DEFAULT_WIDTH
 
+        # 状态栏先占住底部空间，再让主体填充剩余区域；
+        # 否则主体先 pack 会一直铺到窗口底边，页面底部被状态栏盖住。
+        self.status = ui.Label(
+            root, text="就绪", anchor="w", padx=12, pady=4,
+            bg=COLOR["status_bg"], fg=COLOR["text_secondary"], font=FONTS["sm"])
+        self.status.pack(fill=tk.X, side=tk.BOTTOM)
+        # 发丝分隔线放在状态栏上方（先 pack 状态栏，再 pack 分隔线）
+        tk.Frame(root, height=1, bg=COLOR["border"]).pack(
+            fill=tk.X, side=tk.BOTTOM, padx=10)
+
         # 主体：左侧竖向导航 + 右侧工具内容区
         body = ui.Frame(root)
         body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 4))
@@ -131,13 +142,17 @@ class ToolboxApp:
         nav = ui.ScrollableFrame(body, width=nav_width)
         nav.pack(side=tk.LEFT, fill=tk.Y)
         self.nav = nav
+        self._nav_applied_width = nav_width
+        self._nav_resize_target = None
+        self._nav_resize_job = None
+        self._nav_resizing = False
         # CTk 6.x：可滚动容器实例自身即为内容容器，子控件直接放入它
         nav_inner = nav
 
         ui.Label(nav_inner, text="文件工具箱", font=FONTS["nav_title"],
-                 text_color=COLOR["text"]).pack(anchor="w", padx=16, pady=(14, 0))
+                 text_color=COLOR["text"]).pack(anchor="w", padx=16, pady=(10, 0))
         ui.Label(nav_inner, text="19 个实用工具", font=FONTS["xs"],
-                 text_color=COLOR["text_muted"]).pack(anchor="w", padx=16, pady=(0, 6))
+                 text_color=COLOR["text_muted"]).pack(anchor="w", padx=16, pady=(0, 4))
 
         # 分隔条：拖拽调整导航宽度（限制在 NAV_MIN~NAV_MAX），双击恢复默认宽度
         sash = tk.Frame(body, width=2, bg=COLOR["border"], cursor="sb_h_double_arrow")
@@ -211,47 +226,53 @@ class ToolboxApp:
         for group_name, indices in NAV_GROUPS:
             ui.Label(nav_inner, text=group_name, font=FONTS["nav_group"],
                      text_color=COLOR["text_muted"]).pack(
-                         fill=tk.X, padx=18, pady=(10, 3))
+                         fill=tk.X, padx=18, pady=(6, 1))
             for index in indices:
                 title = builders[index][0]
                 self._tool_groups[index] = group_name
                 btn = ui.Button(
-                    nav_inner, text=title, anchor="w", height=32,
+                    nav_inner, text=title, anchor="w", height=33,
                     command=lambda i=index: self.show_tool(i),
                     bg=COLOR["nav_bg"], fg=COLOR["text"],
                     activebackground=COLOR["nav_item_hover"],
                     font=FONTS["nav"], cursor="hand2",
                 )
                 btn._active = False
-                btn.pack(fill=tk.X, padx=10, pady=1)
+                btn.pack(fill=tk.X, padx=10, pady=0)
                 self.nav_items[index] = (btn, self.tool_frames[index], title)
 
         # 导航内容不足一屏时隐藏滚动条，避免右侧多出一条灰条；
         # 窗口变矮、内容超出时自动恢复（CTkScrollableFrame 默认始终显示滚动条）。
+        # 只在「显示 / 隐藏」状态真正变化时操作控件，且拖拽期间暂停检测，
+        # 避免每次 <Configure> 都 grid()/grid_remove() 造成闪烁。
+        _scroll_state = {"job": None, "visible": True}
+
         def _sync_nav_scrollbar(_event=None):
-            try:
-                canvas = nav._parent_canvas
-                bar = nav._scrollbar
-                bbox = canvas.bbox("all")
-                need = bool(bbox and bbox[3] - bbox[1] > canvas.winfo_height() + 4)
-                if need:
-                    bar.grid()
-                else:
-                    bar.grid_remove()
-            except Exception:
-                pass
+            if self._nav_resizing or _scroll_state["job"] is not None:
+                return
 
-        nav.bind("<Configure>",
-                 lambda _e: root.after_idle(_sync_nav_scrollbar), add="+")
+            def _run():
+                _scroll_state["job"] = None
+                try:
+                    canvas = nav._parent_canvas
+                    bar = nav._scrollbar
+                    bbox = canvas.bbox("all")
+                    need = bool(bbox and bbox[3] - bbox[1] > canvas.winfo_height() + 4)
+                    if need == _scroll_state["visible"]:
+                        return
+                    _scroll_state["visible"] = need
+                    if need:
+                        bar.grid()
+                    else:
+                        bar.grid_remove()
+                except Exception:
+                    pass
+
+            _scroll_state["job"] = root.after(30, _run)
+
+        self._sync_nav_scrollbar = _sync_nav_scrollbar
+        nav.bind("<Configure>", _sync_nav_scrollbar, add="+")
         root.after(300, _sync_nav_scrollbar)
-
-        self.status = ui.Label(
-            root, text="就绪", anchor="w", padx=12, pady=4,
-            bg=COLOR["status_bg"], fg=COLOR["text_secondary"], font=FONTS["sm"])
-        self.status.pack(fill=tk.X, side=tk.BOTTOM)
-        # 发丝分隔线放在状态栏上方（pack side=bottom 的后加入者位于先加入者上方）
-        tk.Frame(root, height=1, bg=COLOR["border"]).pack(
-            fill=tk.X, side=tk.BOTTOM, padx=10)
 
         # 注册 Windows 文件拖放（自实现，经队列在正常事件循环中处理）
         install_drop_support(root, self._on_files_dropped)
@@ -328,30 +349,77 @@ class ToolboxApp:
     def _save_window(self):
         """保存窗口几何 + 左侧菜单宽度（拖拽/双击调整后立即持久化）"""
         try:
-            save_window_geometry(
-                self.root, extra={"nav_width": self.nav.winfo_width()})
+            width = getattr(self, "_nav_applied_width", None) or self.nav.winfo_width()
+            save_window_geometry(self.root, extra={"nav_width": width})
         except Exception:
             pass
 
     def _on_nav_resize_start(self, e):
+        if self._nav_resize_job is not None:
+            try:
+                self.root.after_cancel(self._nav_resize_job)
+            except Exception:
+                pass
+            self._nav_resize_job = None
+        self._nav_resizing = True
         self._nav_resize_x0 = e.x_root
         self._nav_resize_w0 = self.nav.winfo_width()
+        self._nav_resize_target = self._nav_resize_w0
+
+    def _apply_nav_width(self):
+        """把待应用的宽度写入控件（每帧最多一次，避免拖动时高频重排闪烁）"""
+        self._nav_resize_job = None
+        target = self._nav_resize_target
+        if target is None or target == self._nav_applied_width:
+            return
+        self.nav.configure(width=target)
+        self._nav_applied_width = target
 
     def _on_nav_resize_move(self, e):
         if getattr(self, "_nav_resize_x0", None) is None:
             return
         width = self._nav_resize_w0 + (e.x_root - self._nav_resize_x0)
-        self.nav.configure(width=max(NAV_MIN_WIDTH, min(NAV_MAX_WIDTH, width)))
+        self._nav_resize_target = max(
+            NAV_MIN_WIDTH, min(NAV_MAX_WIDTH, width))
+        if self._nav_resize_job is None:
+            self._nav_resize_job = self.root.after(20, self._apply_nav_width)
 
     def _on_nav_resize_end(self, _e):
         if getattr(self, "_nav_resize_x0", None) is None:
             return
+        if self._nav_resize_job is not None:
+            try:
+                self.root.after_cancel(self._nav_resize_job)
+            except Exception:
+                pass
+            self._nav_resize_job = None
+        self._apply_nav_width()
         self._nav_resize_x0 = None
+        self._nav_resizing = False
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
         self._save_window()
+        self._sync_nav_scrollbar()
 
     def _on_nav_reset_width(self, _e):
-        self.nav.configure(width=NAV_DEFAULT_WIDTH)
+        if self._nav_resize_job is not None:
+            try:
+                self.root.after_cancel(self._nav_resize_job)
+            except Exception:
+                pass
+            self._nav_resize_job = None
+        self._nav_resizing = False
+        self._nav_resize_x0 = None
+        self._nav_resize_target = NAV_DEFAULT_WIDTH
+        self._apply_nav_width()
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
         self._save_window()
+        self._sync_nav_scrollbar()
 
     def on_close(self):
         """关闭前记住窗口位置、大小与左侧菜单宽度"""

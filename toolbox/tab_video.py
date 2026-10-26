@@ -898,11 +898,11 @@ def build_video_tab(parent, app=None):
 
     var_src = make_path_row(form, 0, "目标文件夹：", title="选择视频文件夹")
     var_exts = make_entry_row(form, 1, "视频格式：", default=DEFAULT_VIDEO_EXTS,
-                              entry_width=52, note="空格分隔，可自行增删")
+                              entry_width=46, note="空格分隔，可增删")
     var_threads = make_num_row(form, 2, "识别线程数：", 8, 1, 32,
-                               note="读文件头几乎不占 CPU，线程多更快")
+                               note="读文件头，几乎不占 CPU")
     var_unknown = make_check(form, "无法识别的视频移到「未知」文件夹（不勾选保持原位）",
-                             default=False, row=3, column=1)
+                             default=False, row=3, column=1, columnspan=3)
 
     text_log, log = make_log_panel(parent, 2, colspan=1)
 

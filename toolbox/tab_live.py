@@ -172,12 +172,12 @@ def build_live_tab(parent):
 
     var_src = make_path_row(form, 0, "目标文件夹：", title="选择目标文件夹")
     var_static = make_check(form, "静态图 → StaticPhotos",
-                            default=True, row=1, column=1)
+                            default=True, row=1, column=1, columnspan=2)
     form_note(form, 1, "不勾选则保持原位")
     var_live = make_check(form, "实况图 → LivePhotos",
-                          default=True, row=2, column=1)
+                          default=True, row=2, column=1, columnspan=2)
     var_extract = make_check(form, "提取视频 → LivePhotos/videos",
-                             default=True, row=3, column=1)
+                             default=True, row=3, column=1, columnspan=2)
 
     text_log, log = make_log_panel(parent, 2, colspan=1)
 

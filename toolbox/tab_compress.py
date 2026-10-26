@@ -745,12 +745,12 @@ def build_compress_tab(parent, app=None):
 
     cols = ("name", "path", "size", "qval", "newsize", "saved")
     tree = ttk.Treeview(tree_frame, columns=cols, show="headings")
-    headers = [("name", "图片名", 140, "w"),
-               ("path", "路径", 340, "w"),
-               ("size", "图片大小", 88, "e"),
-               ("qval", "量化质量", 70, "e"),
-               ("newsize", "压缩后大小", 100, "e"),
-               ("saved", "节省", 90, "e")]
+    headers = [("name", "图片名", 120, "w"),
+               ("path", "路径", 200, "w"),
+               ("size", "图片大小", 84, "e"),
+               ("qval", "量化质量", 96, "e"),
+               ("newsize", "压缩后大小", 116, "e"),
+               ("saved", "节省", 70, "e")]
     for cid, text, width, anchor in headers:
         tree.heading(cid, text=text)
         tree.column(cid, width=width, anchor=anchor)

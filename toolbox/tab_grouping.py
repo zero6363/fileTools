@@ -271,7 +271,7 @@ def build_group_tab(parent):
     suffix_box = ttk.Combobox(form, textvariable=var_suffix, width=14,
                               values=[".jpg", ".gif", ".txt", ".mp4", "*"])
     suffix_box.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=5)
-    suffix_note = form_note(form, 2, "可选常用后缀，也可自定义")
+    suffix_note = form_note(form, 2, "可输入自定义后缀")
 
     fmt_label = form_label(form, 3, "图片格式：")
     var_img_formats = tk.StringVar(value=DEFAULT_IMAGE_FORMATS)
@@ -287,7 +287,7 @@ def build_group_tab(parent):
     var_prefix = tk.StringVar(value="jpg")
     prefix_entry = ttk.Entry(form, textvariable=var_prefix, width=20)
     prefix_entry.grid(row=5, column=1, sticky="w", padx=(0, 6), pady=5)
-    prefix_note = form_note(form, 5, "随后缀自动变化，可手动修改")
+    prefix_note = form_note(form, 5, "随后缀自动变化")
 
     count_widgets = [suffix_label, suffix_box, suffix_note,
                      fmt_label, fmt_entry, fmt_note,
@@ -373,11 +373,11 @@ def build_flatten_tab(parent):
 
     var_src = make_path_row(form, 0, "根目录：", title="选择根目录")
     var_rec = make_check(form, "递归所有层级的子目录（取消勾选只处理一级子目录）",
-                         default=True, row=1, column=1)
+                         default=True, row=1, column=1, columnspan=3)
     var_rename = make_check(form, "同名重命名移动（不勾选则跳过同名文件）",
-                            default=False, row=2, column=1)
+                            default=False, row=2, column=1, columnspan=3)
     var_del = make_check(form, "移动完成后删除空的子文件夹",
-                         default=False, row=3, column=1)
+                         default=False, row=3, column=1, columnspan=3)
 
     text_log, log = make_log_panel(parent, 2, colspan=1)
 

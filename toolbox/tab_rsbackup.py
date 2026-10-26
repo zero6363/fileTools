@@ -12,8 +12,8 @@ from . import ui, ui as ttk
 from .theme import FONTS
 
 from .common import (clean_path, clear_log, form_label, form_note,
-                     get_unique_path, make_form, make_log_panel, make_num_row,
-                     make_tip, run_task)
+                     get_unique_path, make_form, make_log_panel, make_num_box,
+                     make_num_row, make_tip, run_task)
 from .theme import COLOR
 
 
@@ -683,14 +683,14 @@ def rs_run_restore(input_path, password, output_dir, log):
 def build_rsbackup_tab(parent, app=None):
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(4, weight=1)
-    make_tip(parent, 0, "Reed-Solomon 纠删码备份：文件切成 N 份分片，任意 K 份即可恢复；"
-                        "可选 AES-256-GCM 加密。分片尾部附带元数据副本，丢失 .rsmeta 也能恢复。",
+    make_tip(parent, 0, "Reed-Solomon 纠删码备份：文件切成 N 份，任意 K 份即可恢复；"
+                        "可选 AES-256-GCM 加密。",
              colspan=1, autowrap=True)
 
     state = {"busy": False}
 
     # ================= 备份区 =================
-    box_backup = ui.LabelFrame(parent, text="备份", padding=(10, 8))
+    box_backup = ui.LabelFrame(parent, text="备份", padding=(8, 4))
     box_backup.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
     box_backup.grid_columnconfigure(0, weight=1)
     form_b = make_form(box_backup)
@@ -698,41 +698,49 @@ def build_rsbackup_tab(parent, app=None):
 
     form_label(form_b, 0, "源文件：")
     bk_input = tk.StringVar()
-    ttk.Entry(form_b, textvariable=bk_input, width=52).grid(
-        row=0, column=1, sticky="w", padx=(0, 6), pady=5)
+    ttk.Entry(form_b, textvariable=bk_input, width=40).grid(
+        row=0, column=1, sticky="w", padx=(0, 6), pady=3)
     ui.Button(form_b, text="浏览…",
                command=lambda: _pick_file(bk_input, "选择要备份的文件")).grid(
-        row=0, column=2, sticky="w", padx=(0, 4), pady=5)
+        row=0, column=2, sticky="w", padx=(0, 4), pady=3)
 
-    var_shares = make_num_row(form_b, 1, "分片数：", RS_DEFAULT_SHARES,
-                              RS_MIN_SHARES, RS_MAX_SHARES,
-                              note=f"{RS_MIN_SHARES}~{RS_MAX_SHARES} 份")
-    var_threshold = make_num_row(form_b, 2, "恢复阈值：", RS_DEFAULT_THRESHOLD,
-                                 1, RS_MAX_SHARES, note="任意这么多份即可恢复")
+    # 分片数与恢复阈值并排，省一行高度
+    form_label(form_b, 1, "分片/阈值：")
+    row_rs = ui.Frame(form_b)
+    row_rs.grid(row=1, column=1, columnspan=3, sticky="w",
+                padx=(0, 6), pady=2)
+    box_sh, var_shares = make_num_box(
+        row_rs, RS_DEFAULT_SHARES, RS_MIN_SHARES, RS_MAX_SHARES)
+    box_sh.pack(side="left")
+    ui.Label(row_rs, text="份，任意").pack(side="left", padx=(6, 2))
+    box_th, var_threshold = make_num_box(
+        row_rs, RS_DEFAULT_THRESHOLD, 1, RS_MAX_SHARES)
+    box_th.pack(side="left")
+    ui.Label(row_rs, text="份可恢复").pack(side="left", padx=(6, 0))
 
     # 加密选项（放在输入列，与上方输入框左对齐）
     crypto = ui.Frame(form_b)
-    crypto.grid(row=3, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=3)
+    crypto.grid(row=2, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=3)
     var_encrypt = tk.BooleanVar(value=False)
     ttk.Checkbutton(crypto, text="加密（AES-256-GCM）", variable=var_encrypt).pack(side="left")
     ui.Label(crypto, text="密码：").pack(side="left", padx=(12, 4))
     var_password = tk.StringVar()
-    ttk.Entry(crypto, textvariable=var_password, width=20, show="*").pack(side="left")
+    ttk.Entry(crypto, textvariable=var_password, width=13, show="*").pack(side="left")
     var_enc_name = tk.BooleanVar(value=False)
-    ttk.Checkbutton(crypto, text="同时加密文件名", variable=var_enc_name).pack(
-        side="left", padx=(16, 0))
+    ttk.Checkbutton(crypto, text="加密文件名", variable=var_enc_name).pack(
+        side="left", padx=(8, 0))
 
-    form_label(form_b, 4, "输出目录：")
+    form_label(form_b, 3, "输出目录：")
     bk_outdir = tk.StringVar()
-    ttk.Entry(form_b, textvariable=bk_outdir, width=52).grid(
-        row=4, column=1, sticky="w", padx=(0, 6), pady=5)
+    ttk.Entry(form_b, textvariable=bk_outdir, width=40).grid(
+        row=3, column=1, sticky="w", padx=(0, 6), pady=3)
     ui.Button(form_b, text="浏览…",
                command=lambda: _pick_dir(bk_outdir, "选择分片输出目录")).grid(
-        row=4, column=2, sticky="w", padx=(0, 4), pady=5)
-    form_note(form_b, 4, "留空 = 源文件所在目录")
+        row=3, column=2, sticky="w", padx=(0, 4), pady=3)
+    form_note(form_b, 3, "留空=源文件目录")
 
     label_warn = ui.Label(form_b, text="", foreground=COLOR["warning"], justify="left")
-    label_warn.grid(row=5, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=(2, 4))
+    label_warn.grid(row=4, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=(2, 2))
 
     def _warn_wrap(event):
         try:
@@ -764,7 +772,7 @@ def build_rsbackup_tab(parent, app=None):
     refresh_warn()
 
     # ================= 恢复区 =================
-    box_restore = ui.LabelFrame(parent, text="恢复", padding=(10, 8))
+    box_restore = ui.LabelFrame(parent, text="恢复", padding=(8, 4))
     box_restore.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
     box_restore.grid_columnconfigure(0, weight=1)
     form_r = make_form(box_restore)
@@ -772,29 +780,29 @@ def build_rsbackup_tab(parent, app=None):
 
     form_label(form_r, 0, "分片/元数据：")
     rs_input = tk.StringVar()
-    ttk.Entry(form_r, textvariable=rs_input, width=52).grid(
-        row=0, column=1, sticky="w", padx=(0, 6), pady=5)
+    ttk.Entry(form_r, textvariable=rs_input, width=40).grid(
+        row=0, column=1, sticky="w", padx=(0, 6), pady=3)
     ui.Button(form_r, text="浏览…",
                command=lambda: _pick_file(rs_input, "选择任意 .rs.NNN 或 .rsmeta 文件")).grid(
-        row=0, column=2, sticky="w", padx=(0, 4), pady=5)
-    form_note(form_r, 0, "选一个分片或 .rsmeta（只查同目录）")
+        row=0, column=2, sticky="w", padx=(0, 4), pady=3)
+    form_note(form_r, 0, "分片或 .rsmeta")
 
     form_label(form_r, 1, "密码：")
     rs_password = tk.StringVar()
-    ttk.Entry(form_r, textvariable=rs_password, width=24, show="*").grid(
-        row=1, column=1, sticky="w", padx=(0, 6), pady=5)
-    form_note(form_r, 1, "加密备份必填，未加密留空")
+    ttk.Entry(form_r, textvariable=rs_password, width=18, show="*").grid(
+        row=1, column=1, sticky="w", padx=(0, 6), pady=3)
+    form_note(form_r, 1, "加密备份必填")
 
     form_label(form_r, 2, "输出目录：")
     rs_outdir = tk.StringVar()
-    ttk.Entry(form_r, textvariable=rs_outdir, width=52).grid(
-        row=2, column=1, sticky="w", padx=(0, 6), pady=5)
+    ttk.Entry(form_r, textvariable=rs_outdir, width=40).grid(
+        row=2, column=1, sticky="w", padx=(0, 6), pady=3)
     ui.Button(form_r, text="浏览…",
                command=lambda: _pick_dir(rs_outdir, "选择恢复输出目录")).grid(
-        row=2, column=2, sticky="w", padx=(0, 4), pady=5)
-    form_note(form_r, 2, "留空 = 分片目录\\rebuild，不覆盖")
+        row=2, column=2, sticky="w", padx=(0, 4), pady=3)
+    form_note(form_r, 2, "留空=分片目录\\rebuild")
 
-    text_log, log = make_log_panel(parent, 4, colspan=1, title="运行日志")
+    text_log, log = make_log_panel(parent, 4, colspan=1, title="运行日志", height=5)
 
     # ================= 功能函数 =================
     def _pick_file(var, title):

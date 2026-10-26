@@ -195,7 +195,8 @@ def build_webp_tab(parent):
     var_src = make_path_row(form, 0, "源目录：", title="选择源目录")
     var_out = make_path_row(form, 1, "输出目录：", title="选择输出目录", note="留空则输出到源目录")
     var_q = make_spin_row(form, 2, "JPG质量：", 100, 1, 100)
-    var_del = make_check(form, "转换成功后删除原 webp", default=True, row=3, column=1)
+    var_del = make_check(form, "转换成功后删除原 webp", default=True, row=3, column=1,
+                         columnspan=3)
 
     text_log, log = make_log_panel(parent, 2, colspan=1)
 
@@ -231,7 +232,8 @@ def build_zip_tab(parent):
                                 entry_width=24, note="空格分隔")
     var_folder = make_entry_row(form, 2, "目标文件夹名：", default="加密",
                                 entry_width=16, note="在扫描目录下创建")
-    var_rec = make_check(form, "递归扫描子文件夹", default=True, row=3, column=1)
+    var_rec = make_check(form, "递归扫描子文件夹", default=True, row=3, column=1,
+                         columnspan=3)
 
     text_log, log = make_log_panel(parent, 2, colspan=1)
 

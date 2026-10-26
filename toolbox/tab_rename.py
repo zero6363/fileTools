@@ -380,10 +380,8 @@ def build_seq_rename_tab(parent, app=None):
     """⑥ 序号重命名：拖放/按钮添加文件或文件夹，遍历读取，自然排序，预览后执行"""
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(7, weight=1)
-    make_tip(parent, 0, "把文件或文件夹拖到下方列表（也可点按钮添加）。按数值化自然排序（9 在 10 前面，"
-                        "不会出现 10 排到 9 前面），支持【全部重命名为序号 001、002…】和"
-                        "【原文件名前加序号 001-原文件名】；勾选【仅处理文件夹】则忽略文件，"
-                        "只把拖入文件夹内的子文件夹按序号重命名。",
+    make_tip(parent, 0, "拖入文件/文件夹，自然排序后重命名：可全部改为序号，或原文件名前加序号；"
+                        "勾选「仅处理文件夹」只重命名子文件夹。",
              colspan=4, autowrap=True)
 
     file_list = []      # 收集到的文件完整路径（自然排序）
@@ -414,7 +412,7 @@ def build_seq_rename_tab(parent, app=None):
     list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=6, pady=4)
     list_frame.grid_rowconfigure(0, weight=1)
     list_frame.grid_columnconfigure(0, weight=1)
-    listbox = ui.Listbox(list_frame, selectmode=tk.EXTENDED, height=6)
+    listbox = ui.Listbox(list_frame, selectmode=tk.EXTENDED, height=3)
     lb_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=listbox.yview)
     listbox.config(yscrollcommand=lb_scroll.set)
     listbox.grid(row=0, column=0, sticky="nsew")
@@ -437,21 +435,22 @@ def build_seq_rename_tab(parent, app=None):
     ttk.Radiobutton(mode_row, text="添加序号到前面", variable=var_mode,
                     value="prefix").pack(side=tk.LEFT, padx=(0, 18))
     var_dirs_only = tk.BooleanVar(value=False)
-    ttk.Checkbutton(mode_row, text="仅处理文件夹（忽略文件，只重命名子文件夹）",
+    ttk.Checkbutton(mode_row, text="仅处理文件夹",
                     variable=var_dirs_only, command=lambda: sync_dirs_mode()
-                    ).pack(side=tk.LEFT, padx=(12, 0))
+                    ).pack(side=tk.LEFT, padx=(4, 0))
 
     # 位数/起始序号放入独立子框架，避免父容器列宽被其他行的宽控件撑开导致错位
     frame_params = ui.Frame(parent)
-    frame_params.grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=5)
+    frame_params.grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=4)
     ui.Label(frame_params, text="序号位数：").grid(row=0, column=0, sticky="w", padx=8)
     box_w, var_width = make_num_box(frame_params, 3, 1, 10)
     box_w.grid(row=0, column=1, sticky="w")
     ui.Label(frame_params, text="起始序号：").grid(row=0, column=2, sticky="w", padx=(24, 0))
-    box_s, var_start = make_num_box(frame_params, 1, 1, 99999999, width=10)
+    box_s, var_start = make_num_box(frame_params, 1, 1, 99999999, width=6)
     box_s.grid(row=0, column=3, sticky="w")
-    ui.Label(frame_params, text="（位数 1-10；起始序号默认 1，可改成任意正整数）",
-              foreground=COLOR["text_secondary"]).grid(row=0, column=4, sticky="w", padx=8)
+    ui.Label(frame_params, text="位数 1-10",
+              foreground=COLOR["text_secondary"]).grid(
+                  row=0, column=4, sticky="w", padx=8)
 
     # ---- 预览 / 执行 ----
     frame_run = ui.Frame(parent)
@@ -466,8 +465,8 @@ def build_seq_rename_tab(parent, app=None):
     tree = ttk.Treeview(table_frame, columns=("old", "new"), show="headings", height=6)
     tree.heading("old", text="原文件（完整路径）")
     tree.heading("new", text="重命名后（新文件名）")
-    tree.column("old", width=640, minwidth=200, stretch=False)
-    tree.column("new", width=260, minwidth=120, stretch=False)
+    tree.column("old", width=440, minwidth=200, stretch=True)
+    tree.column("new", width=280, minwidth=160, stretch=False)
     v_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
     h_scroll = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=tree.xview)
     tree.config(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
@@ -478,7 +477,7 @@ def build_seq_rename_tab(parent, app=None):
     label_preview = ui.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
 
-    text_log, log = make_log_panel(parent, 9, colspan=4, title="执行日志", height=5)
+    text_log, log = make_log_panel(parent, 9, colspan=4, title="执行日志", height=2)
 
     # ---- 功能函数 ----
     def unit_name():
@@ -593,9 +592,8 @@ def build_trim_tab(parent, app=None):
     """⑨ 文件名删除：按位置删除文件名中的字符（可选文件/文件夹，从前/从后）"""
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(7, weight=1)
-    make_tip(parent, 0, "把文件或文件夹拖到下方列表（也可点按钮添加），按位置删除文件名中的字符："
-                        "可设置从第几位开始、删除几个字、从前还是从后。"
-                        "例如从第 1 位开始删 2 个字：'01_照片.jpg' → '照片.jpg'。",
+    make_tip(parent, 0, "按位置删除文件名中的字符：可设起始位、删除个数、从前/从后；"
+                        "例如 '01_照片.jpg' → '照片.jpg'。",
              colspan=4, autowrap=True)
 
     file_list = []      # 收集到的文件/文件夹完整路径（自然排序）
@@ -626,7 +624,7 @@ def build_trim_tab(parent, app=None):
     list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=6, pady=4)
     list_frame.grid_rowconfigure(0, weight=1)
     list_frame.grid_columnconfigure(0, weight=1)
-    listbox = ui.Listbox(list_frame, selectmode=tk.EXTENDED, height=6)
+    listbox = ui.Listbox(list_frame, selectmode=tk.EXTENDED, height=3)
     lb_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=listbox.yview)
     listbox.config(yscrollcommand=lb_scroll.set)
     listbox.grid(row=0, column=0, sticky="nsew")
@@ -675,8 +673,8 @@ def build_trim_tab(parent, app=None):
     tree = ttk.Treeview(table_frame, columns=("old", "new"), show="headings", height=6)
     tree.heading("old", text="原名（完整路径）")
     tree.heading("new", text="删除后（新文件名）")
-    tree.column("old", width=640, minwidth=200, stretch=False)
-    tree.column("new", width=260, minwidth=120, stretch=False)
+    tree.column("old", width=440, minwidth=200, stretch=True)
+    tree.column("new", width=280, minwidth=160, stretch=False)
     v_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
     h_scroll = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=tree.xview)
     tree.config(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
@@ -687,7 +685,7 @@ def build_trim_tab(parent, app=None):
     label_preview = ui.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
 
-    text_log, log = make_log_panel(parent, 9, colspan=4, title="执行日志", height=5)
+    text_log, log = make_log_panel(parent, 9, colspan=4, title="执行日志", height=2)
 
     # ---- 功能函数 ----
     def unit_name():

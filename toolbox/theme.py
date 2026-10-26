@@ -8,7 +8,7 @@
   · 窗口 / 卡片 / 按钮面全部纯白 #FFFFFF，仅用发丝描边区分层次
   · 主文字纯黑 #000000；悬停/表头用极浅灰 #F5F5F5 点缀（非灰底大块）
   · 官方蓝强调色 #3B8ED0；语义色成功/警告/错误（浅底可读档）
-  · 字号：导航 15 > 正文 14，层级清晰
+  · 字号：导航 19 > 正文 16，层级清晰
 """
 import tkinter as tk
 from tkinter import ttk
@@ -68,20 +68,20 @@ def font(size=12, weight="normal"):
 
 
 FONTS = {
-    "xs":          font(12),
-    "sm":          font(13),
-    "base":        font(14),
-    "md":          font(15),
-    "lg":          font(17),
-    "xl":          font(20, "bold"),
-    "title":       font(22, "bold"),
-    "nav_title":   font(17, "bold"),
-    "nav_group":   font(12, "bold"),  # 导航分组小标题
-    "nav":         font(15),          # 导航项：比内容正文(base 14)大一号
-    "nav_active":  font(15, "bold"),
-    "page_title":  font(20, "bold"),  # 内容页标题
-    "table_head":  font(13, "bold"),  # 表格表头
-    "log":         (FONT_MONO, 11),
+    "xs":          font(14),
+    "sm":          font(15),
+    "base":        font(16),
+    "md":          font(17),
+    "lg":          font(19),
+    "xl":          font(22, "bold"),
+    "title":       font(24, "bold"),
+    "nav_title":   font(19, "bold"),
+    "nav_group":   font(14, "bold"),  # 导航分组小标题
+    "nav":         font(19),          # 导航项：比内容正文(base 16)大四号
+    "nav_active":  font(19, "bold"),
+    "page_title":  font(22, "bold"),  # 内容页标题
+    "table_head":  font(15, "bold"),  # 表格表头
+    "log":         (FONT_MONO, 13),
 }
 
 # ============================================================
@@ -246,7 +246,7 @@ def apply_theme(root):
     style.configure("Treeview",
         background=COLOR["surface_bright"], foreground=COLOR["text"],
         fieldbackground=COLOR["surface_bright"], bordercolor=COLOR["border"],
-        rowheight=30, font=FONTS["base"])
+        rowheight=34, font=FONTS["base"])
     style.configure("Treeview.Heading",
         background=COLOR["surface_alt"], foreground=COLOR["text"],
         font=FONTS["table_head"], relief="flat", borderwidth=1,

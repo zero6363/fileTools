@@ -91,7 +91,12 @@ class Button(_CTkCompat, ctk.CTkButton):
         kw.pop("highlightbackground", None)
         kw.pop("highlightcolor", None)
         kw.pop("justify", None)
-        height = kw.pop("height", None)   # 旧 ttk 的 height(行) 忽略，交给 CTk 自适应
+        height = kw.pop("height", None)   # 旧 ttk 的 height(行) 交给 CTk 自适应
+        try:
+            height = int(height)
+        except (TypeError, ValueError):
+            height = 32
+        kw.setdefault("height", max(28, height))
 
         if bg is None:
             # 次级按钮（未显式指定底色，如「浏览...」「添加文件」）：
@@ -191,6 +196,7 @@ class Entry(_CTkCompat, ctk.CTkEntry):
         kw["fg_color"] = bg if bg is not None else COLOR["surface_bright"]
         kw.setdefault("border_color", COLOR["border_strong"])
         kw.setdefault("corner_radius", 6)
+        kw.setdefault("height", 32)
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
         w = _px(kw.pop("width", None))
@@ -228,7 +234,9 @@ class Checkbutton(_CTkCompat, ctk.CTkCheckBox):
         if w:
             target = max(target, w)
         kw["width"] = max(80, min(560, target))
-        kw.setdefault("height", 24)
+        kw.setdefault("height", 28)
+        kw.setdefault("checkbox_width", 20)
+        kw.setdefault("checkbox_height", 20)
         # ttk.Checkbutton 用 variable=；CTkCheckBox 同样用 variable=
         super().__init__(master, **kw)
 
@@ -259,9 +267,9 @@ class Radiobutton(_CTkCompat, ctk.CTkRadioButton):
             kw["font"] = FONTS["base"]
         target = _text_px(kw.get("text", ""), kw["font"]) + 48
         kw["width"] = max(80, min(620, target))
-        kw.setdefault("height", 24)
-        kw.setdefault("radiobutton_width", 18)
-        kw.setdefault("radiobutton_height", 18)
+        kw.setdefault("height", 28)
+        kw.setdefault("radiobutton_width", 20)
+        kw.setdefault("radiobutton_height", 20)
         super().__init__(master, **kw)
 
 
@@ -288,6 +296,7 @@ class Combobox(_CTkCompat, ctk.CTkComboBox):
         kw["dropdown_hover_color"] = COLOR["accent_soft"]
         kw["dropdown_text_color"] = COLOR["text"]
         kw.setdefault("corner_radius", 6)
+        kw.setdefault("height", 32)
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
         kw.setdefault("dropdown_font", FONTS["base"])   # 下拉列表选项字号
@@ -299,6 +308,26 @@ class Combobox(_CTkCompat, ctk.CTkComboBox):
             kw["width"] = w
         kw["state"] = state
         super().__init__(master, **kw)
+        self._shrink_dropdown_arrow()
+
+    def _shrink_dropdown_arrow(self, scale=0.55):
+        """CTkComboBox 默认箭头按高度 1/3 绘制，视觉上偏大；
+        这里包装绘制函数，把箭头缩到约 55%，中心位置保持不变。"""
+        try:
+            engine = self.draw_engine
+            original = engine.draw_dropdown_arrow
+            if getattr(original, "_toolbox_scaled", False):
+                return
+
+            def draw_dropdown_arrow(x_position, y_position, size):
+                return original(x_position, y_position,
+                                max(4.0, size * scale))
+
+            draw_dropdown_arrow._toolbox_scaled = True
+            engine.draw_dropdown_arrow = draw_dropdown_arrow
+            self._draw()
+        except Exception:
+            pass
 
 
 class Textbox(_CTkCompat, ctk.CTkTextbox):
@@ -342,7 +371,7 @@ class Textbox(_CTkCompat, ctk.CTkTextbox):
         # 旧 height 是「行数」，换算成像素
         h = kw.pop("height", None)
         if h:
-            kw["height"] = max(40, int(h) * 18)
+            kw["height"] = max(40, int(h) * 20)
         w = _px(kw.pop("width", None))
         if w:
             kw["width"] = w
