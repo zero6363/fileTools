@@ -757,8 +757,8 @@ def build_compress_tab(parent, app=None):
     tree.configure(yscrollcommand=vsb.set)
     tree.grid(row=0, column=0, sticky="nsew")
     vsb.grid(row=0, column=1, sticky="ns")
-    tree.tag_configure("done", foreground="#1a7f37")
-    tree.tag_configure("fail", foreground="#c62828")
+    tree.tag_configure("done", foreground=COLOR["success"])
+    tree.tag_configure("fail", foreground=COLOR["error"])
 
     # ---- 按钮行 ----
     frame_btn = ui.Frame(parent)

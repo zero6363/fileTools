@@ -2442,7 +2442,7 @@ def build_hash_tab(parent, app=None):
     btn_sel_none.pack(side=tk.LEFT, padx=(4, 0))
     lbl_sel = ui.Label(bar_list, text="", foreground=COLOR["text_secondary"])
     lbl_sel.pack(side=tk.LEFT, padx=(10, 0))
-    lbl_hint = ui.Label(bar_list, text="", foreground="#0b6b0b")
+    lbl_hint = ui.Label(bar_list, text="", foreground=COLOR["success"])
     lbl_hint.pack(side=tk.LEFT, padx=(12, 0))
 
     tree = ttk.Treeview(tree_frame, columns=[c[0] for c in COLS], show="headings",
@@ -2513,9 +2513,9 @@ def build_hash_tab(parent, app=None):
     btn_pg_last = ui.Button(page_inner, text="⏭", width=3)
     btn_pg_last.pack(side=tk.LEFT, padx=(2, 0))
 
-    tree.tag_configure("missing", foreground="#b00020")
-    tree.tag_configure("new", foreground="#0b6b0b")
-    tree.tag_configure("changed", foreground="#a35b00")
+    tree.tag_configure("missing", foreground=COLOR["error"])
+    tree.tag_configure("new", foreground=COLOR["success"])
+    tree.tag_configure("changed", foreground=COLOR["warning"])
 
     # ---------------- 日志（默认收起，把空间留给表格） ----------------
     log_wrap = ui.Frame(parent)
@@ -3863,8 +3863,8 @@ def build_hash_tab(parent, app=None):
         tv.configure(yscrollcommand=vsb.set)
         tv.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
-        tv.tag_configure("group", background="#eef3ff")
-        tv.tag_configure("child", foreground="#333333")
+        tv.tag_configure("group", background=COLOR["surface_alt"])
+        tv.tag_configure("child", foreground=COLOR["text"])
 
         bottom = ui.Frame(win)
         bottom.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
@@ -4139,12 +4139,12 @@ def build_hash_tab(parent, app=None):
             t.bind("<Button-5>", _wheel)
 
         for t in trees:
-            t.tag_configure("same", foreground="#8a8a8a")
-            t.tag_configure("diff", foreground="#a35b00")
-            t.tag_configure("upd", foreground="#7a4b00")
-            t.tag_configure("one", foreground="#b00020")
-            t.tag_configure("bad", foreground="#7a0000")
-            t.tag_configure("miss", foreground="#bbbbbb")
+            t.tag_configure("same", foreground=COLOR["text_muted"])
+            t.tag_configure("diff", foreground=COLOR["warning"])
+            t.tag_configure("upd", foreground=COLOR["warning"])
+            t.tag_configure("one", foreground=COLOR["error"])
+            t.tag_configure("bad", foreground=COLOR["error"])
+            t.tag_configure("miss", foreground=COLOR["text_secondary"])
 
         syncing = {"on": False}
 
@@ -4729,12 +4729,12 @@ def build_hash_tab(parent, app=None):
         hsb = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tv.xview)
         tv.configure(xscrollcommand=hsb.set)
         hsb.grid(row=1, column=0, sticky="ew")
-        tv.tag_configure("changed", foreground="#b00020")
-        tv.tag_configure("gone", foreground="#a35b00")
-        tv.tag_configure("bad", foreground="#7a0000")
+        tv.tag_configure("changed", foreground=COLOR["error"])
+        tv.tag_configure("gone", foreground=COLOR["warning"])
+        tv.tag_configure("bad", foreground=COLOR["error"])
         tv.tag_configure("nohash", foreground=COLOR["text_secondary"])
-        tv.tag_configure("ok", foreground="#0b6b0b")
-        tv.tag_configure("timediff", foreground="#b06000")
+        tv.tag_configure("ok", foreground=COLOR["success"])
+        tv.tag_configure("timediff", foreground=COLOR["warning"])
 
         bottom = ui.Frame(win)
         bottom.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
@@ -5164,7 +5164,7 @@ def build_hash_tab(parent, app=None):
         hsb2 = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tv.xview)
         tv.configure(xscrollcommand=hsb2.set)
         hsb2.grid(row=1, column=0, sticky="ew")
-        tv.tag_configure("gone", foreground="#b00020")
+        tv.tag_configure("gone", foreground=COLOR["error"])
 
         bar = ui.Frame(win)
         bar.grid(row=2, column=0, sticky="ew", padx=10, pady=8)

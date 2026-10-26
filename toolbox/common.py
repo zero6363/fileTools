@@ -13,7 +13,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS
 
-APP_VERSION = "1.33"
+APP_VERSION = "1.34"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -375,7 +375,7 @@ def make_log_panel(parent, row, colspan=3, title="运行日志", height=12):
     frame.grid_columnconfigure(0, weight=1)
     text = ui.Textbox(frame, height=height, state="disabled",
                       font=FONTS["log"],
-                      background=COLOR["surface"], foreground=COLOR["text"])
+                      background=COLOR["surface_inset"], foreground=COLOR["text"])
     text.grid(row=0, column=0, sticky="nsew")
     return text, make_logger(text)
 

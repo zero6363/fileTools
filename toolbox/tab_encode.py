@@ -1631,7 +1631,7 @@ def build_encode_tab(parent, app=None):
     ttk.Checkbutton(move_line, text="变大 → oversize/", variable=var_move_grow).pack(side=tk.LEFT)
 
     # 第 4 行：编码器状态（一行小字）
-    lbl_enc = ui.Label(settings_box, text="编码器：检测中…", foreground="#1a6b1a")
+    lbl_enc = ui.Label(settings_box, text="编码器：检测中…", foreground=COLOR["success"])
     lbl_enc.grid(row=4, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
 
     # ---------------- 文件列表 ----------------
@@ -1851,8 +1851,8 @@ def build_encode_tab(parent, app=None):
         ff, fp = locate_ffmpeg(clean_path(var_ff.get()))
         state["ffmpeg"], state["ffprobe"] = ff, fp
         if not ff:
-            lbl_ff.config(text="✗ 未找到 ffmpeg", foreground="#b00020")
-            lbl_enc.config(text="编码器：未检测（先配置 ffmpeg）", foreground="#b00020")
+            lbl_ff.config(text="✗ 未找到 ffmpeg", foreground=COLOR["error"])
+            lbl_enc.config(text="编码器：未检测（先配置 ffmpeg）", foreground=COLOR["error"])
             log("未找到 ffmpeg：请把 ffmpeg.exe 放到程序目录 / bin\\ffmpeg，"
                 "或点『浏览…』手动指定（选 ffmpeg.exe 即可，同目录需有 ffprobe.exe）。")
             if not state["warned_missing"]:
@@ -1871,7 +1871,7 @@ def build_encode_tab(parent, app=None):
         var_ff.set(ff)
         ver = ffmpeg_version(ff)
         lbl_ff.config(text=("✓ " + ver.replace("ffmpeg version ", "v").split(" Copyright")[0][:46]
-                            if ver else "✓ 已找到 ffmpeg"), foreground="#1a6b1a")
+                            if ver else "✓ 已找到 ffmpeg"), foreground=COLOR["success"])
         lbl_enc.config(text="编码器：检测中…", foreground=COLOR["text_secondary"])
         log(f"FFmpeg：{ff}")
         if ver:
@@ -1885,7 +1885,7 @@ def build_encode_tab(parent, app=None):
             except Exception:
                 tb = traceback.format_exc()
                 run_ui(lambda: log("编码器检测失败：\n" + tb))
-                run_ui(lambda: lbl_enc.config(text="编码器：检测失败", foreground="#b00020"))
+                run_ui(lambda: lbl_enc.config(text="编码器：检测失败", foreground=COLOR["error"]))
                 return
             run_ui(lambda: apply_encoders(enc))
 
@@ -1901,7 +1901,7 @@ def build_encode_tab(parent, app=None):
             if e and not is_hardware(e):
                 any_sw = True
         lbl_enc.config(text="编码器：" + "；".join(parts),
-                       foreground="#b35c00" if any_sw else "#1a6b1a")
+                       foreground=COLOR["warning"] if any_sw else COLOR["success"])
         for codec in (CODEC_AV1, CODEC_HEVC):
             e = enc.get(codec)
             if not e:

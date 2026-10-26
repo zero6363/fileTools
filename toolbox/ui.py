@@ -18,7 +18,7 @@ import customtkinter as ctk
 from .theme import COLOR, FONTS
 
 # CustomTkinter 默认外观：浅色模式（与现有设计系统一致）
-ctk.set_appearance_mode("light")
+ctk.set_appearance_mode("dark")
 
 # 字符宽度 → 像素 的近似换算（CTk 的 width/height 以像素计，旧 ttk 以字符计）
 _CHAR_PX = 7
@@ -34,7 +34,7 @@ def _px(n, scale=_CHAR_PX, minimum=0):
 
 def init_appearance():
     """显式初始化外观（在创建任何控件前调用一次即可）。"""
-    ctk.set_appearance_mode("light")
+    ctk.set_appearance_mode("dark")
 
 
 # ============================================================
@@ -189,7 +189,7 @@ class Checkbutton(_CTkCompat, ctk.CTkCheckBox):
         # CTkCheckBox 的 fg_color 是勾选框填充色，不允许 transparent；
         # 未显式指定底色时统一用强调色（与全站设计系统一致）
         kw["fg_color"] = bg if bg is not None else COLOR["accent"]
-        kw["border_color"] = COLOR["border"]
+        kw["border_color"] = COLOR["border_strong"]
         kw["checkmark_color"] = COLOR["text_on_accent"]
         kw["hover_color"] = COLOR["accent_soft"]
         if kw.get("font") is None:
@@ -217,8 +217,8 @@ class Combobox(_CTkCompat, ctk.CTkComboBox):
         if bg is not None:
             kw["fg_color"] = bg
         kw["border_color"] = COLOR["border"]
-        kw["button_color"] = COLOR["surface_alt"]
-        kw["button_hover_color"] = COLOR["border_strong"]
+        kw["button_color"] = COLOR["border_strong"]
+        kw["button_hover_color"] = COLOR["text_muted"]
         kw["dropdown_fg_color"] = COLOR["surface"]
         kw["dropdown_hover_color"] = COLOR["accent_soft"]
         kw["dropdown_text_color"] = COLOR["text"]
@@ -239,7 +239,7 @@ class Textbox(_CTkCompat, ctk.CTkTextbox):
     """替代 tkinter.scrolledtext.ScrolledText：自带滚动条。"""
     def __init__(self, master=None, **kw):
         fg = kw.pop("foreground", kw.pop("fg", COLOR["text"]))
-        bg = kw.pop("background", kw.pop("bg", COLOR["surface"]))
+        bg = kw.pop("background", kw.pop("bg", COLOR["surface_inset"]))
         kw.pop("insertbackground", None)
         kw.pop("insertofftime", None)
         kw.pop("insertontime", None)
