@@ -11,12 +11,14 @@
     翻译成 CTk 对应参数，调用方无需逐行改写。
   · 颜色 / 字体统一取自 theme 令牌，保证全应用字号、配色一致。
 """
+import ctypes
+import re
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
 import customtkinter as ctk
-from .theme import COLOR, FONTS
+from .theme import COLOR, FONTS, ttk_font, ui_scale
 
 # CustomTkinter 默认外观：浅色模式（与现有设计系统一致）
 ctk.set_appearance_mode("light")
@@ -34,19 +36,38 @@ def _px(n, scale=_CHAR_PX, minimum=0):
     return max(minimum, n * scale)
 
 
+def _design_font(font_desc=None):
+    """把 (家族, 字号[, 字重]) 变成「设计像素」字体对象。
+
+    FONTS 里的字号按像素理解（CTk 内部就是 -abs(size)），而 tkfont 会把
+    正数当点（1pt ≈ 1.33px），直接拿去量宽会偏大三成；再用正数字号还会
+    被 Tk 按 DPI 二次放大，高分屏上量出来的宽度能差一倍。
+    """
+    font_desc = font_desc or FONTS["base"]
+    key = tuple(font_desc) if isinstance(font_desc, (tuple, list)) else None
+    if key is None:
+        return None
+    try:
+        family, size = key[0], key[1]
+        px = -max(1, int(round(abs(float(size)))))
+        spec = (family, px) + tuple(key[2:])
+    except (IndexError, TypeError, ValueError):
+        return None
+    f = _FONT_CACHE.get(spec)
+    if f is None:
+        f = tkfont.Font(font=spec)
+        _FONT_CACHE[spec] = f
+    return f
+
+
 def _text_px(text, font_desc=None):
-    """测量文本像素宽度；失败时按字符数估算（中文按 14px/字）。"""
+    """测量文本的设计像素宽度；失败时按字符数估算（中文按 14px/字）。"""
     text = "" if text is None else str(text)
     if not text:
         return 0
-    font_desc = font_desc or FONTS["base"]
     try:
-        key = tuple(font_desc) if isinstance(font_desc, (tuple, list)) else None
-        if key is not None:
-            f = _FONT_CACHE.get(key)
-            if f is None:
-                f = tkfont.Font(font=key)
-                _FONT_CACHE[key] = f
+        f = _design_font(font_desc)
+        if f is not None:
             return f.measure(text)
     except Exception:
         pass
@@ -200,14 +221,17 @@ class Label(_CTkCompat, ctk.CTkLabel):
             try:
                 if not self.winfo_exists():
                     return
+                # winfo_* 是真实像素，而 wraplength 按设计像素配置
+                # （CTk 会再乘缩放），高 DPI 下要先除回去，否则永远不折行
+                scale = max(1.0, ui_scale())
                 if self._wrap_fixed:
                     avail = self._wrap_fixed
                 else:
                     master = self.master
-                    mw = master.winfo_width()
+                    mw = master.winfo_width() / scale
                     if mw <= 1:
                         return
-                    avail = mw - max(0, self.winfo_x()) - 12
+                    avail = mw - max(0, self.winfo_x() / scale) - 12
                 if self._wrap_cap:
                     avail = min(avail, self._wrap_cap)
                 avail = max(80, int(avail))
@@ -477,10 +501,16 @@ class Textbox(_CTkCompat, ctk.CTkTextbox):
         kw.setdefault("corner_radius", 6)
         if kw.get("font") is None:
             kw["font"] = FONTS["log"]
-        # 旧 height 是「行数」，换算成像素
+        # 旧 height 是「行数」，按字体实际行高换算成像素（写死 20px 会在
+        # 16 号字下把最后一行切掉一半，长文本弹窗看着像被裁了）
         h = kw.pop("height", None)
         if h:
-            kw["height"] = max(40, int(h) * 20)
+            try:
+                _f = _design_font(kw.get("font"))
+                line = int(_f.metrics("linespace")) if _f else 20
+            except Exception:
+                line = 20
+            kw["height"] = max(40, int(h) * max(18, line) + 16)
         w = _px(kw.pop("width", None))
         if w:
             kw["width"] = w
@@ -688,13 +718,126 @@ def virtual_screen_bounds():
     return 0, 0, 1920, 1080
 
 
-def center_window(win, parent=None, width=None, height=None):
-    """把 win 居中到 parent 所在窗口，并保证整窗落在屏幕内。
+# ------------------------------------------------------------
+# 显示器工作区（多显示器 / 任务栏 / 负坐标）
+# ------------------------------------------------------------
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
-    · 尺寸优先用调用方给的 width/height，否则取「布局请求尺寸」与「当前尺寸」
-      的较大值（CTk 控件高度延迟生效，只用 winfo_height 会算出偏小的框，
-      导致窗口下半截跑到屏幕外）；
-    · 没有任何 parent（或 parent 还没显示）时退回屏幕居中。
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", _RECT),
+                ("rcWork", _RECT), ("dwFlags", ctypes.c_ulong)]
+
+
+def monitor_work_areas():
+    """所有显示器的工作区（物理像素，已排除任务栏）：[(x, y, w, h), ...]。
+
+    多显示器可能是负坐标（副屏在左边 / 上方）。拿不到时退回虚拟桌面。
+    """
+    areas = []
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+
+        def _cb(hmon, hdc, _rect, _data):
+            info = _MONITORINFO()
+            info.cbSize = ctypes.sizeof(_MONITORINFO)
+            if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+                r = info.rcWork
+                if r.right > r.left and r.bottom > r.top:
+                    areas.append((int(r.left), int(r.top),
+                                  int(r.right - r.left), int(r.bottom - r.top)))
+            return 1
+
+        proc = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
+                                  ctypes.c_void_p, ctypes.c_void_p)(_cb)
+        user32.EnumDisplayMonitors(0, 0, proc, 0)
+    except Exception:
+        areas = []
+    if not areas:
+        areas = [virtual_screen_bounds()]
+    return areas
+
+
+def _intersect(a, b):
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x1, y1 = max(ax, bx), max(ay, by)
+    x2, y2 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    if x2 <= x1 or y2 <= y1:
+        return 0
+    return (x2 - x1) * (y2 - y1)
+
+
+def monitor_work_area(x=None, y=None, rect=None):
+    """包含指定点（或与指定矩形重叠最多）的显示器工作区。
+
+    · rect=(x, y, w, h)：取重叠面积最大的一块，完全不重叠时取最近的一块；
+    · 只给点：取包含该点的显示器，落在屏幕间隙里时取最近的一块；
+    · 都不给：主显示器。
+    弹窗据此定位，副屏上的窗口不会把弹窗送回主屏中央。
+    """
+    areas = monitor_work_areas()
+    if rect is not None:
+        best, best_score = None, -1
+        for area in areas:
+            score = _intersect(area, rect)
+            if score > best_score:
+                best, best_score = area, score
+        if best is not None and best_score > 0:
+            return best
+        cx = rect[0] + rect[2] // 2
+        cy = rect[1] + rect[3] // 2
+        x, y = cx, cy
+    if x is None or y is None:
+        return areas[0]
+    for area in areas:
+        ax, ay, aw, ah = area
+        if ax <= x < ax + aw and ay <= y < ay + ah:
+            return area
+    # 落在显示器之间的空隙（或已拔掉的屏幕）：取中心最近的一块
+    def _dist(area):
+        ax, ay, aw, ah = area
+        return (ax + aw / 2 - x) ** 2 + (ay + ah / 2 - y) ** 2
+    return min(areas, key=_dist)
+
+
+def set_geometry_px(win, w, h, x=None, y=None):
+    """按**物理像素**设置窗口几何（绕过 CTk 的窗口缩放）。
+
+    CTk 的 geometry() 会把宽高再乘一次 window_scaling，而这里拿到的
+    都是 winfo_* 量出来的真实像素；高分屏上直接传会变成双倍大小。
+    位置同理用真实像素，避免副屏 / 负坐标被缩放后跑偏。
+    """
+    try:
+        w = max(1, int(round(w)))
+        h = max(1, int(round(h)))
+    except (TypeError, ValueError):
+        return False
+    if x is None or y is None:
+        spec = f"{w}x{h}"
+    else:
+        spec = f"{w}x{h}+{int(round(x))}+{int(round(y))}"
+    try:
+        win.tk.call("wm", "geometry", win._w, spec)
+        return True
+    except Exception:
+        pass
+    try:
+        win.wm_geometry(spec)       # wm_geometry 不经过 CTk 的窗口缩放
+        return True
+    except Exception:
+        return False
+
+
+def center_window(win, parent=None, width=None, height=None):
+    """把 win 居中到 parent 所在窗口，并保证整窗落在同一块显示器内。
+
+    · 目标显示器 = parent 所在屏（不是主屏、也不是整个虚拟桌面的中点）；
+    · 尺寸沿用 winfo_* 的真实像素；窗口比工作区还大时缩到工作区大小；
+    · 定位后夹进该屏工作区（已排除任务栏），多屏负坐标也不会被拽回主屏。
     返回实际使用的 (x, y, w, h)。
     """
     try:
@@ -726,6 +869,18 @@ def center_window(win, parent=None, width=None, height=None):
             cur_h = max(req_h, int(win.winfo_height()))
         except Exception:
             pass
+    else:
+        # 还没映射时 winfo_width 是默认的 200x200，靠不住；调用方用
+        # .geometry("1420x540") 指定的尺寸此时只有 wm 知道，取它兜底，
+        # 否则「按内容自适应」的表格大弹窗会被压成 200x200。
+        try:
+            scale = max(1.0, ui_scale())
+        except Exception:
+            scale = 1.0
+        want = getattr(win, "_requested_size", None)
+        if want:
+            cur_w = max(cur_w, int(round(want[0] * scale)))
+            cur_h = max(cur_h, int(round(want[1] * scale)))
     w = max(w, cur_w)
     h = max(h, cur_h)
 
@@ -735,28 +890,37 @@ def center_window(win, parent=None, width=None, height=None):
     except Exception:
         ref = None
 
-    placed = False
+    ref_rect = None
     if ref is not None and ref is not win:
         try:
             if ref.winfo_viewable() and ref.winfo_width() > 1:
                 rx, ry = ref.winfo_rootx(), ref.winfo_rooty()
-                x = rx + (ref.winfo_width() - w) // 2
-                y = ry + (ref.winfo_height() - h) // 2
-                placed = True
+                ref_rect = (rx, ry, ref.winfo_width(), ref.winfo_height())
         except Exception:
-            placed = False
+            ref_rect = None
 
-    vx, vy, vw, vh = virtual_screen_bounds()
-    if not placed:
-        x = vx + (vw - w) // 2
-        y = vy + (vh - h) // 2
-    # 窗口比屏幕还大时贴左上角，否则夹到屏幕内（避免标题栏跑到屏幕外）
-    x = vx if w >= vw else max(vx, min(vx + vw - w, x))
-    y = vy if h >= vh else max(vy, min(vy + vh - h, y))
-    try:
-        win.geometry(f"{w}x{h}+{x}+{y}")
-    except Exception:
-        pass
+    if ref_rect is not None:
+        bounds = monitor_work_area(rect=ref_rect)
+    else:
+        try:
+            rx, ry = win.winfo_rootx(), win.winfo_rooty()
+        except Exception:
+            rx, ry = 0, 0
+        bounds = monitor_work_area(rect=(rx, ry, w, h))
+
+    bx, by, bw, bh = bounds
+    # 窗口比工作区还大：先缩到能放下（否则标题栏会跑到屏幕外点不到）
+    w = min(w, bw)
+    h = min(h, bh)
+    if ref_rect is not None:
+        x = ref_rect[0] + (ref_rect[2] - w) // 2
+        y = ref_rect[1] + (ref_rect[3] - h) // 2
+    else:
+        x = bx + (bw - w) // 2
+        y = by + (bh - h) // 2
+    x = bx if w >= bw else max(bx, min(bx + bw - w, x))
+    y = by if h >= bh else max(by, min(by + bh - h, y))
+    set_geometry_px(win, w, h, x, y)
     return x, y, w, h
 
 
@@ -788,11 +952,24 @@ class Toplevel(_CTkCompat, ctk.CTkToplevel):
             kw["fg_color"] = bg
         kw.setdefault("fg_color", COLOR["bg"])
         self._autocenter_done = False
+        self._requested_size = None
         super().__init__(master, **kw)
         try:
             self.bind("<Map>", self._on_first_map, add="+")
         except Exception:
             pass
+
+    def geometry(self, spec=None):
+        """记住调用方指定的尺寸（设计像素）：窗口还没映射时 winfo 不可信，
+        center_window 要靠它算真实大小。"""
+        if spec is not None:
+            try:
+                m = re.match(r"^(\d+)x(\d+)", str(spec))
+                if m:
+                    self._requested_size = (int(m.group(1)), int(m.group(2)))
+            except Exception:
+                pass
+        return super().geometry(spec)
 
     def _on_first_map(self, _event=None):
         if self._autocenter_done or getattr(self, "_no_autocenter", False):
@@ -817,7 +994,8 @@ class Listbox(tk.Listbox):
     """带统一主题的 Listbox（CTk 没有等价件，这里补齐字体 / 选中色 / 描边）。"""
 
     def __init__(self, master=None, **kw):
-        kw.setdefault("font", FONTS["base"])
+        # 原生控件用像素字号：点数字号会被 Tk 按 DPI 二次放大
+        kw.setdefault("font", ttk_font("base"))
         kw.setdefault("background", COLOR["surface_bright"])
         kw.setdefault("foreground", COLOR["text"])
         kw.setdefault("selectbackground", COLOR["accent_soft"])
@@ -852,6 +1030,7 @@ __all__ = [
     "Button", "StepButton", "Label", "Frame", "Entry", "Checkbutton", "Radiobutton",
     "Combobox", "Textbox", "Listbox", "ScrollableFrame", "Toplevel", "CTk",
     "ProgressBar", "Progressbar", "Scrollbar", "Slider", "Scale", "make_card",
-    "center_window", "virtual_screen_bounds",
+    "center_window", "virtual_screen_bounds", "monitor_work_area",
+    "monitor_work_areas", "set_geometry_px",
     "Treeview", "Style", "Separator", "Notebook", "init_appearance", "ctk",
 ]

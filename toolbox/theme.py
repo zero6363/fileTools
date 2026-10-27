@@ -10,8 +10,9 @@
   · 官方蓝强调色 #3B8ED0；语义色成功/警告/错误（浅底可读档）
   · 字号：导航 19 > 正文 16，层级清晰
 """
+import os
+import sys
 import tkinter as tk
-from tkinter import font as tkfont
 from tkinter import ttk
 
 # ============================================================
@@ -86,19 +87,88 @@ FONTS = {
     "log":         (FONT_MONO, 13),
 }
 
-# 96 DPI 下 FONTS["table"] 的行高（像素）。高分屏 / 系统缩放时字体按 DPI
-# 变大，而表格列宽、行高都是固定像素，必须按同一比例放大，否则文字会被
-# 列边界裁掉。用实际字体行高算比例，比直接读 DPI 更贴近真实渲染尺寸。
-_TABLE_BASE_LINE = 25
+# ------------------------------------------------------------
+# 全局缩放（DPI）
+# ------------------------------------------------------------
+_SCALE_CACHE = None
+
+
+def dpi_scale():
+    """系统缩放系数：96 DPI = 1.0，4K@200% = 2.0。
+
+    为什么要自己算一个统一的系数：
+      · 进程按「系统 DPI 感知」启动（main.py 里 SetProcessDpiAwareness(1)），
+        所以整机只有一个缩放比例，不需要逐屏换算；
+      · CTk 的控件尺寸和字号都以「设计像素」计，启动时把 widget/window
+        scaling 设成这个系数，控件与窗口会一起等比放大；
+      · ttk / tk 原生控件（Treeview、Listbox、Menu…）没有这套机制，
+        点数字号会被 Tk 按 DPI 再放大一次 —— 于是高分屏上出现
+        「表格字比按钮大一倍」。这类控件统一用 ttk_font() 换成像素字号。
+
+    可用环境变量 TOOLBOX_UI_SCALE=1.5 强制指定（高分屏显示异常时的兜底）。
+    """
+    global _SCALE_CACHE
+    if _SCALE_CACHE is not None:
+        return _SCALE_CACHE
+    value = None
+    env = (os.environ.get("TOOLBOX_UI_SCALE") or "").strip()
+    if env:
+        try:
+            value = float(env)
+        except ValueError:
+            value = None
+    if value is None:
+        try:
+            root = tk._default_root
+            if root is not None:
+                # 1 英寸有多少像素（已含系统缩放）
+                value = float(root.winfo_fpixels("1i")) / 96.0
+        except Exception:
+            value = None
+    if value is None and sys.platform.startswith("win"):
+        try:
+            import ctypes
+            value = float(ctypes.windll.user32.GetDpiForSystem()) / 96.0
+        except Exception:
+            value = None
+    if not value or value <= 0:
+        value = 1.0
+    _SCALE_CACHE = max(1.0, min(3.0, value))
+    return _SCALE_CACHE
+
+
+def reset_dpi_scale():
+    """清掉缩放缓存（换了缩放设置 / 测试时用）。"""
+    global _SCALE_CACHE
+    _SCALE_CACHE = None
 
 
 def ui_scale():
-    """当前界面的实际缩放系数（96 DPI = 1.0）。"""
+    """当前界面缩放系数（96 DPI = 1.0）。表格行高、列宽、弹窗留白都按它放大。"""
+    return dpi_scale()
+
+
+def ttk_font(key="base"):
+    """把 FONTS 令牌换算成 ttk/tk 可用的**像素字号**（负数字号 = 像素）。
+
+    换算时保留原来点数字号的视觉大小（1pt = 96/72 px），再乘系统缩放；
+    这样 ttk 控件和 CTk 控件的字不会被 DPI 重复放大。
+    """
+    desc = FONTS.get(key)
+    if not isinstance(desc, (tuple, list)) or len(desc) < 2:
+        desc = FONTS["base"]
+    family, size = desc[0], desc[1]
     try:
-        line = tkfont.Font(font=FONTS["table"]).metrics("linespace")
-        return max(1.0, min(3.0, float(line) / _TABLE_BASE_LINE))
-    except Exception:
-        return 1.0
+        px = int(round(float(size) * 96.0 / 72.0 * dpi_scale()))
+    except (TypeError, ValueError):
+        px = 16
+    return (family, -max(1, px)) + tuple(desc[2:])
+
+
+def option_font(key="base"):
+    """option database 用的 Tcl 字体描述：字体名带空格要加花括号。"""
+    desc = ttk_font(key)
+    return " ".join([f"{{{desc[0]}}}"] + [str(x) for x in desc[1:]])
 
 # ============================================================
 # 3. 间距 / 圆角（Spacing / Radius，4px 基准）
@@ -123,13 +193,13 @@ def apply_theme(root):
     style.configure(".",
         background=COLOR["bg"],
         foreground=COLOR["text"],
-        font=FONTS["base"])
+        font=ttk_font("base"))
 
     # 原生 tk 控件（Listbox / Text / Menu）的默认字体与配色：
     # 这些控件没有 CTk 等价件，用 option database 统一，避免出现系统默认字体。
-    # Tcl 字体描述里带空格的字体名必须用花括号包起来，
-    # 否则 "Microsoft YaHei 14" 会被拆成 family=Microsoft, size=YaHei。
-    _base_font = f"{{{FONT_FAMILY}}} {FONTS['base'][1]}"
+    # 字号用「像素字号」并已乘上系统缩放：点数字号会被 Tk 按 DPI 二次放大，
+    # 高分屏上会明显比 CTk 控件里的字大一截。
+    _base_font = option_font("base")
     for pattern, value in (
         ("*Font", _base_font),
         ("*Listbox.font", _base_font),
@@ -171,21 +241,21 @@ def apply_theme(root):
     style.configure("Nav.TFrame", background=COLOR["nav_bg"])
 
     style.configure("TLabel",
-        background=COLOR["bg"], foreground=COLOR["text"], font=FONTS["base"])
+        background=COLOR["bg"], foreground=COLOR["text"], font=ttk_font("base"))
 
     style.configure("TLabelframe",
         background=COLOR["bg"], foreground=COLOR["text_secondary"],
         bordercolor=COLOR["border"], relief="groove", borderwidth=1)
     style.configure("TLabelframe.Label",
         background=COLOR["bg"], foreground=COLOR["text_secondary"],
-        font=FONTS["sm"], padding=(6, 0))
+        font=ttk_font("sm"), padding=(6, 0))
 
     # 次要按钮（如「浏览…」）
     style.configure("TButton",
         background=COLOR["surface_bright"], foreground=COLOR["text"],
         bordercolor=COLOR["border_strong"], darkcolor=COLOR["surface_bright"],
         lightcolor=COLOR["surface_bright"], relief="solid", borderwidth=1,
-        font=FONTS["base"], padding=(10, 4))
+        font=ttk_font("base"), padding=(10, 4))
     style.map("TButton",
         background=[("active", COLOR["surface_alt"]), ("pressed", COLOR["border"])],
         foreground=[("disabled", COLOR["text_muted"])])
@@ -195,7 +265,7 @@ def apply_theme(root):
         fieldbackground=COLOR["surface_bright"], foreground=COLOR["text"],
         bordercolor=COLOR["border_strong"], lightcolor=COLOR["surface_bright"],
         insertcolor=COLOR["text"], relief="solid", borderwidth=1,
-        font=FONTS["base"], padding=(8, 4))
+        font=ttk_font("base"), padding=(8, 4))
     style.map("TEntry",
         bordercolor=[("focus", COLOR["accent"])],
         fieldbackground=[("readonly", COLOR["surface_inset"])])
@@ -203,7 +273,7 @@ def apply_theme(root):
     style.configure("TCombobox",
         fieldbackground=COLOR["surface_bright"], foreground=COLOR["text"],
         arrowcolor=COLOR["text"], bordercolor=COLOR["border_strong"],
-        relief="solid", borderwidth=1, font=FONTS["base"], padding=(8, 4))
+        relief="solid", borderwidth=1, font=ttk_font("base"), padding=(8, 4))
     style.map("TCombobox",
         fieldbackground=[("readonly", COLOR["surface_bright"])],
         foreground=[("disabled", COLOR["text_muted"])])
@@ -212,19 +282,19 @@ def apply_theme(root):
         fieldbackground=COLOR["surface_bright"], foreground=COLOR["text"],
         arrowcolor=COLOR["text"], bordercolor=COLOR["border_strong"],
         background=COLOR["surface"], relief="solid", borderwidth=1,
-        font=FONTS["base"], padding=(6, 3))
+        font=ttk_font("base"), padding=(6, 3))
     style.map("TSpinbox",
         bordercolor=[("focus", COLOR["accent"])],
         foreground=[("disabled", COLOR["text_muted"])])
 
     # 勾选框 / 单选框
     style.configure("TCheckbutton",
-        background=COLOR["bg"], foreground=COLOR["text"], font=FONTS["base"],
+        background=COLOR["bg"], foreground=COLOR["text"], font=ttk_font("base"),
         padding=(2, 2), focuscolor=COLOR["bg"])
     style.map("TCheckbutton", background=[("active", COLOR["bg"])])
 
     style.configure("TRadiobutton",
-        background=COLOR["bg"], foreground=COLOR["text"], font=FONTS["base"],
+        background=COLOR["bg"], foreground=COLOR["text"], font=ttk_font("base"),
         padding=(2, 2), indicatorcolor=COLOR["surface_bright"],
         focuscolor=COLOR["bg"])
     style.map("TRadiobutton",
@@ -244,7 +314,7 @@ def apply_theme(root):
     style.configure("TMenubutton",
         background=COLOR["surface_bright"], foreground=COLOR["text"],
         bordercolor=COLOR["border_strong"], relief="solid", borderwidth=1,
-        font=FONTS["base"], padding=(8, 4))
+        font=ttk_font("base"), padding=(8, 4))
     style.map("TMenubutton",
         background=[("active", COLOR["surface_alt"])])
     style.configure("TSeparator", background=COLOR["border"])
@@ -253,13 +323,13 @@ def apply_theme(root):
     style.configure("TNotebook", background=COLOR["bg"], bordercolor=COLOR["border"])
     style.configure("TNotebook.Tab",
         background=COLOR["surface"], foreground=COLOR["text_secondary"],
-        padding=(12, 6), font=FONTS["base"])
+        padding=(12, 6), font=ttk_font("base"))
     style.map("TNotebook.Tab",
         background=[("selected", COLOR["accent"])],
         foreground=[("selected", COLOR["text_on_accent"])])
 
     # 表格（硬盘哈希扫描等）
-    # 行高 / 表头内边距跟着字体缩放：高分屏下 14 号字实际行高会超过 30px，
+    # 行高 / 表头内边距跟着系统缩放走：高分屏下同号字实际像素更高，
     # 固定行高会把文字上下裁掉。
     _scale = ui_scale()
     _row_h = max(30, int(round(30 * _scale)))
@@ -268,10 +338,10 @@ def apply_theme(root):
     style.configure("Treeview",
         background=COLOR["surface_bright"], foreground=COLOR["text"],
         fieldbackground=COLOR["surface_bright"], bordercolor=COLOR["border"],
-        rowheight=_row_h, font=FONTS["table"])
+        rowheight=_row_h, font=ttk_font("table"))
     style.configure("Treeview.Heading",
         background=COLOR["surface_alt"], foreground=COLOR["text"],
-        font=FONTS["table_head"], relief="flat", borderwidth=1,
+        font=ttk_font("table_head"), relief="flat", borderwidth=1,
         padding=_head_pad)
     style.map("Treeview",
         background=[("selected", COLOR["accent"])],

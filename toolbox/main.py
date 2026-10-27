@@ -71,7 +71,7 @@ from tkinter import messagebox
 from .common import (APP_TITLE, _module_available, install_drop_support,
                      load_window_config, restore_window_geometry,
                      save_window_geometry)
-from .theme import apply_theme, COLOR, FONTS
+from .theme import apply_theme, COLOR, FONTS, ui_scale
 from . import ui, ui as ttk
 
 # 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）
@@ -110,10 +110,10 @@ class ToolboxApp:
     def __init__(self, root):
         self.root = root
         root.title(APP_TITLE)
-        # 恢复上次窗口位置与大小；无记录或越界时用默认
+        # 恢复上次窗口位置与大小；无记录或整块落在已拔掉的显示器上时用默认
         if not restore_window_geometry(root):
-            root.geometry("1280x900")
-        root.minsize(1080, 720)
+            self._place_default_window()
+        self._fit_min_size()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # 注入统一设计系统（现代浅色主题）：须在创建任何 ttk 控件前调用
@@ -349,10 +349,40 @@ class ToolboxApp:
         else:
             self.status.config(text="就绪 —— 所有依赖已安装")
 
+    # 默认窗口尺寸（设计像素；实际大小按显示器工作区收放）
+    DEFAULT_SIZE = (1280, 900)
+
+    def _place_default_window(self):
+        """首次启动 / 配置失效时：按当前显示器工作区取合适尺寸并居中。
+
+        4K 上 1280x900 只占屏幕一角，小屏上又可能超出 —— 统一按工作区的
+        比例收放，再居中到主屏（有parent时按触发窗口所在屏）。
+        """
+        scale = max(1.0, ui_scale())
+        _x, _y, work_w, work_h = ui.monitor_work_area()
+        want_w = min(self.DEFAULT_SIZE[0], max(720, int((work_w - 80) / scale)))
+        want_h = min(self.DEFAULT_SIZE[1], max(480, int((work_h - 96) / scale)))
+        # 小屏 + 高缩放同时出现时，上面的下限可能又把窗口顶出屏幕，再兜一次底
+        want_w = min(want_w, max(480, int(work_w / scale)))
+        want_h = min(want_h, max(360, int(work_h / scale)))
+        ui.center_window(self.root, width=want_w * scale, height=want_h * scale)
+
+    def _fit_min_size(self):
+        """最小尺寸跟着屏幕走：小屏 / 高缩放下不把窗口卡死在屏幕外。"""
+        scale = max(1.0, ui_scale())
+        _x, _y, work_w, work_h = ui.monitor_work_area()
+        self.root.minsize(min(1080, int(work_w / scale * 0.82)),
+                          min(720, int(work_h / scale * 0.68)))
+
     def _save_window(self):
         """保存窗口几何 + 左侧菜单宽度（拖拽/双击调整后立即持久化）"""
         try:
-            width = getattr(self, "_nav_applied_width", None) or self.nav.winfo_width()
+            width = getattr(self, "_nav_applied_width", None)
+            if not width:
+                try:
+                    width = int(float(self.nav.cget("width")))
+                except Exception:
+                    width = int(self.nav.winfo_width() / max(1.0, ui_scale()))
             save_window_geometry(self.root, extra={"nav_width": width})
         except Exception:
             pass
@@ -366,7 +396,8 @@ class ToolboxApp:
             self._nav_resize_job = None
         self._nav_resizing = True
         self._nav_resize_x0 = e.x_root
-        self._nav_resize_w0 = self.nav.winfo_width()
+        # winfo_width 是真实像素；导航宽度按设计像素配置（CTk 会再乘缩放）
+        self._nav_resize_w0 = self.nav.winfo_width() / max(1.0, ui_scale())
         self._nav_resize_target = self._nav_resize_w0
 
     def _apply_nav_width(self):
@@ -375,13 +406,16 @@ class ToolboxApp:
         target = self._nav_resize_target
         if target is None or target == self._nav_applied_width:
             return
+        target = int(round(target))
         self.nav.configure(width=target)
         self._nav_applied_width = target
 
     def _on_nav_resize_move(self, e):
         if getattr(self, "_nav_resize_x0", None) is None:
             return
-        width = self._nav_resize_w0 + (e.x_root - self._nav_resize_x0)
+        # 拖动位移是真实像素，换成设计像素后再夹到允许范围
+        delta = (e.x_root - self._nav_resize_x0) / max(1.0, ui_scale())
+        width = self._nav_resize_w0 + delta
         self._nav_resize_target = max(
             NAV_MIN_WIDTH, min(NAV_MAX_WIDTH, width))
         if self._nav_resize_job is None:
@@ -444,19 +478,27 @@ def check_dependencies():
 
 
 def main():
-    # 高 DPI 适配，避免高分屏下界面发虚
+    # 高 DPI 适配，避免高分屏下界面发虚。按「系统 DPI 感知」运行：
+    # 换到不同缩放的显示器时由 Windows 整体缩放窗口，Tk 8.6 不用重排。
     try:
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
-    root = ui.CTk()
-    # 统一缩放：CTk 默认会按 Windows 显示缩放再放大自己的控件字体，
-    # 而 ttk/tk 控件不缩放，混用后「选项字体比文本大」。归一到 1.0，
-    # 让 CTk 与 ttk 渲染尺寸一致（应用已开启 DPI 感知）。
+    # 关掉 CTk 自己的逐屏 DPI 追踪：它会在窗口换屏时再按新屏 DPI 重排一遍，
+    # 与 Windows 的整体缩放叠加，窗口宽高会突然跳变。
     try:
-        ui.ctk.set_widget_scaling(1.0)
-        ui.ctk.set_window_scaling(1.0)
+        ui.ctk.ScalingTracker.deactivate_automatic_dpi_awareness = True
+    except Exception:
+        pass
+    root = ui.CTk()
+    # 统一缩放：CTk 的控件尺寸 / 字号都是「设计像素」，启动时一次性乘上系统
+    # 缩放（4K@200% → 2.0），控件与窗口一起等比放大；
+    # ttk 控件（Treeview 等）由 theme.ttk_font() 换算成同样的像素字号。
+    try:
+        _scale = ui_scale()
+        ui.ctk.set_widget_scaling(_scale)
+        ui.ctk.set_window_scaling(_scale)
     except Exception:
         pass
     app = ToolboxApp(root)
@@ -481,7 +523,8 @@ def main():
             if root.winfo_exists():
                 extra = {}
                 try:
-                    w = app.nav.winfo_width()
+                    # 存设计像素：CTk 的 width 配置值，不随系统缩放变化
+                    w = int(app.nav.winfo_width() / max(1.0, ui_scale()))
                     if w > 1:
                         extra["nav_width"] = w
                 except Exception:

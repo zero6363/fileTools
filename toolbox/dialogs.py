@@ -19,13 +19,21 @@ import tkinter as tk
 from tkinter import messagebox as _native
 
 from . import ui
-from .theme import COLOR, FONTS
+from .theme import COLOR, FONTS, ui_scale
 
-# 窗口内部留白与正文档位（宽度按最长一行量出来，夹在这个范围内）
+# 窗口内部留白与正文档位（**设计像素**，实际像素 = 该值 × 系统缩放）。
+# 宽度按最长一行量出来，再夹在这个范围内：短提示不至于空荡，长说明少折断。
 _PAD_X = 26
 _PAD_Y = 22
 _MIN_CONTENT = 280
 _MAX_CONTENT = 480
+
+
+def _scale():
+    try:
+        return max(1.0, ui_scale())
+    except Exception:
+        return 1.0
 
 # kind -> (默认标题, 圆点颜色)
 _KIND = {
@@ -54,7 +62,7 @@ _ON_ESC = {"ok": "ok", "okcancel": False, "yesno": "no",
 
 
 def _content_width(text):
-    """正文宽度：量最长一行文字，夹在 280~480 之间。
+    """正文宽度（设计像素）：量最长一行文字，夹在 280~480 之间。
 
     短提示（“已复制”）窄一点不空荡；长说明宽一点少折断；
     短文案基本能排成一行，不会出现句号被挤到第二行的尴尬。
@@ -86,31 +94,54 @@ class MessageDialog(ui.Toplevel):
         self.resizable(False, False)
         self.configure(fg_color=COLOR["surface"])
 
+        s = _scale()
+        self._scale = s
         text = "" if message is None else str(message)
         lines = text.count("\n") + 1
         self._content_w = _content_width(text)
 
+        # 可用宽度 / 高度（按 owner 所在显示器的工作区算，4K 和小屏都不越界）
+        work_w = work_h = 0
+        try:
+            rect = (owner.winfo_rootx(), owner.winfo_rooty(),
+                    owner.winfo_width(), owner.winfo_height())
+            _bx, _by, work_w, work_h = ui.monitor_work_area(rect=rect)
+        except Exception:
+            pass
+        if work_w:
+            limit = int((work_w - 2 * _PAD_X * s - 32 * s) / s)
+            if limit > 200:
+                self._content_w = min(self._content_w, limit)
+        self._content_w = max(200, self._content_w)
+        pad_x = int(round(_PAD_X * s))
+        pad_y = int(round(_PAD_Y * s))
+
         body = ui.Frame(self, fg_color=COLOR["surface"], width=self._content_w,
                         height=1)
-        body.pack(fill="both", expand=True, padx=_PAD_X, pady=_PAD_Y)
+        body.pack(fill="both", expand=True, padx=pad_x, pady=pad_y)
         body.grid_columnconfigure(1, weight=1)
 
         # 标题行：语义色圆点 + 标题
         dot = ui.Frame(body, width=9, height=9, corner_radius=5,
                        fg_color=_KIND.get(kind, _KIND["info"])[1])
-        dot.grid(row=0, column=0, padx=(0, 9), pady=(9, 0), sticky="n")
+        dot.grid(row=0, column=0, padx=(0, int(round(9 * s))),
+                 pady=(int(round(9 * s)), 0), sticky="n")
         ui.Label(body, text=title, font=FONTS["md"], auto_wrap=False,
                  text_color=COLOR["text"]).grid(row=0, column=1, sticky="w")
 
         if len(text) > 700 or lines > 13:
             rows = min(15, max(6, lines + len(text) // 60))
+            if work_h:
+                # 每行 20 设计像素，给标题 / 按钮 / 留白预留 200 设计像素
+                max_rows = int((work_h / s - 200) // 20)
+                rows = max(4, min(rows, max_rows))
             box = ui.Textbox(body, width=self._content_w // 7, height=rows,
                              wrap="word", font=FONTS["base"],
                              fg_color=COLOR["surface_inset"])
             box.insert("1.0", text)
             box.configure(state="disabled")
             box.grid(row=1, column=0, columnspan=2, sticky="ew",
-                     padx=(18, 0), pady=(10, 0))
+                     padx=(int(round(18 * s)), 0), pady=(int(round(10 * s)), 0))
         else:
             # 固定折行宽度（不跟着父容器缩），窗口宽度在 _center 里按它定死，
             # 这样长文案不会因为「先窄后宽」来回折行、把弹窗撑高。
@@ -118,10 +149,11 @@ class MessageDialog(ui.Toplevel):
                      wraplength=self._content_w, justify="left",
                      text_color=COLOR["text_secondary"]).grid(
                 row=1, column=0, columnspan=2, sticky="w",
-                padx=(18, 0), pady=(10, 0))
+                padx=(int(round(18 * s)), 0), pady=(int(round(10 * s)), 0))
 
         footer = ui.Frame(body, fg_color="transparent")
-        footer.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(20, 0))
+        footer.grid(row=2, column=0, columnspan=2, sticky="ew",
+                    pady=(int(round(20 * s)), 0))
         self._buttons = {}
         default = (default or "").lower()
         focus_btn = None
@@ -159,9 +191,11 @@ class MessageDialog(ui.Toplevel):
             if not self.winfo_exists():
                 return
             self.update_idletasks()
-            # 宽度按正文档位定死（两边各留 _PAD_X），高度按内容自适应
+            # 宽度按正文档位定死（两边各留 _PAD_X），高度按内容自适应；
+            # center_window 接收真实像素，设计像素在这里乘一次缩放。
+            scale = getattr(self, "_scale", 1.0)
             ui.center_window(self, parent=self._owner,
-                             width=self._content_w + 2 * _PAD_X)
+                             width=(self._content_w + 2 * _PAD_X) * scale)
         except Exception:
             pass
 

@@ -13,9 +13,9 @@ from tkinter import filedialog
 from . import config
 from . import ui
 from . import ui as ttk
-from .theme import COLOR, FONTS, ui_scale
+from .theme import COLOR, FONTS, ttk_font, ui_scale
 
-APP_VERSION = "1.48"
+APP_VERSION = "1.49"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -372,7 +372,8 @@ def make_form(parent):
     frame = ttk.Frame(parent)
     try:
         from tkinter import font as tkfont
-        ref = tkfont.Font(font=FONTS["base"]).measure("输出文件夹名：") + 22
+        # ttk_font 已经是「像素字号」，量出来就是屏幕上的真实宽度
+        ref = tkfont.Font(font=ttk_font("base")).measure("输出文件夹名：") + 22
     except Exception:
         ref = 118
     frame.grid_columnconfigure(0, minsize=ref)
@@ -401,7 +402,10 @@ def form_note(parent, row, text, column=3, columnspan=1):
             top = lbl.winfo_toplevel()
             if not top.winfo_exists() or top.winfo_width() <= 1:
                 return
-            avail = top.winfo_width() - (lbl.winfo_rootx() - top.winfo_rootx()) - 24
+            # wraplength 按设计像素生效，winfo 是真实像素，先除回缩放
+            scale = max(1.0, ui_scale())
+            avail = (top.winfo_width()
+                     - (lbl.winfo_rootx() - top.winfo_rootx())) / scale - 24
             w = max(80, min(640, avail))
             cur = int(float(lbl.cget("wraplength") or 0))
             if abs(cur - w) > 12:
@@ -834,7 +838,8 @@ def setup_tree_columns(tree, key):
         """按表头 + 当前行内容的实际文字宽度算一个合适列宽（双击分隔线用）。"""
         from tkinter import font as tkfont
         try:
-            f = tkfont.Font(font=FONTS["table"])
+            # 表格列宽按真实像素存，字体也要用像素字号量
+            f = tkfont.Font(font=ttk_font("table"))
         except Exception:
             return None
         try:
@@ -973,9 +978,15 @@ def load_window_config():
 def save_window_geometry(root, extra=None):
     """保存主窗口几何（位置+大小）与最大化状态，供下次启动恢复。
     extra 可附加额外字段（如左侧菜单宽度 nav_width）。
-    只更新 window 分区，不碰配置文件里的其它分区。"""
+    只更新 window 分区，不碰配置文件里的其它分区。
+
+    同时记下当时的缩放：`root.geometry()` 读回的宽高是「设计像素」（CTk
+    会按系统缩放反算），位置是真实像素；换到 4K / 不同缩放比例的机器后
+    靠这个值判断要不要重新夹取位置。
+    """
     try:
-        data = {"geometry": root.geometry()}
+        data = {"geometry": root.geometry(),
+                "scale": round(ui_scale(), 3)}
         try:
             data["zoomed"] = (root.wm_state() == "zoomed")
         except Exception:
@@ -1001,8 +1012,28 @@ def _install_themed_messagebox():
         pass
 
 
+def _rect_overlap(a, b):
+    """两个 (x, y, w, h) 矩形的重叠面积（不相交为 0）"""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x1, y1 = max(ax, bx), max(ay, by)
+    x2, y2 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    if x2 <= x1 or y2 <= y1:
+        return 0
+    return (x2 - x1) * (y2 - y1)
+
+
 def restore_window_geometry(root, default="1280x900", min_w=720, min_h=420):
-    """恢复上次窗口几何；配置缺失/越界/超出屏幕时返回 False（调用方用默认）"""
+    """恢复上次窗口几何；配置缺失 / 整块落在已拔掉的显示器上时返回 False。
+
+    多显示器下的两个坑：
+      · 配置里的宽高是「设计像素」（CTk 按缩放反算），位置是真实像素 ——
+        校验可见性前必须先按当前缩放换算成真实矩形；
+      · 副屏坐标可能是负数、也可能在右边（x 接近 1920+），只拿主屏
+        `winfo_screenwidth()` 判断会把副屏位置当成「越界」直接丢弃。
+    这里改为逐块显示器判重叠：至少 120×48 露在某个工作区里才恢复，
+    否则交给调用方用默认尺寸；恢复时再夹进该屏工作区，避免标题栏在屏幕外。
+    """
     try:
         data = config.get_section("window")
     except Exception:
@@ -1012,13 +1043,22 @@ def restore_window_geometry(root, default="1280x900", min_w=720, min_h=420):
     if not m:
         return False
     w, h, x, y = (int(g) for g in m.groups())
-    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    if not (min_w <= w <= sw * 2 and min_h <= h <= sh * 2):
+    if not (min_w <= w <= 20000 and min_h <= h <= 20000):
         return False
-    # 位置基本在虚拟屏幕内（允许部分溢出，但标题栏要够得着）
-    if x < -w + 120 or y < 0 or x > sw - 120 or y > sh - 80:
+    scale = max(1.0, ui_scale())
+    px_w, px_h = int(round(w * scale)), int(round(h * scale))
+    # 至少要有一块能看见、够得着标题栏的区域
+    visible = max((_rect_overlap((x, y, px_w, px_h), area)
+                   for area in ui.monitor_work_areas()), default=0)
+    if visible < 120 * 48:
         return False
-    root.geometry(f"{w}x{h}+{x}+{y}")
+    bx, by, bw, bh = ui.monitor_work_area(rect=(x, y, px_w, px_h))
+    px_w = min(px_w, bw)
+    px_h = min(px_h, bh)
+    x = max(bx, min(bx + bw - px_w, x))
+    y = max(by, min(by + bh - px_h, y))
+    if not ui.set_geometry_px(root, px_w, px_h, x, y):
+        return False
     if data.get("zoomed"):
         def _do_zoom():
             try:
