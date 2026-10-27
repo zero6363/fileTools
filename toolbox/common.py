@@ -8,14 +8,14 @@ import threading
 import traceback
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 
 from . import config
 from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ui_scale
 
-APP_VERSION = "1.47"
+APP_VERSION = "1.48"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -678,7 +678,7 @@ def _tree_widths(tree, cols):
             w = int(tree.column(col, "width"))
         except Exception:
             continue
-        if w >= 20:
+        if w >= 1:
             out[col] = w
     return out
 
@@ -690,6 +690,12 @@ def setup_tree_columns(tree, key):
     · 用户拖动列宽后（鼠标释放 / 表格销毁）自动写入 toolbox_config.json 的
       tables 分区，下次启动自动恢复；
     · 所有表格共用同一套逻辑，互不影响。
+
+    列宽不设最低宽度：用户想把「修改时间」压到几十像素也得能压下去。
+    做法是**只在真正要锁宽度时才把 minwidth 放开到 1**——
+      1) 有记忆宽度（所有列 stretch=False，不会再随窗口缩放）→ 直接放开；
+      2) 用户按下分隔线开始拖动 → 松手前放开。
+    没拖过的首次运行仍保留各表自带的 minwidth，窗口变窄时列不会被压成 1px。
     """
     cols = _tree_column_ids(tree)
     if not cols:
@@ -703,26 +709,49 @@ def setup_tree_columns(tree, key):
         saved_scale = 0.0
     if not (0.5 <= saved_scale <= 3.0):
         saved_scale = 0.0
-    # 高分屏下表格字体按 DPI 放大，列宽 / 最小列宽必须同步放大，
+    # 高分屏下表格字体按 DPI 放大，列宽必须同步放大，
     # 否则日期、大小等文字会被列边界裁掉。
     scale = ui_scale()
 
     orig_stretch = {}
+    orig_minwidth = {}
     for col in cols:
         try:
             orig_stretch[col] = bool(int(tree.column(col, "stretch")))
         except Exception:
             orig_stretch[col] = True
         try:
-            mw = int(tree.column(col, "minwidth"))
-            tree.column(col, minwidth=max(20, int(round(mw * scale))))
+            orig_minwidth[col] = int(tree.column(col, "minwidth"))
         except Exception:
-            pass
+            orig_minwidth[col] = 20
+
+    def unlock_minwidth():
+        """放开最低列宽限制（1px），让列可以被拖到很窄。"""
+        for col in cols:
+            try:
+                tree.column(col, minwidth=1)
+            except Exception:
+                pass
+
+    def relock_minwidth():
+        for col, mw in orig_minwidth.items():
+            try:
+                tree.column(col, minwidth=mw)
+            except Exception:
+                pass
 
     if has_saved:
         # 保存时也记录当时的缩放系数：换到不同 DPI 的屏幕后按比例换算，
         # 避免同一份配置在 100% / 200% 之间来回切换时越放越大或越缩越小。
         factor = (scale / saved_scale) if saved_scale else scale
+        unlock_minwidth()
+        # 先固定所有列再写宽度：否则写某一列时，其余可拉伸的列会被
+        # Tk 按窗口宽度重新分配（最低宽度已放开到 1px，会被压成一条缝）。
+        for col in cols:
+            try:
+                tree.column(col, stretch=False)
+            except Exception:
+                pass
         for col, width in saved.items():
             if col not in cols:
                 continue
@@ -730,18 +759,10 @@ def setup_tree_columns(tree, key):
                 width = int(width)
             except (TypeError, ValueError):
                 continue
-            if width < 20:
+            if width < 1:
                 continue
-            width = int(round(width * factor))
             try:
-                mw = int(tree.column(col, "minwidth"))
-                tree.column(col, width=max(width, mw))
-            except Exception:
-                pass
-        # 已恢复过用户列宽：所有列固定，窗口缩放不再重新分配
-        for col in cols:
-            try:
-                tree.column(col, stretch=False)
+                tree.column(col, width=int(round(width * factor)))
             except Exception:
                 pass
     else:
@@ -786,6 +807,7 @@ def setup_tree_columns(tree, key):
             if region != "separator":
                 return
         lock_columns()
+        unlock_minwidth()        # 拖动时不设最低宽度
         state["dragging"] = True
         state["press"] = _tree_widths(tree, cols)
 
@@ -804,12 +826,71 @@ def setup_tree_columns(tree, key):
                         tree.column(col, stretch=stretch)
                     except Exception:
                         pass
+                relock_minwidth()
             return
         save_now()
+
+    def fit_column(col_id):
+        """按表头 + 当前行内容的实际文字宽度算一个合适列宽（双击分隔线用）。"""
+        from tkinter import font as tkfont
+        try:
+            f = tkfont.Font(font=FONTS["table"])
+        except Exception:
+            return None
+        try:
+            head = tree.heading(col_id, "text")
+        except Exception:
+            head = ""
+        try:
+            widest = f.measure(str(head)) + 26
+        except Exception:
+            widest = 80
+        try:
+            items = tree.get_children()[:400]
+        except Exception:
+            items = []
+        for iid in items:
+            try:
+                text = tree.item(iid, "text") if col_id == "#0" \
+                    else tree.set(iid, col_id)
+            except Exception:
+                continue
+            try:
+                widest = max(widest, f.measure(str(text)) + 26)
+            except Exception:
+                pass
+        return int(min(1200, max(12, widest)))
+
+    def on_double_click(event=None):
+        """双击分隔线 = 按内容自适应该列宽度（列被压窄后不用手动拖回来）。"""
+        if event is None:
+            return
+        try:
+            if tree.identify_region(event.x, event.y) != "separator":
+                return
+            col_id = tree.identify_column(event.x)
+        except Exception:
+            return
+        # identify_column 给的是 "#2" 这种序号，换回真实列 id
+        real = col_id
+        if col_id.startswith("#") and col_id != "#0":
+            try:
+                real = cols[int(col_id[1:]) - 1]
+            except Exception:
+                return
+        width = fit_column(real)
+        if not width:
+            return
+        try:
+            tree.column(real, width=width)
+            save_now()
+        except Exception:
+            pass
 
     try:
         tree.bind("<ButtonPress-1>", on_press, add="+")
         tree.bind("<ButtonRelease-1>", on_release, add="+")
+        tree.bind("<Double-Button-1>", on_double_click, add="+")
     except Exception:
         pass
 
@@ -906,46 +987,18 @@ def save_window_geometry(root, extra=None):
         pass
 
 
-_MB_ORIGINALS = {}
+def _install_themed_messagebox():
+    """接管 tkinter.messagebox：换成主题化、跟随触发窗口居中的弹窗。
 
-
-def _patch_messagebox_parent():
-    """让 messagebox 系列弹窗默认居中于主窗口（而非屏幕中心）。
-    已显式传入 parent 的调用不受影响。幂等，可重复调用。"""
+    原生 MessageBox 在 Windows 上固定出现在屏幕正中（传 parent 也没用），
+    多级弹窗会越弹越偏，样式也和主界面不一致。这里统一交给 dialogs
+    模块（幂等，可重复调用）。
+    """
     try:
-        import tkinter.messagebox as _mb
+        from . import dialogs
+        dialogs.install()
     except Exception:
-        return
-    if getattr(_mb, "_toolbox_patched", False):
-        return
-    _mb._toolbox_patched = True
-
-    def _default_root():
-        try:
-            r = tk._default_root
-            if r is not None and r.winfo_exists():
-                return r
-        except Exception:
-            pass
-        return None
-
-    def _wrap(name):
-        _MB_ORIGINALS[name] = getattr(_mb, name)
-
-        def wrapper(*args, **kwargs):
-            if "parent" not in kwargs:
-                p = _default_root()
-                if p is not None:
-                    kwargs["parent"] = p
-            return _MB_ORIGINALS[name](*args, **kwargs)
-        setattr(_mb, name, wrapper)
-
-    for _n in ("showinfo", "showwarning", "showerror", "askquestion",
-               "askokcancel", "askyesno", "askyesnocancel", "askretrycancel"):
-        try:
-            _wrap(_n)
-        except Exception:
-            pass
+        pass
 
 
 def restore_window_geometry(root, default="1280x900", min_w=720, min_h=420):
@@ -977,8 +1030,8 @@ def restore_window_geometry(root, default="1280x900", min_w=720, min_h=420):
     return True
 
 
-# 模块导入即生效：让所有 messagebox 弹窗跟随主窗口居中
-_patch_messagebox_parent()
+# 模块导入即生效：所有 messagebox 换成主题化、跟随窗口居中的弹窗
+_install_themed_messagebox()
 
 
 # ============================================================

@@ -671,29 +671,11 @@ class CompressOptionsDialog(ui.Toplevel):
         self._center()
 
     def _center(self):
-        """相对 master（主窗口）居中，并防止超出屏幕
-
-        CTk 控件的高度是「延迟生效」的：构造末尾 update_idletasks 拿到的
-        winfo_height 往往还是布局前的小值，据此算出的 y 会让窗口下半截
-        跑到屏幕外（底部按钮点不到）。这里用 req 尺寸显式定尺寸再居中。
-        """
-        self.update_idletasks()
-        w = max(self.winfo_reqwidth(), self.winfo_width())
-        h = max(self.winfo_reqheight(), self.winfo_height())
+        """相对 master（主窗口）居中，并防止超出屏幕（统一走 ui.center_window）"""
         try:
-            mx = self.master.winfo_rootx()
-            my = self.master.winfo_rooty()
-            mw = self.master.winfo_width()
-            mh = self.master.winfo_height()
+            ui.center_window(self, parent=self.master)
         except Exception:
-            mx = my = 0
-            mw, mh = self.winfo_screenwidth(), self.winfo_screenheight()
-        x = mx + max(0, (mw - w) // 2)
-        y = my + max(0, (mh - h) // 2)
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        x = max(0, min(sw - w, x))
-        y = max(0, min(sh - h, y))
-        self.geometry(f"{w}x{h}+{x}+{y}")
+            pass
 
     def _qlabel(self, *_):
         self.qlabel.config(text=f"{self.var_quality.get()}%")

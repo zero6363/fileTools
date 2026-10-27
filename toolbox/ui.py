@@ -665,7 +665,109 @@ class ScrollableFrame(_CTkCompat, ctk.CTkScrollableFrame):
         super().__init__(master, **kw)
 
 
+def virtual_screen_bounds():
+    """整个虚拟桌面的范围 (x, y, w, h)：多显示器时可能带负坐标，
+    只用 winfo_screenwidth 会把副屏上的窗口拽回主屏。"""
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        x = int(u.GetSystemMetrics(76))   # SM_XVIRTUALSCREEN
+        y = int(u.GetSystemMetrics(77))   # SM_YVIRTUALSCREEN
+        w = int(u.GetSystemMetrics(78))   # SM_CXVIRTUALSCREEN
+        h = int(u.GetSystemMetrics(79))   # SM_CYVIRTUALSCREEN
+        if w > 0 and h > 0:
+            return x, y, w, h
+    except Exception:
+        pass
+    try:
+        r = tk._default_root
+        if r is not None:
+            return 0, 0, int(r.winfo_screenwidth()), int(r.winfo_screenheight())
+    except Exception:
+        pass
+    return 0, 0, 1920, 1080
+
+
+def center_window(win, parent=None, width=None, height=None):
+    """把 win 居中到 parent 所在窗口，并保证整窗落在屏幕内。
+
+    · 尺寸优先用调用方给的 width/height，否则取「布局请求尺寸」与「当前尺寸」
+      的较大值（CTk 控件高度延迟生效，只用 winfo_height 会算出偏小的框，
+      导致窗口下半截跑到屏幕外）；
+    · 没有任何 parent（或 parent 还没显示）时退回屏幕居中。
+    返回实际使用的 (x, y, w, h)。
+    """
+    try:
+        win.update_idletasks()
+    except Exception:
+        pass
+    try:
+        w = int(width or 0)
+    except (TypeError, ValueError):
+        w = 0
+    try:
+        h = int(height or 0)
+    except (TypeError, ValueError):
+        h = 0
+    # 还没显示的窗口不能用 winfo_width/height（CTkToplevel 默认 200x200，
+    # 会把「按内容自适应」的弹窗撑成固定 200 高，底部留一大片空白）
+    try:
+        req_w, req_h = int(win.winfo_reqwidth()), int(win.winfo_reqheight())
+    except Exception:
+        req_w, req_h = 320, 160
+    try:
+        mapped = bool(win.winfo_ismapped())
+    except Exception:
+        mapped = False
+    cur_w, cur_h = (req_w, req_h)
+    if mapped:
+        try:
+            cur_w = max(req_w, int(win.winfo_width()))
+            cur_h = max(req_h, int(win.winfo_height()))
+        except Exception:
+            pass
+    w = max(w, cur_w)
+    h = max(h, cur_h)
+
+    ref = parent if parent is not None else getattr(win, "master", None)
+    try:
+        ref = ref.winfo_toplevel() if ref is not None else None
+    except Exception:
+        ref = None
+
+    placed = False
+    if ref is not None and ref is not win:
+        try:
+            if ref.winfo_viewable() and ref.winfo_width() > 1:
+                rx, ry = ref.winfo_rootx(), ref.winfo_rooty()
+                x = rx + (ref.winfo_width() - w) // 2
+                y = ry + (ref.winfo_height() - h) // 2
+                placed = True
+        except Exception:
+            placed = False
+
+    vx, vy, vw, vh = virtual_screen_bounds()
+    if not placed:
+        x = vx + (vw - w) // 2
+        y = vy + (vh - h) // 2
+    # 窗口比屏幕还大时贴左上角，否则夹到屏幕内（避免标题栏跑到屏幕外）
+    x = vx if w >= vw else max(vx, min(vx + vw - w, x))
+    y = vy if h >= vh else max(vy, min(vy + vh - h, y))
+    try:
+        win.geometry(f"{w}x{h}+{x}+{y}")
+    except Exception:
+        pass
+    return x, y, w, h
+
+
 class Toplevel(_CTkCompat, ctk.CTkToplevel):
+    """弹窗基类：第一次显示时自动居中到所属窗口。
+
+    以往各处 `geometry("1200x700")` 不带坐标，位置由 Windows 决定，
+    弹窗常常出现在屏幕左上角、盖住左侧导航，看起来像「跑偏了」。
+    统一在这里做一次性居中，调用方不必逐处改。
+    """
+
     def __init__(self, master=None, **kw):
         kw.pop("relief", None)
         kw.pop("bd", kw.pop("borderwidth", None))
@@ -685,7 +787,21 @@ class Toplevel(_CTkCompat, ctk.CTkToplevel):
         if bg is not None and "fg_color" not in kw:
             kw["fg_color"] = bg
         kw.setdefault("fg_color", COLOR["bg"])
+        self._autocenter_done = False
         super().__init__(master, **kw)
+        try:
+            self.bind("<Map>", self._on_first_map, add="+")
+        except Exception:
+            pass
+
+    def _on_first_map(self, _event=None):
+        if self._autocenter_done or getattr(self, "_no_autocenter", False):
+            return
+        self._autocenter_done = True
+        try:
+            self.after_idle(lambda: center_window(self))
+        except Exception:
+            pass
 
     def configure(self, **kw):
         # 旧式 bg/background → CTk 的 fg_color
@@ -736,5 +852,6 @@ __all__ = [
     "Button", "StepButton", "Label", "Frame", "Entry", "Checkbutton", "Radiobutton",
     "Combobox", "Textbox", "Listbox", "ScrollableFrame", "Toplevel", "CTk",
     "ProgressBar", "Progressbar", "Scrollbar", "Slider", "Scale", "make_card",
+    "center_window", "virtual_screen_bounds",
     "Treeview", "Style", "Separator", "Notebook", "init_appearance", "ctk",
 ]
