@@ -34,8 +34,8 @@ from .theme import FONTS
 from . import config
 from .common import (add_table_hscroll, clean_path, clear_log,
                      get_unique_path, load_done_sound, make_logger,
-                     make_num_box, natural_key, play_done_sound,
-                     save_done_sound, setup_tree_columns)
+                     make_num_box, natural_key, paste_path_to,
+                     play_done_sound, save_done_sound, setup_tree_columns)
 from .theme import COLOR
 
 # ============================================================
@@ -1620,6 +1620,8 @@ def build_encode_tab(parent, app=None):
     ui.Label(opt_line, text="输出目录：").pack(side=tk.LEFT, padx=(4, 2))
     var_outdir = tk.StringVar()
     ttk.Entry(opt_line, textvariable=var_outdir, width=20).pack(side=tk.LEFT)
+    ui.Button(opt_line, text="粘贴", width=5,
+               command=lambda: paste_path_to(var_outdir)).pack(side=tk.LEFT, padx=(3, 0))
     ui.Button(opt_line, text="浏览…", width=7,
                command=lambda: var_outdir.set(filedialog.askdirectory(title="选择输出目录") or
                                               var_outdir.get())).pack(side=tk.LEFT, padx=3)

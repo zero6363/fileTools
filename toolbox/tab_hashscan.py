@@ -65,7 +65,8 @@ from .theme import FONTS
 from . import config
 from .common import (add_table_hscroll, clean_path, clear_log, form_label,
                      load_done_sound, make_form, make_logger, make_tip,
-                     play_done_sound, save_done_sound, setup_tree_columns)
+                     paste_path_to, play_done_sound, save_done_sound,
+                     setup_tree_columns)
 from .theme import COLOR
 
 DB_NAME = "filehash.db"
@@ -2629,6 +2630,10 @@ def build_hash_tab(parent, app=None):
 
     btn_box = ui.Frame(form)
     btn_box.grid(row=0, column=2, sticky="w", padx=(0, 4), pady=2)
+    ui.Button(btn_box, text="粘贴",
+               command=lambda: paste_path_to(
+                   var_root, on_change=lambda _p: refresh_db_info())).pack(
+        side=tk.LEFT, padx=(0, 4))
     ui.Button(btn_box, text="浏览…", command=choose_root).pack(side=tk.LEFT)
     ui.Button(btn_box, text="管理…", width=7,
                command=lambda: open_manager()).pack(side=tk.LEFT, padx=(4, 0))

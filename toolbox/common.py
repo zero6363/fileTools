@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """通用基础设施：日志 / 后台任务 / 常用输入行 / Windows 文件拖放"""
+import os
 import queue
 import re
 import shutil
@@ -14,7 +15,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ui_scale
 
-APP_VERSION = "1.44"
+APP_VERSION = "1.45"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -205,6 +206,165 @@ def clean_path(p):
     return p.strip().strip('"').strip("'").strip()
 
 
+# ============================================================
+# 剪贴板取 Windows 路径（各输入框右侧「粘贴」按钮共用）
+# ============================================================
+# 盘符路径（D:\a\b、D:/a/b）或 UNC 共享（\\nas\share\dir）。
+# 前面加 (?<![A-Za-z0-9]) 是为了避开 http:// 这类协议里的「单个字母:」；
+# 盘符后紧跟 (?![\\/]) 同理避开 http:// 的「h://」被当成 h 盘。
+_WIN_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"[A-Za-z]:[\\/](?![\\/])[^<>:\"|?*\r\n\t]*"
+    r"|\\\\[^\\/\s]+[\\/][^\\/\s]+[^<>:\"|?*\r\n\t]*"
+    r")"
+)
+
+
+def _clipboard_text():
+    """读剪贴板文本；没有文本（或非 Windows）返回空串"""
+    try:
+        root = tk._default_root
+        if root is None:
+            return ""
+        text = root.clipboard_get()
+        return text if isinstance(text, str) else ""
+    except Exception:
+        return ""
+
+
+def _clipboard_hdrop():
+    """剪贴板里只有文件对象（资源管理器复制）时，用 CF_HDROP 取第一条路径"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        CF_HDROP = 15
+        user32, shell32 = ctypes.windll.user32, ctypes.windll.shell32
+        shell32.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT,
+                                           wintypes.LPWSTR, wintypes.UINT]
+        shell32.DragQueryFileW.restype = wintypes.UINT
+        user32.GetClipboardData.restype = wintypes.HANDLE
+        if not user32.OpenClipboard(None):
+            return ""
+        try:
+            handle = user32.GetClipboardData(CF_HDROP)
+            if not handle:
+                return ""
+            if not shell32.DragQueryFileW(handle, 0xFFFFFFFF, None, 0):
+                return ""
+            buf = ctypes.create_unicode_buffer(32768)
+            if not shell32.DragQueryFileW(handle, 0, buf, len(buf)):
+                return ""
+            return buf.value
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return ""
+
+
+def _normalize_win_path(p):
+    """统一成反斜杠形式：去掉 file:/// 前缀与 %20、去掉末尾多余分隔符"""
+    p = (p or "").strip().strip('"').strip("'").strip()
+    if p.lower().startswith("file:"):
+        p = p[5:]
+        try:
+            from urllib.parse import unquote
+            p = unquote(p)
+        except Exception:
+            pass
+        p = p.lstrip("/")
+    p = p.replace("/", "\\")
+    if re.fullmatch(r"[A-Za-z]:", p):
+        p += "\\"
+    while len(p) > 3 and p.endswith("\\"):
+        p = p[:-1]
+    return p
+
+
+def _existing_dir_prefix(cand):
+    """整串不存在时按空格逐段回退，返回磁盘上真实存在的最长前缀目录"""
+    if os.path.isdir(cand):
+        return cand
+    parts = cand.split(" ")
+    for k in range(len(parts) - 1, 0, -1):
+        p = _normalize_win_path(" ".join(parts[:k]))
+        if os.path.isdir(p):
+            return p
+    return ""
+
+
+def parse_windows_path(text):
+    """从任意文本（可带引号、多行、说明文字）里提取 Windows 绝对路径。
+
+    优先取磁盘上真实存在的目录；只拿到文件路径时返回它所在目录；
+    都不存在时返回语法正确的那条（方便用户接着改）。识别不到返回空串。
+    """
+    if not text:
+        return ""
+    if "file:" in text.lower():
+        # file:///D:/a%20b 这种形式：先去掉协议头并还原 %20（普通路径里的 % 不动）
+        try:
+            from urllib.parse import unquote
+            text = unquote(re.sub(r"file:/{2,3}", "", text, flags=re.I))
+        except Exception:
+            pass
+    paths = []
+    for m in _WIN_PATH_RE.finditer(text[:200000]):
+        raw = m.group(0).strip().strip('"').strip("'")
+        raw = raw.rstrip(" \t，。、；：！？,.;:!?'\"）)】]")
+        cand = _normalize_win_path(raw)
+        if len(cand) < 3:
+            continue
+        paths.append(_existing_dir_prefix(cand) or cand)
+    for p in paths:
+        if os.path.isdir(p):
+            return p
+    for p in paths:
+        if os.path.isfile(p):
+            d = os.path.dirname(p)
+            if d:
+                return d
+    return paths[0] if paths else ""
+
+
+def paste_path_to(var, entry=None, on_change=None, allow_file=False):
+    """「粘贴」按钮：把剪贴板里的 Windows 路径填进输入框；识别不到就清空。
+
+    支持资源管理器复制的文件夹（文本或 CF_HDROP）、带引号/空格的路径、
+    file:///D:/xxx 形式。返回是否识别到路径（False 时输入框已清空）。
+    """
+    path = parse_windows_path(_clipboard_text())
+    if not path:
+        hdrop = _clipboard_hdrop()
+        if hdrop:
+            norm = _normalize_win_path(hdrop)
+            if os.path.isdir(norm) or allow_file:
+                path = norm
+            else:
+                path = os.path.dirname(norm) or norm
+    var.set(path)
+    try:
+        if entry is not None and str(entry.cget("state")) != "disabled":
+            entry.icursor(tk.END)
+            entry.xview_moveto(1.0)
+    except Exception:
+        pass
+    if on_change is not None:
+        try:
+            on_change(path)
+        except Exception:
+            pass
+    return bool(path)
+
+
+def make_paste_button(parent, var, entry=None, on_change=None, **pack_kw):
+    """创建统一的「粘贴」按钮（位于路径输入框右侧）"""
+    btn = ttk.Button(parent, text="粘贴",
+                     command=lambda: paste_path_to(var, entry, on_change))
+    pack_kw.setdefault("side", tk.LEFT)
+    btn.pack(**pack_kw)
+    return btn
+
+
 def make_form(parent):
     """表单容器：所有输入行放进同一个容器，标签列宽统一，
     输入框/浏览按钮左边缘对齐，说明文字统一放在第 4 列。
@@ -260,8 +420,8 @@ def form_note(parent, row, text, column=3, columnspan=1):
 
 
 def make_path_row(parent, row, label, default="", title="选择文件夹", entry_width=40, note=None):
-    """目录输入行：标签 + 可编辑文本框 + 浏览按钮。
-    默认宽度按 1080 宽的最小窗口取值，保证「浏览…」按钮不会被挤出右边界。"""
+    """目录输入行：标签 + 可编辑文本框 + 粘贴 / 浏览按钮。
+    默认宽度按 1080 宽的最小窗口取值，保证按钮不会被挤出右边界。"""
     form_label(parent, row, label)
     var = tk.StringVar(value=default)
     ttk.Entry(parent, textvariable=var, width=entry_width).grid(
@@ -272,8 +432,10 @@ def make_path_row(parent, row, label, default="", title="选择文件夹", entry
         if p:
             var.set(p)
 
-    ttk.Button(parent, text="浏览…", command=_browse).grid(
-        row=row, column=2, sticky="w", padx=(0, 4), pady=3)
+    btns = ttk.Frame(parent)
+    btns.grid(row=row, column=2, sticky="w", padx=(0, 4), pady=3)
+    make_paste_button(btns, var, padx=(0, 4))
+    ttk.Button(btns, text="浏览…", command=_browse).pack(side=tk.LEFT)
     if note:
         form_note(parent, row, note)
     return var

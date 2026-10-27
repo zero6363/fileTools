@@ -17,7 +17,7 @@ from .theme import FONTS
 from . import config
 from .common import (APP_TITLE, _module_available, add_table_hscroll,
                      clean_path, clear_log, make_log_panel, make_tip,
-                     run_task, setup_tree_columns)
+                     paste_path_to, run_task, setup_tree_columns)
 from .theme import COLOR
 
 
@@ -580,6 +580,9 @@ class CompressOptionsDialog(ui.Toplevel):
         self.var_outdir = tk.StringVar(value=options.get('outdir', '') or '')
         self.ent_outdir = ttk.Entry(row, textvariable=self.var_outdir, width=32, state="disabled")
         self.ent_outdir.pack(side="left", fill="x", expand=True)
+        self.btn_paste = ui.Button(row, text="粘贴", width=6, state="disabled",
+                                   command=lambda: paste_path_to(self.var_outdir))
+        self.btn_paste.pack(side="left", padx=(6, 0))
         self.btn_pick = ui.Button(row, text="浏览…", width=8, command=self._pick_dir, state="disabled")
         self.btn_pick.pack(side="left", padx=(6, 0))
         ui.Label(box1, text="说明：执行覆盖操作不可逆，请确认已备份。",
@@ -612,6 +615,9 @@ class CompressOptionsDialog(ui.Toplevel):
                         variable=self.var_collect).pack(side="left", padx=8, pady=6)
         self.var_faildir = tk.StringVar(value=options.get('faildir', 'dist') or 'dist')
         ttk.Entry(box_fail, textvariable=self.var_faildir, width=26).pack(side="left", padx=4, pady=6)
+        ui.Button(box_fail, text="粘贴", width=5,
+                  command=lambda: paste_path_to(self.var_faildir)).pack(
+            side="left", padx=(0, 4), pady=6)
         ui.Label(box_fail, text="（相对源文件目录或绝对路径）", foreground=COLOR["text_muted"]).pack(side="left", pady=6)
 
         box_fmt = ui.LabelFrame(self, text="结果格式")
@@ -690,9 +696,11 @@ class CompressOptionsDialog(ui.Toplevel):
         if self.var_save_mode.get() == 2:
             self.ent_outdir.config(state="normal")
             self.btn_pick.config(state="normal")
+            self.btn_paste.config(state="normal")
         else:
             self.ent_outdir.config(state="disabled")
             self.btn_pick.config(state="disabled")
+            self.btn_paste.config(state="disabled")
 
     def _pick_dir(self):
         d = filedialog.askdirectory(parent=self, title="选择保存目录")

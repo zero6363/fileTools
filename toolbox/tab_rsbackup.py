@@ -13,7 +13,7 @@ from .theme import FONTS
 
 from .common import (clean_path, clear_log, form_label, form_note,
                      get_unique_path, make_form, make_log_panel, make_num_box,
-                     make_num_row, make_tip, run_task)
+                     make_num_row, make_tip, paste_path_to, run_task)
 from .theme import COLOR
 
 
@@ -734,9 +734,12 @@ def build_rsbackup_tab(parent, app=None):
     bk_outdir = tk.StringVar()
     ttk.Entry(form_b, textvariable=bk_outdir, width=40).grid(
         row=3, column=1, sticky="w", padx=(0, 6), pady=3)
-    ui.Button(form_b, text="浏览…",
-               command=lambda: _pick_dir(bk_outdir, "选择分片输出目录")).grid(
-        row=3, column=2, sticky="w", padx=(0, 4), pady=3)
+    bk_out_btns = ui.Frame(form_b)
+    bk_out_btns.grid(row=3, column=2, sticky="w", padx=(0, 4), pady=3)
+    ui.Button(bk_out_btns, text="粘贴",
+               command=lambda: paste_path_to(bk_outdir)).pack(side=tk.LEFT, padx=(0, 4))
+    ui.Button(bk_out_btns, text="浏览…",
+               command=lambda: _pick_dir(bk_outdir, "选择分片输出目录")).pack(side=tk.LEFT)
     form_note(form_b, 3, "留空=源文件目录")
 
     label_warn = ui.Label(form_b, text="", foreground=COLOR["warning"], justify="left")
@@ -797,9 +800,12 @@ def build_rsbackup_tab(parent, app=None):
     rs_outdir = tk.StringVar()
     ttk.Entry(form_r, textvariable=rs_outdir, width=40).grid(
         row=2, column=1, sticky="w", padx=(0, 6), pady=3)
-    ui.Button(form_r, text="浏览…",
-               command=lambda: _pick_dir(rs_outdir, "选择恢复输出目录")).grid(
-        row=2, column=2, sticky="w", padx=(0, 4), pady=3)
+    rs_out_btns = ui.Frame(form_r)
+    rs_out_btns.grid(row=2, column=2, sticky="w", padx=(0, 4), pady=3)
+    ui.Button(rs_out_btns, text="粘贴",
+               command=lambda: paste_path_to(rs_outdir)).pack(side=tk.LEFT, padx=(0, 4))
+    ui.Button(rs_out_btns, text="浏览…",
+               command=lambda: _pick_dir(rs_outdir, "选择恢复输出目录")).pack(side=tk.LEFT)
     form_note(form_r, 2, "留空=分片目录\\rebuild")
 
     text_log, log = make_log_panel(parent, 4, colspan=1, title="运行日志", height=5)

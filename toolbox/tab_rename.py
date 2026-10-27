@@ -7,8 +7,8 @@ from . import ui, ui as ttk
 
 from .common import (clean_path, clear_log, make_check, make_log_panel,
                      make_num_box, make_path_row, make_spin_row,
-                     make_start_button, make_tip, natural_key, run_task,
-                     setup_tree_columns)
+                     make_start_button, make_tip, natural_key, paste_path_to,
+                     run_task, setup_tree_columns)
 from .theme import COLOR
 
 
@@ -210,7 +210,9 @@ def build_rename_tab(parent):
         if p:
             var_path.set(p)
 
-    ui.Button(frame_top, text="选择文件夹", command=browse).pack(side=tk.LEFT)
+    ui.Button(frame_top, text="粘贴",
+              command=lambda: paste_path_to(var_path)).pack(side=tk.LEFT, padx=(0, 4))
+    ui.Button(frame_top, text="选择文件夹", command=browse).pack(side=tk.LEFT, padx=(0, 6))
 
     frame_check = ui.Frame(parent, padding=4)
     frame_check.pack(anchor="w", padx=6)

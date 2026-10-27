@@ -365,7 +365,8 @@ def build_flatten_tab(parent):
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(2, weight=1)
     make_tip(parent, 0, "把子目录里的文件全部移动到根目录。默认遇到同名文件跳过不移动；"
-                        "勾选后自动改名移动，两种模式都不会覆盖已有文件。",
+                        "勾选后自动改名移动，两种模式都不会覆盖已有文件。"
+                        "移动完成后默认删除变空的子文件夹（含嵌套空目录，根目录本身保留）。",
              colspan=1, autowrap=True)
 
     form = make_form(parent)
@@ -377,7 +378,7 @@ def build_flatten_tab(parent):
     var_rename = make_check(form, "同名重命名移动（不勾选则跳过同名文件）",
                             default=False, row=2, column=1, columnspan=3)
     var_del = make_check(form, "移动完成后删除空的子文件夹",
-                         default=False, row=3, column=1, columnspan=3)
+                         default=True, row=3, column=1, columnspan=3)
 
     text_log, log = make_log_panel(parent, 2, colspan=1)
 
