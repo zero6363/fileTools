@@ -4607,6 +4607,8 @@ def build_hash_tab(parent, app=None):
         if upward and not errored and mt is not None:
             var_root.set(mt.target_root)
             log(f"本级库已并入上级库 {mt.db_path}，扫描根已切到 {mt.target_root}")
+            log(f"提示：以后直接在 {mt.target_root} 下扫描即可；"
+                f"再单独扫子目录会重新生成一份本地库")
         refresh_managed()
         refresh_db_info()
         if not errored:
