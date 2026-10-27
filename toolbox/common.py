@@ -16,7 +16,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ttk_font, ui_scale
 
-APP_VERSION = "1.60"
+APP_VERSION = "1.61"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -718,11 +718,14 @@ def setup_tree_columns(tree, key):
       tables 分区，下次启动自动恢复；
     · 所有表格共用同一套逻辑，互不影响。
 
-    列宽不设最低宽度：用户想把「修改时间」压到几十像素也得能压下去。
-    做法是**只在真正要锁宽度时才把 minwidth 放开到 1**——
+    列宽不设严格最低宽度：用户想把「修改时间」压到几十像素也得能压下去。
+    做法是**只在真正要锁宽度时才把 minwidth 放开**——
       1) 有记忆宽度（所有列 stretch=False，不会再随窗口缩放）→ 直接放开；
       2) 用户按下分隔线开始拖动 → 松手前放开。
-    没拖过的首次运行仍保留各表自带的 minwidth，窗口变窄时列不会被压成 1px。
+    没拖过的首次运行仍保留各表自带的 minwidth，窗口变窄时列不会被压窄。
+    放开也不是放开到 1px，而是保底 ~20 设计像素：全部放开到 1px 的老做法
+    会把列拖成一条缝——分隔线抓不回来，列就「消失」了；保底几个像素宽
+    既能压得很窄，又永远能重新抓住分隔线拖回（或双击自适应）。
     """
     cols = _tree_column_ids(tree)
     if not cols:
@@ -739,6 +742,8 @@ def setup_tree_columns(tree, key):
     # 高分屏下表格字体按 DPI 放大，列宽必须同步放大，
     # 否则日期、大小等文字会被列边界裁掉。
     scale = ui_scale()
+    # 列宽保底：按 DPI 换算的 ~20 设计像素，任何缩放下分隔线都抓得住
+    min_w = max(18, int(round(20 * scale)))
 
     orig_stretch = {}
     orig_minwidth = {}
@@ -753,10 +758,10 @@ def setup_tree_columns(tree, key):
             orig_minwidth[col] = 20
 
     def unlock_minwidth():
-        """放开最低列宽限制（1px），让列可以被拖到很窄。"""
+        """放开最低列宽限制到保底值（见上方 docstring）。"""
         for col in cols:
             try:
-                tree.column(col, minwidth=1)
+                tree.column(col, minwidth=min_w)
             except Exception:
                 pass
 
@@ -834,7 +839,7 @@ def setup_tree_columns(tree, key):
             if region != "separator":
                 return
         lock_columns()
-        unlock_minwidth()        # 拖动时不设最低宽度
+        unlock_minwidth()        # 拖动时不设严格最低宽度，仅保底 min_w
         state["dragging"] = True
         state["press"] = _tree_widths(tree, cols)
 
@@ -887,7 +892,7 @@ def setup_tree_columns(tree, key):
                 widest = max(widest, f.measure(str(text)) + 26)
             except Exception:
                 pass
-        return int(min(1200, max(12, widest)))
+        return int(min(1200, max(min_w, widest)))
 
     def on_double_click(event=None):
         """双击分隔线 = 按内容自适应该列宽度（列被压窄后不用手动拖回来）。"""

@@ -3063,15 +3063,10 @@ def build_hash_tab(parent, app=None):
     # 放在表单区（v1.60）：它和扫描模式一样是「跑之前配好的偏好」，
     # 原先挂在执行行右端，贴着窗口边缘，窄窗口还容易被进度条挤没。
     var_sound = tk.BooleanVar(value=load_done_sound("hashscan"))
-    sound_row = ui.Frame(form)
-    sound_row.grid(row=5, column=1, columnspan=3, sticky="w", pady=2)
-    ttk.Checkbutton(sound_row, text="完成后提示音", variable=var_sound,
+    ttk.Checkbutton(form, text="完成后提示音", variable=var_sound,
                     command=lambda: save_done_sound("hashscan",
-                                                    var_sound.get())).pack(
-        side=tk.LEFT)
-    ui.Label(sound_row, text="（正常结束时响一声，中途停止或出错不响）",
-             foreground=COLOR["text_secondary"], font=FONTS["sm"]).pack(
-        side=tk.LEFT, padx=(8, 0))
+                                                    var_sound.get())).grid(
+        row=5, column=1, sticky="w", pady=2)
 
     # ---------------- 执行 / 进度 ----------------
     run_row = ui.Frame(parent)
