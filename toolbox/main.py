@@ -67,7 +67,6 @@ import sys
 import traceback
 import tkinter as tk
 from tkinter import messagebox
-from tkinter import ttk as real_ttk
 
 from .common import (APP_TITLE, _module_available, install_drop_support,
                      load_window_config, restore_window_geometry,
@@ -133,7 +132,7 @@ class ToolboxApp:
             bg=COLOR["status_bg"], fg=COLOR["text_secondary"], font=FONTS["sm"])
         self.status.pack(fill=tk.X, side=tk.BOTTOM)
         # 发丝分隔线放在状态栏上方（先 pack 状态栏，再 pack 分隔线）
-        tk.Frame(root, height=1, bg=COLOR["border"]).pack(
+        ui.Frame(root, height=1, fg_color=COLOR["border"], corner_radius=0).pack(
             fill=tk.X, side=tk.BOTTOM, padx=10)
 
         # 主体：左侧竖向导航 + 右侧工具内容区
@@ -176,10 +175,10 @@ class ToolboxApp:
         self.page_group = ui.Label(header, text="", font=FONTS["sm"],
                                    text_color=COLOR["text_muted"])
         self.page_group.pack(side=tk.RIGHT, anchor="e", pady=(8, 0))
-        tk.Frame(content, height=1, bg=COLOR["border"]).pack(
+        ui.Frame(content, height=1, fg_color=COLOR["border"], corner_radius=0).pack(
             fill=tk.X, padx=2, pady=(0, 6))
 
-        page_host = real_ttk.Frame(content)
+        page_host = ui.Frame(content)
         page_host.pack(fill=tk.BOTH, expand=True)
 
         self.tool_frames = []
@@ -210,7 +209,7 @@ class ToolboxApp:
             ("⑲ 硬盘哈希扫描", build_hash_tab),
         ]
         for index, (title, builder) in enumerate(builders):
-            frame = real_ttk.Frame(page_host, padding=(4, 4, 4, 4))
+            frame = ui.Frame(page_host)
             if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
                             build_compress_tab, build_rsbackup_tab, build_encode_tab,
                             build_translate_tab, build_hash_tab):
@@ -313,7 +312,7 @@ class ToolboxApp:
         for i, f in enumerate(self.tool_frames):
             if i != index:
                 f.pack_forget()
-        frame.pack(fill=tk.BOTH, expand=True)
+        frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         current_title = self.nav_items[index][2]
         self.page_title.configure(text=current_title)
         self.page_group.configure(text=self._tool_groups[index])

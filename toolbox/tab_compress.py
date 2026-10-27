@@ -569,8 +569,8 @@ class CompressOptionsDialog(ui.Toplevel):
         pad = dict(padx=10, pady=4)
 
         # ---- 保存路径 ----
-        box1 = ui.LabelFrame(self, text="保存路径")
-        box1.pack(fill="x", **pad)
+        box1_card, box1 = ui.make_card(self, "保存路径")
+        box1_card.pack(fill="x", **pad)
         self.var_save_mode = tk.IntVar(value=options['save_mode'])
         for val, text in ((0, "覆盖原图"), (1, "原路径重命名"), (2, "保存到指定路径")):
             ttk.Radiobutton(box1, text=text, variable=self.var_save_mode,
@@ -589,8 +589,8 @@ class CompressOptionsDialog(ui.Toplevel):
                   foreground=COLOR["text_muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
         # ---- 压缩设置 ----
-        box2 = ui.LabelFrame(self, text="压缩设置")
-        box2.pack(fill="x", **pad)
+        box2_card, box2 = ui.make_card(self, "压缩设置")
+        box2_card.pack(fill="x", **pad)
         row2 = ui.Frame(box2)
         row2.pack(fill="x", padx=8, pady=6)
         self.var_enable = tk.BooleanVar(value=options.get('enable_compress', True))
@@ -608,8 +608,8 @@ class CompressOptionsDialog(ui.Toplevel):
                         value=1).pack(side="left", padx=(12, 0))
 
         # 失败收集
-        box_fail = ui.LabelFrame(self, text="压缩失败收集")
-        box_fail.pack(fill="x", **pad)
+        box_fail_card, box_fail = ui.make_card(self, "压缩失败收集")
+        box_fail_card.pack(fill="x", **pad)
         self.var_collect = tk.BooleanVar(value=options.get('collect_failed', False))
         ttk.Checkbutton(box_fail, text="压缩失败的文件复制到",
                         variable=self.var_collect).pack(side="left", padx=8, pady=6)
@@ -620,8 +620,8 @@ class CompressOptionsDialog(ui.Toplevel):
             side="left", padx=(0, 4), pady=6)
         ui.Label(box_fail, text="（相对源文件目录或绝对路径）", foreground=COLOR["text_muted"]).pack(side="left", pady=6)
 
-        box_fmt = ui.LabelFrame(self, text="结果格式")
-        box_fmt.pack(fill="x", **pad)
+        box_fmt_card, box_fmt = ui.make_card(self, "结果格式")
+        box_fmt_card.pack(fill="x", **pad)
         self.var_out_fmt = tk.IntVar(value=options.get('out_fmt', 1))
         ttk.Radiobutton(box_fmt, text="保持原格式", variable=self.var_out_fmt,
                         value=0).pack(side="left", padx=8, pady=6)
@@ -630,8 +630,8 @@ class CompressOptionsDialog(ui.Toplevel):
         ui.Label(box_fmt, text="统一为 JPG 时，PNG/WebP/TIFF/BMP 均按质量重压缩为 JPEG",
                   foreground=COLOR["text_muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
-        box3 = ui.LabelFrame(self, text="图片质量")
-        box3.pack(fill="x", **pad)
+        box3_card, box3 = ui.make_card(self, "图片质量")
+        box3_card.pack(fill="x", **pad)
         qrow = ui.Frame(box3)
         qrow.pack(fill="x", padx=10, pady=(4, 0))
         ui.Label(qrow, text="低").pack(side="left")
@@ -641,7 +641,7 @@ class CompressOptionsDialog(ui.Toplevel):
         self.qscale.pack(side="left", fill="x", expand=True, padx=8)
         ui.Label(qrow, text="高").pack(side="left")
         self.qlabel = ui.Label(qrow, text="", width=5)
-        self.qlabel.pack(side="left")
+        self.qlabel.pack(side="left", padx=(10, 0))
         self._qlabel()
         ui.Label(box3, text="说明：默认 mozjpeg 对 JPEG 做无损优化（Huffman 重排，画质不变、体积更小）；\n"
                              "质量滑条调低才触发有损重编码；PNG / TIFF 始终无损压缩。",
@@ -671,9 +671,15 @@ class CompressOptionsDialog(ui.Toplevel):
         self._center()
 
     def _center(self):
-        """相对 master（主窗口）居中，并防止超出屏幕"""
+        """相对 master（主窗口）居中，并防止超出屏幕
+
+        CTk 控件的高度是「延迟生效」的：构造末尾 update_idletasks 拿到的
+        winfo_height 往往还是布局前的小值，据此算出的 y 会让窗口下半截
+        跑到屏幕外（底部按钮点不到）。这里用 req 尺寸显式定尺寸再居中。
+        """
         self.update_idletasks()
-        w, h = self.winfo_width(), self.winfo_height()
+        w = max(self.winfo_reqwidth(), self.winfo_width())
+        h = max(self.winfo_reqheight(), self.winfo_height())
         try:
             mx = self.master.winfo_rootx()
             my = self.master.winfo_rooty()
@@ -687,7 +693,7 @@ class CompressOptionsDialog(ui.Toplevel):
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         x = max(0, min(sw - w, x))
         y = max(0, min(sh - h, y))
-        self.geometry(f"+{x}+{y}")
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _qlabel(self, *_):
         self.qlabel.config(text=f"{self.var_quality.get()}%")

@@ -306,31 +306,6 @@ def apply_theme(root):
 # ============================================================
 # 5. 复用组件
 # ============================================================
-def make_primary_button(parent, text, command, **kw):
-    """主操作按钮（tk.Button）：扁平蓝 + 悬停加深 + 禁用仍可读（白字）。"""
-    btn = tk.Button(
-        parent, text=text, command=command,
-        bg=COLOR["accent"], fg=COLOR["text_on_accent"],
-        activebackground=COLOR["accent_active"], activeforeground=COLOR["text_on_accent"],
-        disabledforeground=COLOR["text_on_accent"],
-        relief=tk.FLAT, borderwidth=0,
-        font=FONTS["base"], padx=kw.pop("padx", 18), pady=kw.pop("pady", 6),
-        cursor="hand2", **kw,
-    )
-    _bind_accent_hover(btn)
-    return btn
-
-
-def _bind_accent_hover(btn):
-    def _enter(e):
-        if str(btn.cget("state")) != tk.DISABLED:
-            btn.configure(bg=COLOR["accent_hover"])
-    def _leave(e):
-        btn.configure(bg=COLOR["accent"])
-    btn.bind("<Enter>", _enter)
-    btn.bind("<Leave>", _leave)
-
-
-def make_section_title(parent, text):
-    """区块标题标签：中等字号主文字，用于分隔面板内的功能段落。"""
-    return ttk.Label(parent, text=text, font=FONTS["md"], foreground=COLOR["text"])
+# 所有可复用控件（按钮 / 输入框 / 勾选框 / 卡片 / 进度条 / 滚动条 …）都在
+# toolbox/ui.py 里以 CTk 子类实现，这里只保留设计令牌与 ttk 兜底样式
+# （ttk 样式仅服务于 CustomTkinter 没有等价件的 Treeview 表格）。

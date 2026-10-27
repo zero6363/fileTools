@@ -27,7 +27,7 @@ import tkinter as tk
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox
 from . import ui, ui as ttk
 from .theme import FONTS
 
@@ -1988,14 +1988,14 @@ def build_encode_tab(parent, app=None):
     def apply_encoders(enc):
         state["encoders"] = enc
         parts = []
-        any_sw = False
         for codec in (CODEC_AV1, CODEC_HEVC):
             e = enc.get(codec)
             parts.append(f"{CODEC_LABELS[codec]} → {encoder_label(e)}")
-            if e and not is_hardware(e):
-                any_sw = True
+        # 状态行统一用次要灰：编码器只用软件编码是「能用但慢」，不是错误，
+        # 之前涂成 warning 的土黄色会让人以为页面出了问题；真正异常
+        # （未检测 / 检测失败）才用红色，见上面的两个分支。
         lbl_enc.config(text="编码器：" + "；".join(parts),
-                       foreground=COLOR["warning"] if any_sw else COLOR["success"])
+                       foreground=COLOR["text_secondary"])
         for codec in (CODEC_AV1, CODEC_HEVC):
             e = enc.get(codec)
             if not e:

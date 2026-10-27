@@ -250,7 +250,7 @@ class Frame(_CTkCompat, ctk.CTkFrame):
         if bg is not None:
             kw["fg_color"] = bg
         else:
-            kw["fg_color"] = "transparent"
+            kw.setdefault("fg_color", "transparent")
         if bd not in (None, 0):
             kw["border_width"] = int(bd)
             kw.setdefault("border_color", COLOR["border"])
@@ -492,16 +492,20 @@ class ProgressBar(_CTkCompat, ctk.CTkProgressBar):
     存量代码 `bar['value'] = n` / `bar.config(maximum=...)` 不用改写。"""
 
     def __init__(self, master=None, **kw):
-        maximum = kw.pop("maximum", 1)
+        # ttk.Progressbar 的默认 maximum 是 100，这里必须保持一致：
+        # 少写 maximum 的调用方会用 0~100 的整数赋 value，按 1 算会被全部截成满格。
+        maximum = kw.pop("maximum", 100)
         value = kw.pop("value", 0)
         mode = kw.pop("mode", "determinate")
         kw.pop("orient", None)
         length = kw.pop("length", 200)
-        kw.setdefault("height", 8)
+        kw.setdefault("height", 10)
         kw.setdefault("corner_radius", 999)
         kw.setdefault("border_width", 0)
         kw.setdefault("progress_color", COLOR["accent"])
-        kw.setdefault("fg_color", COLOR["surface_alt"])
+        # 槽底用描边灰：surface_alt(#F5F5F5) 在白底卡片上几乎看不见，
+        # 0% 时会只剩一个孤立的小圆点，看不出「这是一条进度条」
+        kw.setdefault("fg_color", COLOR["border"])
         try:
             kw.setdefault("width", int(length))
         except (TypeError, ValueError):
@@ -513,6 +517,13 @@ class ProgressBar(_CTkCompat, ctk.CTkProgressBar):
             super().configure(mode="indeterminate")
         else:
             super().set(min(1.0, max(0.0, float(value or 0) / self._maximum)))
+
+    # ttk 的 start(interval) 带参数，CTk 的 start() 不带：吞掉多余参数保持兼容
+    def start(self, *args, **kwargs):
+        return super().start()
+
+    def stop(self):
+        return super().stop()
 
     def configure(self, cnf=None, **kw):
         if isinstance(cnf, str):
@@ -540,6 +551,87 @@ class ProgressBar(_CTkCompat, ctk.CTkProgressBar):
         if key == "maximum":
             return self._maximum
         return self.cget(key)
+
+
+class Scrollbar(_CTkCompat, ctk.CTkScrollbar):
+    """ttk.Scrollbar 的 CTk 替代（Treeview / Listbox / Textbox 通用）。
+
+    CTk 没有 Treeview，但滚动条本身有官方控件；ttk 的 orient / command /
+    set(first, last) 在这里一一对应，存量调用方不用改写。
+    """
+
+    def __init__(self, master=None, **kw):
+        orient = kw.pop("orient", kw.pop("orientation", "vertical"))
+        kw.pop("style", None)
+        kw.pop("cursor", None)
+        kw.pop("takefocus", None)
+        kw.pop("class_", None)
+        kw.pop("width", None)          # ttk 的字符宽度对滚动条没意义
+        if str(orient).lower().startswith("h"):
+            kw["orientation"] = "horizontal"
+            kw.setdefault("height", 12)
+        else:
+            kw["orientation"] = "vertical"
+            kw.setdefault("width", 12)
+        kw.setdefault("corner_radius", 7)
+        kw.setdefault("border_spacing", 2)
+        kw.setdefault("fg_color", COLOR["surface_alt"])
+        kw.setdefault("button_color", COLOR["border_strong"])
+        kw.setdefault("button_hover_color", COLOR["text_muted"])
+        super().__init__(master, **kw)
+
+    def get(self):
+        """ttk 兼容：返回 (first, last) 可见区间。"""
+        try:
+            return (self._start_value, self._end_value)
+        except Exception:
+            return (0.0, 1.0)
+
+
+class Slider(_CTkCompat, ctk.CTkSlider):
+    """ttk.Scale 的 CTk 替代：from_ / to / orient / variable / command 一一对应。
+
+    CTkSlider 内部对 IntVar 会做 round() 处理，所以质量滑条这类 IntVar
+    不需要改代码。
+    """
+
+    def __init__(self, master=None, **kw):
+        frm = kw.pop("from_", kw.pop("from", 0))
+        to = kw.pop("to", 100)
+        orient = kw.pop("orient", kw.pop("orientation", "horizontal"))
+        for dead in ("length", "style", "showvalue", "takefocus", "cursor",
+                     "resolution", "digits", "sliderlength", "sliderrelief"):
+            kw.pop(dead, None)
+        kw["from_"] = frm
+        kw["to"] = to
+        kw["orientation"] = ("horizontal" if str(orient).lower().startswith("h")
+                             else "vertical")
+        kw.setdefault("height", 16)
+        kw.setdefault("fg_color", COLOR["surface_alt"])
+        kw.setdefault("progress_color", COLOR["accent"])
+        kw.setdefault("button_color", COLOR["accent"])
+        kw.setdefault("button_hover_color", COLOR["accent_hover"])
+        super().__init__(master, **kw)
+
+
+def make_card(parent, title="", padding=(10, 8)):
+    """白底描边卡片：标题 + 内容区（CTk 没有 LabelFrame，用卡片代替）。
+
+    返回 (卡片, 内容区)：卡片负责 pack/grid，内容区当父容器放子控件，
+    这样内部用 pack 还是 grid 都不冲突（ttk.LabelFrame 的标题是画在边框上的，
+    CTk 里改成一行标题更清爽）。
+    """
+    px, py = padding
+    outer = Frame(parent, fg_color=COLOR["surface"], border_width=1,
+                  border_color=COLOR["border"], corner_radius=8)
+    if title:
+        Label(outer, text=title, font=FONTS["sm"], auto_wrap=False,
+              foreground=COLOR["text_secondary"]).pack(
+            anchor="w", fill="x", padx=px, pady=(py, 0))
+    body = Frame(outer, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=px,
+              pady=(4 if title else py, py))
+    return outer, body
 
 
 class ScrollableFrame(_CTkCompat, ctk.CTkScrollableFrame):
@@ -626,22 +718,16 @@ class Listbox(tk.Listbox):
 
 
 # ============================================================
-# 透传：其余 ttk 控件保持原样（CTk 无等价件）
+# 透传：CustomTkinter 确实没有等价件的控件（尽量少）
 # ============================================================
+# 表格 / 树：CTk 没有 Treeview，只能用 ttk（外观由 theme.apply_theme 统一）
 Treeview = ttk.Treeview
-Scrollbar = ttk.Scrollbar
 Style = ttk.Style
-Progressbar = ttk.Progressbar
 Separator = ttk.Separator
 Notebook = ttk.Notebook
-Labelframe = ttk.Labelframe
-Menubutton = ttk.Menubutton
-Panedwindow = ttk.Panedwindow
-Sizegrip = ttk.Sizegrip
-# 兼容旧代码中的 Tkinter 命名（与 CTk 风格小写并存）
-LabelFrame = ttk.LabelFrame
-Spinbox = ttk.Spinbox
-Scale = ttk.Scale
+# 兼容旧写法：这层名字都指向 CTk 实现，不要再指回 ttk
+Progressbar = ProgressBar          # 旧代码 bar_all = ttk.Progressbar(...)
+Scale = Slider                     # 旧代码 ttk.Scale(from_=.., to=..)
 
 # 供入口创建根窗口
 CTk = ctk.CTk
@@ -649,7 +735,6 @@ CTk = ctk.CTk
 __all__ = [
     "Button", "StepButton", "Label", "Frame", "Entry", "Checkbutton", "Radiobutton",
     "Combobox", "Textbox", "Listbox", "ScrollableFrame", "Toplevel", "CTk",
-    "ProgressBar", "Treeview", "Scrollbar", "Style", "Progressbar", "Separator",
-    "Notebook", "Labelframe", "Menubutton", "Panedwindow", "Sizegrip",
-    "init_appearance", "ctk",
+    "ProgressBar", "Progressbar", "Scrollbar", "Slider", "Scale", "make_card",
+    "Treeview", "Style", "Separator", "Notebook", "init_appearance", "ctk",
 ]

@@ -690,8 +690,8 @@ def build_rsbackup_tab(parent, app=None):
     state = {"busy": False}
 
     # ================= 备份区 =================
-    box_backup = ui.LabelFrame(parent, text="备份", padding=(8, 4))
-    box_backup.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+    box_backup_card, box_backup = ui.make_card(parent, "备份", padding=(8, 8))
+    box_backup_card.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
     box_backup.grid_columnconfigure(0, weight=1)
     form_b = make_form(box_backup)
     form_b.grid(row=0, column=0, sticky="ew")
@@ -775,8 +775,8 @@ def build_rsbackup_tab(parent, app=None):
     refresh_warn()
 
     # ================= 恢复区 =================
-    box_restore = ui.LabelFrame(parent, text="恢复", padding=(8, 4))
-    box_restore.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
+    box_restore_card, box_restore = ui.make_card(parent, "恢复", padding=(8, 8))
+    box_restore_card.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
     box_restore.grid_columnconfigure(0, weight=1)
     form_r = make_form(box_restore)
     form_r.grid(row=0, column=0, sticky="ew")

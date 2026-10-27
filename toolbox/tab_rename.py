@@ -269,8 +269,9 @@ def build_rename_tab(parent):
     tree_old.configure(yscrollcommand=lambda *a: (v_scroll_old.set(*a), sync_y_old(*a)))
     tree_new.configure(yscrollcommand=lambda *a: (v_scroll_new.set(*a), sync_y_new(*a)))
 
-    frame_long = ui.LabelFrame(parent, text="因重命名后路径超过255字符被跳过的文件", padding=4)
-    frame_long.pack(fill=tk.X, padx=6, pady=4)
+    frame_long_card, frame_long = ui.make_card(
+        parent, "因重命名后路径超过255字符被跳过的文件", padding=(8, 6))
+    frame_long_card.pack(fill=tk.X, padx=6, pady=4)
     frame_long.grid_columnconfigure(0, weight=1)
     frame_long.grid_rowconfigure(0, weight=1)
 

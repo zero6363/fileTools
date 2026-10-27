@@ -58,7 +58,7 @@ import threading
 import time
 import tkinter as tk
 from collections import deque
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox
 from . import ui, ui as ttk
 from .theme import FONTS
 
