@@ -360,6 +360,7 @@ def load_roots():
             "active": it.get("active") or 0,
             "deleted": it.get("deleted") or 0,
             "nohash": it.get("nohash") or 0,
+            "disabled": bool(it.get("disabled")),
         })
     return out
 
@@ -379,7 +380,7 @@ def upsert_root(roots, path, **info):
     if item is None:
         item = {"path": os.path.abspath(path), "db": os.path.join(path, DB_NAME),
                 "last_scan": 0, "mode": "", "files": 0, "active": 0,
-                "deleted": 0, "nohash": 0}
+                "deleted": 0, "nohash": 0, "disabled": False}
         roots.insert(0, item)
     else:
         roots.remove(item)
@@ -387,6 +388,7 @@ def upsert_root(roots, path, **info):
     item.update(info)
     item["path"] = os.path.abspath(path)
     item.setdefault("db", os.path.join(item["path"], DB_NAME))
+    item.setdefault("disabled", False)
     return roots
 
 
@@ -3664,16 +3666,22 @@ def build_hash_tab(parent, app=None):
         return db, ""
 
     def managed_dbs():
-        """所有已管理目录里真实存在的库 [(root, db_path)]，同一个库只取一次"""
+        """所有已管理目录里真实存在的库 [(root, db_path)]，同一个库只取一次。
+        被「禁用」的目录不参与跨库检索（含被禁用的当前扫描根）。"""
         out, seen = [], set()
+        disabled = {os.path.normcase(os.path.abspath(r["path"]))
+                    for r in load_roots() if r.get("disabled")}
         cur = clean_path(var_root.get())
         if cur and os.path.isdir(cur):
             dbp = current_db_path()
-            if dbp and os.path.isfile(dbp):
+            if (dbp and os.path.isfile(dbp)
+                    and os.path.normcase(os.path.abspath(cur)) not in disabled):
                 key = os.path.normcase(os.path.abspath(dbp))
                 seen.add(key)
                 out.append((os.path.abspath(cur), dbp))
         for r in load_roots():
+            if r.get("disabled"):
+                continue
             dbp = r.get("db") or os.path.join(r["path"], DB_NAME)
             key = os.path.normcase(os.path.abspath(dbp))
             if os.path.isfile(dbp) and key not in seen:
@@ -3752,8 +3760,11 @@ def build_hash_tab(parent, app=None):
 
         targets = managed_dbs()
         if not targets:
+            n_off = sum(1 for r in load_roots() if r.get("disabled"))
             messagebox.showwarning(
-                "提示", "还没有可搜的库。先扫描几个目录，它们会自动记进「已管理目录」。")
+                "提示", "还没有可搜的库。先扫描几个目录，它们会自动记进「已管理目录」。"
+                + ("\n\n（另有 %d 个目录已被禁用，不参与跨库检索；"
+                   "可在「管理…」里重新启用）" % n_off if n_off else ""))
             return
         # 跨库检索放到后台线程：库多 / 库大时一次性查完要好几秒，
         # 以前是在主线程里死等，界面整块卡住、连进度都看不到。
@@ -3764,8 +3775,10 @@ def build_hash_tab(parent, app=None):
         state["search_n_dbs"] = len(targets)
         btn_search.config(state=tk.DISABLED)
         lbl_count.config(text=f"正在查询 0/{len(targets)} 个库…")
+        n_off = sum(1 for r in load_roots() if r.get("disabled"))
         log(f"开始在 {len(targets)} 个库里搜索"
-            + (f"「{kw}」" if kw else "全部记录"))
+            + (f"「{kw}」" if kw else "全部记录")
+            + (f"（另有 {n_off} 个目录已禁用，不参与）" if n_off else ""))
 
         def worker():
             rows = []
@@ -6405,7 +6418,8 @@ def build_hash_tab(parent, app=None):
         ui.Label(win, text=f"配置文件：{roots_config_path()}"
                             f"　　点最左列的勾选框 / Ctrl / Shift 多选："
                             f"「检查重复」找重复文件，"
-                            f"「检查不重复」比对两个目录的镜像差异",
+                            f"「检查不重复」比对两个目录的镜像差异；"
+                            f"「禁用」的目录不参与「全部已管理目录」跨库检索",
                   foreground=COLOR["text_secondary"],
                   wraplength=max(420, dlg_w - 40),
                   justify="left").grid(
@@ -6413,10 +6427,12 @@ def build_hash_tab(parent, app=None):
 
         cols = [("chk", "选", 40, False), ("path", "扫描目录", 300, True),
                 ("db", "数据库", 150, True), ("count", "记录", 190, False),
-                ("time", "最后扫描", 295, False), ("mode", "模式", 95, False)]
+                ("time", "最后扫描", 295, False), ("mode", "模式", 95, False),
+                ("state", "状态", 58, False)]
         # 记录数会显示「有效 6000 / 共 6000」，最后扫描会显示
         # 「今天（2026-10-27 08:43:48）」，最小宽度按完整文案留足。
-        min_widths = {"chk": 36, "count": 175, "time": 270, "mode": 88}
+        min_widths = {"chk": 36, "count": 175, "time": 270, "mode": 88,
+                      "state": 54}
         frame = ui.Frame(win)
         frame.grid(row=1, column=0, sticky="nsew", padx=10)
         frame.grid_rowconfigure(0, weight=1)
@@ -6425,10 +6441,11 @@ def build_hash_tab(parent, app=None):
                           selectmode="extended")   # 多选：查重时可选多个目录
         for key, title, width, stretch in cols:
             tv.heading(key, text=title,
-                       anchor="center" if key == "chk" else "w")
+                       anchor="center" if key in ("chk", "state") else "w")
             tv.column(key, width=width,
                       minwidth=min_widths.get(key, 80),
-                      anchor="center" if key == "chk" else "w", stretch=stretch)
+                      anchor="center" if key in ("chk", "state") else "w",
+                      stretch=stretch)
         sb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tv.yview)
         tv.configure(yscrollcommand=sb.set)
         tv.grid(row=0, column=0, sticky="nsew")
@@ -6439,6 +6456,7 @@ def build_hash_tab(parent, app=None):
         setup_tree_columns(tv, "hashscan.manager")
         ttk.attach_tree_hover(tv)
         tv.tag_configure("gone", foreground=COLOR["error"])
+        tv.tag_configure("disabled", foreground=COLOR["text_muted"])
 
         bar = ui.Frame(win)
         bar.grid(row=2, column=0, sticky="ew", padx=10, pady=8)
@@ -6495,13 +6513,25 @@ def build_hash_tab(parent, app=None):
         def row_values(r, count):
             return ("☐", r["path"], db_label(r), count,
                     fmt_relative_time(r.get("last_scan")),
-                    ROOT_MODE_NAMES.get(r.get("mode", ""), r.get("mode", "") or "—"))
+                    ROOT_MODE_NAMES.get(r.get("mode", ""), r.get("mode", "") or "—"),
+                    "已禁用" if r.get("disabled") else "启用")
+
+        # 行状态记录（iid=path）：回填记录数时保留「禁用」的灰色标记
+        row_disabled = {}
+
+        def row_tags(path, gone):
+            tags = []
+            if gone:
+                tags.append("gone")
+            if row_disabled.get(path):
+                tags.append("disabled")
+            return tuple(tags)
 
         def set_count(path, text, gone=False):
             try:
                 if tv.exists(path):
                     tv.set(path, "count", text)
-                    tv.item(path, tags=("gone",) if gone else ())
+                    tv.item(path, tags=row_tags(path, gone))
             except Exception:
                 pass
 
@@ -6559,8 +6589,9 @@ def build_hash_tab(parent, app=None):
             todo = []
             for r in roots_now():
                 count, gone = cached_count(r)
+                row_disabled[r["path"]] = bool(r.get("disabled"))
                 tv.insert("", tk.END, iid=r["path"], values=row_values(r, count),
-                          tags=("gone",) if gone else ())
+                          tags=row_tags(r["path"], gone))
                 if not gone:
                     todo.append(r)
             if not todo:
@@ -6569,6 +6600,39 @@ def build_hash_tab(parent, app=None):
             threading.Thread(target=stat_worker, args=(todo, gen, box),
                              daemon=True).start()
             win.after(100, lambda: poll_stats(gen, box))
+
+        def toggle_disable():
+            """把选中的目录在 启用 / 禁用 之间切换（可多选）。
+            禁用只影响「全部已管理目录」跨库检索，不删配置、不动数据库。"""
+            sel = list(tv.selection())
+            if not sel:
+                messagebox.showinfo(
+                    "提示", "先选中要禁用 / 启用的目录（Ctrl / Shift 可多选）",
+                    parent=win)
+                return
+            roots = load_roots()
+            sel_set = set(sel)
+            n_off = n_on = 0
+            for r in roots:
+                if r["path"] in sel_set:
+                    if r.get("disabled"):
+                        r["disabled"] = False
+                        n_on += 1
+                    else:
+                        r["disabled"] = True
+                        n_off += 1
+            if not save_roots(roots):
+                messagebox.showerror("提示", "写入配置失败，请重试", parent=win)
+                return
+            refresh()
+            refresh_managed()
+            parts = []
+            if n_off:
+                parts.append(f"已禁用 {n_off} 个")
+            if n_on:
+                parts.append(f"已启用 {n_on} 个")
+            log("、".join(parts)
+                + "（禁用的目录不参与「全部已管理目录」检索）")
 
         def add_folder():
             p = filedialog.askdirectory(title="选择要纳入管理的扫描目录",
@@ -6615,6 +6679,8 @@ def build_hash_tab(parent, app=None):
 
         ui.Button(bar, text="添加目录", command=add_folder).pack(side=tk.LEFT, padx=3)
         ui.Button(bar, text="移除选中", command=remove_selected).pack(side=tk.LEFT, padx=3)
+        ui.Button(bar, text="禁用/启用", command=toggle_disable).pack(
+            side=tk.LEFT, padx=3)
         ui.Button(bar, text="刷新", command=refresh).pack(side=tk.LEFT, padx=3)
         ui.Button(bar, text="设为扫描目录", command=scan_this).pack(side=tk.LEFT, padx=3)
 
