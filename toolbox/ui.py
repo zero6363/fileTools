@@ -832,6 +832,39 @@ def set_geometry_px(win, w, h, x=None, y=None):
         return False
 
 
+def dialog_size(width, height, parent=None, ratio_w=0.90, ratio_h=0.85,
+                min_w=360, min_h=200):
+    """把弹窗的「期望尺寸」（设计像素）夹进父窗口所在屏的工作区。
+
+    返回值直接交给 `ui.Toplevel.geometry(f"{w}x{h}")`：CTk 会按当前缩放换算成
+    物理像素，所以这里**不乘缩放**。小屏 / 高缩放时按工作区收，避免 1200+ 的
+    表格弹窗在 1366 或 200% 缩放下铺满整块屏幕。
+    """
+    try:
+        scale = max(1.0, ui_scale())
+    except Exception:
+        scale = 1.0
+    rect = None
+    try:
+        ref = parent.winfo_toplevel() if parent is not None else None
+        if ref is not None and ref.winfo_viewable() and ref.winfo_width() > 1:
+            rect = (ref.winfo_rootx(), ref.winfo_rooty(),
+                    ref.winfo_width(), ref.winfo_height())
+    except Exception:
+        rect = None
+    try:
+        _bx, _by, bw, bh = (monitor_work_area(rect=rect) if rect
+                            else monitor_work_area())
+    except Exception:
+        bw, bh = 1920, 1080
+    avail_w = bw / scale * ratio_w
+    avail_h = bh / scale * ratio_h
+    w = min(float(width), avail_w)
+    h = min(float(height), avail_h)
+    return int(max(min(min_w, avail_w), round(w))), \
+        int(max(min(min_h, avail_h), round(h)))
+
+
 def center_window(win, parent=None, width=None, height=None):
     """把 win 居中到 parent 所在窗口，并保证整窗落在同一块显示器内。
 
@@ -1031,6 +1064,6 @@ __all__ = [
     "Combobox", "Textbox", "Listbox", "ScrollableFrame", "Toplevel", "CTk",
     "ProgressBar", "Progressbar", "Scrollbar", "Slider", "Scale", "make_card",
     "center_window", "virtual_screen_bounds", "monitor_work_area",
-    "monitor_work_areas", "set_geometry_px",
+    "monitor_work_areas", "set_geometry_px", "dialog_size",
     "Treeview", "Style", "Separator", "Notebook", "init_appearance", "ctk",
 ]

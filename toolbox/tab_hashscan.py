@@ -3740,7 +3740,8 @@ def build_hash_tab(parent, app=None):
         """没有勾选时让用户选：写本页差异 / 写全部差异 / 否。"""
         dlg = ui.Toplevel(parent)
         dlg.title("没有选中行")
-        dlg.geometry("650x250")
+        dlg_w, dlg_h = ui.dialog_size(620, 230, parent)
+        dlg.geometry(f"{dlg_w}x{dlg_h}")
         dlg.resizable(False, False)
         try:
             dlg.transient(parent.winfo_toplevel())
@@ -3754,7 +3755,7 @@ def build_hash_tab(parent, app=None):
                   f"本页差异 {page_n} 条；当前筛选下全部差异 {all_n} 条。\n"
                   f"要写入哪一部分？\n"
                   f"（只想写一部分的话，先勾选再点「写入数据库」）"),
-            wraplength=610, justify="left").grid(
+            wraplength=max(320, dlg_w - 40), justify="left").grid(
             row=0, column=0, sticky="w", padx=18, pady=(18, 8))
         result = {"value": None}
 
@@ -4441,7 +4442,7 @@ def build_hash_tab(parent, app=None):
 
         win = ui.Toplevel(parent)
         win.title("重复文件检查")
-        win.geometry("1200x700")
+        win.geometry("%dx%d" % ui.dialog_size(1080, 520, parent))
         try:
             win.transient(parent.winfo_toplevel())
             win.grab_set()
@@ -4464,7 +4465,7 @@ def build_hash_tab(parent, app=None):
                           show="tree headings", selectmode="extended")
         tv.heading("#0", text="重复组 / 相对路径")
         tv.column("#0", width=420, minwidth=200, stretch=True, anchor="w")
-        for key, title, width, stretch in (("size", "文件大小", 110, False),
+        for key, title, width, stretch in (("size", "文件大小", 100, False),
                                            ("mtime", "修改时间", 200, False),
                                            ("root", "所在目录", 250, True)):
             tv.heading(key, text=title)
@@ -4656,7 +4657,7 @@ def build_hash_tab(parent, app=None):
 
         win = ui.Toplevel(parent)
         win.title("检查不重复（镜像比对）")
-        win.geometry("1260x700")
+        win.geometry("%dx%d" % ui.dialog_size(1180, 580, parent))
         try:
             win.transient(parent.winfo_toplevel())
             win.grab_set()
@@ -4707,9 +4708,9 @@ def build_hash_tab(parent, app=None):
             tv = ttk.Treeview(frame, columns=("size", "mtime"),
                               show="tree headings", selectmode="extended")
             tv.heading("#0", text="相对路径")
-            tv.column("#0", width=280, minwidth=140, stretch=True, anchor="w")
+            tv.column("#0", width=230, minwidth=140, stretch=True, anchor="w")
             tv.heading("size", text="大小")
-            tv.column("size", width=110, minwidth=90, stretch=False, anchor="e")
+            tv.column("size", width=105, minwidth=90, stretch=False, anchor="e")
             tv.heading("mtime", text="修改时间")
             tv.column("mtime", width=200, minwidth=190, stretch=False,
                       anchor="w")
@@ -4805,10 +4806,16 @@ def build_hash_tab(parent, app=None):
             b.pack(side=tk.LEFT, padx=(0, 4))
             filter_btns[k] = b
 
+        # 汇总一行、按钮一行：底栏挤成一行时整窗会被撑宽到 1280+，
+        # 在小屏 / 高缩放上比屏幕还宽
         bottom = ui.Frame(win)
-        bottom.grid(row=4, column=0, sticky="ew", padx=12, pady=8)
-        lbl_sum = ui.Label(bottom, text="准备比对…", foreground=COLOR["text_secondary"])
+        bottom.grid(row=4, column=0, sticky="ew", padx=12, pady=(6, 2))
+        lbl_sum = ui.Label(bottom, text="准备比对…", auto_wrap=False,
+                           foreground=COLOR["text_secondary"])
         lbl_sum.pack(side=tk.LEFT)
+
+        btn_bar = ui.Frame(win)
+        btn_bar.grid(row=5, column=0, sticky="e", padx=12, pady=(0, 8))
 
         cur = {"left": pair[0], "right": pair[1], "rows": [], "stats": {},
                "done": True, "err": "", "msg": "正在读取两个库…",
@@ -5164,7 +5171,7 @@ def build_hash_tab(parent, app=None):
         def confirm_sync(mode, n_new, n_ovr, n_del, n_touch, n_skip, rows, plan):
             dlg = ui.Toplevel(win)
             dlg.title("确认同步")
-            dlg.geometry("700x580")
+            dlg.geometry("%dx%d" % ui.dialog_size(640, 420, win))
             try:
                 dlg.transient(win)
                 dlg.grab_set()
@@ -5272,15 +5279,15 @@ def build_hash_tab(parent, app=None):
             t.bind("<Button-3>", popup)
             t.bind("<Double-1>", lambda _e: open_row())
 
-        ui.Button(bottom, text="关闭", command=close).pack(side=tk.RIGHT)
-        ui.Button(bottom, text="导出 CSV", command=export_csv).pack(
+        ui.Button(btn_bar, text="关闭", command=close).pack(side=tk.RIGHT)
+        ui.Button(btn_bar, text="导出 CSV", command=export_csv).pack(
             side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="交换左右", command=swap).pack(
+        ui.Button(btn_bar, text="交换左右", command=swap).pack(
             side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="全部折叠",
+        ui.Button(btn_bar, text="全部折叠",
                    command=lambda: set_all_open(False)).pack(
             side=tk.RIGHT, padx=(0, 6))
-        ui.Button(bottom, text="全部展开",
+        ui.Button(btn_bar, text="全部展开",
                    command=lambda: set_all_open(True)).pack(
             side=tk.RIGHT, padx=(0, 6))
         win.protocol("WM_DELETE_WINDOW", close)
@@ -5299,7 +5306,7 @@ def build_hash_tab(parent, app=None):
             return
         win = ui.Toplevel(parent)
         win.title("校验哈希结果（勾选可写回 / 可统一修改时间）")
-        win.geometry("1320x700")
+        win.geometry("%dx%d" % ui.dialog_size(1180, 500, parent))
         try:
             win.transient(parent.winfo_toplevel())
             win.grab_set()
@@ -5327,13 +5334,13 @@ def build_hash_tab(parent, app=None):
         frame.grid(row=2, column=0, sticky="nsew", padx=12)
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
-        cols = (("chk", "选", 34, False), ("kind", "结果", 110, False),
-                ("rel", "相对路径", 320, True), ("expect", "库内哈希", 140, False),
+        cols = (("chk", "选", 40, False), ("kind", "结果", 115, False),
+                ("rel", "相对路径", 250, True), ("expect", "库内哈希", 140, False),
                 ("actual", "当前哈希", 140, False),
-                ("size", "当前大小", 110, False),
+                ("size", "当前大小", 100, False),
                 ("mtime", "修改时间", 200, False),
-                ("root", "所在目录", 160, True))
-        min_widths = {"chk": 30, "kind": 110, "expect": 120, "actual": 120,
+                ("root", "所在目录", 150, True))
+        min_widths = {"chk": 30, "kind": 110, "expect": 130, "actual": 130,
                       "size": 90, "mtime": 190}
         tv = ttk.Treeview(frame, columns=[c[0] for c in cols],
                           show="headings", selectmode="extended")
@@ -5432,7 +5439,7 @@ def build_hash_tab(parent, app=None):
                 if time_diff(r):
                     tags.append("timediff")
                 tv.insert("", tk.END, iid=f"r{i}", values=(
-                    "☐", kind, rel, short_sha(expect), short_sha(actual),
+                    "☐", kind, rel, short_sha(expect, 10), short_sha(actual, 10),
                     fmt_size(size) if size is not None else "—",
                     fmt_time(dmt) if dmt else "—",
                     short_path(root, 40)), tags=tuple(tags))
@@ -5771,7 +5778,8 @@ def build_hash_tab(parent, app=None):
     def open_manager():
         win = ui.Toplevel(parent)
         win.title("管理扫描目录")
-        win.geometry("1420x540")
+        dlg_w, dlg_h = ui.dialog_size(1120, 470, parent)
+        win.geometry(f"{dlg_w}x{dlg_h}")
         try:
             win.transient(parent.winfo_toplevel())
             win.grab_set()
@@ -5784,16 +5792,17 @@ def build_hash_tab(parent, app=None):
                             f"　　点最左列的勾选框 / Ctrl / Shift 多选："
                             f"「检查重复」找重复文件，"
                             f"「检查不重复」比对两个目录的镜像差异",
-                  foreground=COLOR["text_secondary"], wraplength=1080,
+                  foreground=COLOR["text_secondary"],
+                  wraplength=max(420, dlg_w - 40),
                   justify="left").grid(
             row=0, column=0, sticky="ew", padx=10, pady=(8, 4))
 
-        cols = [("chk", "选", 34, False), ("path", "扫描目录", 280, True),
-                ("db", "数据库", 280, True), ("count", "记录", 190, False),
-                ("time", "最后扫描", 320, False), ("mode", "模式", 90, False)]
+        cols = [("chk", "选", 40, False), ("path", "扫描目录", 300, True),
+                ("db", "数据库", 150, True), ("count", "记录", 190, False),
+                ("time", "最后扫描", 295, False), ("mode", "模式", 95, False)]
         # 记录数会显示「有效 6000 / 共 6000」，最后扫描会显示
         # 「今天（2026-10-27 08:43:48）」，最小宽度按完整文案留足。
-        min_widths = {"chk": 30, "count": 190, "time": 280, "mode": 80}
+        min_widths = {"chk": 36, "count": 175, "time": 270, "mode": 88}
         frame = ui.Frame(win)
         frame.grid(row=1, column=0, sticky="nsew", padx=10)
         frame.grid_rowconfigure(0, weight=1)
@@ -5856,8 +5865,20 @@ def build_hash_tab(parent, app=None):
         # 真实统计交给后台线程逐库算，主线程轮询回填 —— 大库也不会卡住窗口。
         stat_state = {"gen": 0}
 
+        def db_label(r):
+            """库文件名：默认就是「根目录\\filehash.db」，没必要把整条路径铺开
+            （和扫描目录列重复，还占掉 200 多像素）；自定义路径才显示全路径。"""
+            dbp = r.get("db") or os.path.join(r["path"], DB_NAME)
+            try:
+                rel = os.path.relpath(dbp, r["path"])
+                if not rel.startswith("..") and not os.path.isabs(rel):
+                    return rel
+            except (ValueError, OSError):
+                pass
+            return dbp
+
         def row_values(r, count):
-            return ("☐", r["path"], r["db"], count,
+            return ("☐", r["path"], db_label(r), count,
                     fmt_relative_time(r.get("last_scan")),
                     ROOT_MODE_NAMES.get(r.get("mode", ""), r.get("mode", "") or "—"))
 
@@ -6028,7 +6049,8 @@ def build_hash_tab(parent, app=None):
             win.grab_release()
             hw = ui.Toplevel(win)
             hw.title("扫描记录")
-            hw.geometry("1400x620")
+            hw_w, hw_h = ui.dialog_size(1120, 440, win)
+            hw.geometry(f"{hw_w}x{hw_h}")
             try:
                 hw.transient(win)
                 hw.grab_set()
@@ -6045,20 +6067,20 @@ def build_hash_tab(parent, app=None):
             frame.grid_rowconfigure(0, weight=1)
             frame.grid_columnconfigure(0, weight=1)
             cols = (("time", "时间", 200, False),
-                    ("op", "操作", 120, False),
+                    ("op", "操作", 70, False),
                     ("status", "状态", 70, False),
-                    ("count", "处理 / 总数", 130, False),
-                    ("changes", "新增 / 更新 / 删除", 170, False),
-                    ("failed", "失败", 50, False),
-                    ("detail", "说明", 260, True),
-                    ("root", "扫描目录", 300, True))
+                    ("count", "处理 / 总数", 120, False),
+                    ("changes", "新增 / 更新 / 删除", 175, False),
+                    ("failed", "失败", 60, False),
+                    ("detail", "说明", 180, True),
+                    ("root", "扫描目录", 180, True))
             htv = ttk.Treeview(frame, columns=[c[0] for c in cols],
                                show="headings", selectmode="browse")
             for key, title, width, stretch in cols:
                 htv.heading(key, text=title,
                             anchor="center" if key in ("status", "count", "failed") else "w")
                 htv.column(key, width=width,
-                           minwidth=190 if key == "time" else 60,
+                           minwidth=180 if key == "time" else 60,
                            anchor="center" if key in ("status", "count", "failed") else "w",
                            stretch=stretch)
             vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=htv.yview)
@@ -6135,6 +6157,19 @@ def build_hash_tab(parent, app=None):
             hw.protocol("WM_DELETE_WINDOW", close_history)
             fill_history()
 
+            def fit_rows():
+                """记录少时收短窗口（一条记录也留 440 高会空一大片）"""
+                try:
+                    n = len(htv.get_children())
+                    htv.configure(height=max(4, min(12, n or 4)))
+                    hw.update_idletasks()
+                    _w, _h = ui.dialog_size(hw_w, hw.winfo_reqheight() + 2, win)
+                    hw.geometry(f"{_w}x{_h}")
+                except Exception:
+                    pass
+
+            fit_rows()
+
         def check_mirror():
             sel = list(tv.selection())
             if len(sel) != 2:
@@ -6158,6 +6193,20 @@ def build_hash_tab(parent, app=None):
         tv.bind("<<TreeviewSelect>>", lambda _e: refresh_checks())
         tv.bind("<Button-1>", on_click, add="+")      # 点第一列 = 勾选 / 取消
         refresh()
+
+        def fit_rows():
+            """行数少（比如只管理两个目录）时把表格和窗口一起收短，
+            否则 470 高的窗口里 300 多像素是空白。"""
+            try:
+                n = len(tv.get_children())
+                tv.configure(height=max(4, min(12, n or 4)))
+                win.update_idletasks()
+                _w, _h = ui.dialog_size(dlg_w, win.winfo_reqheight() + 2, parent)
+                win.geometry(f"{_w}x{_h}")
+            except Exception:
+                pass
+
+        fit_rows()
 
     btn_start.config(command=start)
     btn_apply.config(command=apply_selected)
