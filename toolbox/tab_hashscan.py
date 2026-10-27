@@ -3058,10 +3058,24 @@ def build_hash_tab(parent, app=None):
                         variable=var_mode).grid(
             row=_i // 2, column=_i % 2, sticky="w", padx=(0, 18), pady=0)
 
+    # 完成提示音：默认不勾选，勾选后记住；扫描 / 补哈希 / 校验 / 合并等
+    # 正常结束时播放一次 Windows 系统提示音（中途停止或出错不响）。
+    # 放在表单区（v1.60）：它和扫描模式一样是「跑之前配好的偏好」，
+    # 原先挂在执行行右端，贴着窗口边缘，窄窗口还容易被进度条挤没。
+    var_sound = tk.BooleanVar(value=load_done_sound("hashscan"))
+    sound_row = ui.Frame(form)
+    sound_row.grid(row=5, column=1, columnspan=3, sticky="w", pady=2)
+    ttk.Checkbutton(sound_row, text="完成后提示音", variable=var_sound,
+                    command=lambda: save_done_sound("hashscan",
+                                                    var_sound.get())).pack(
+        side=tk.LEFT)
+    ui.Label(sound_row, text="（正常结束时响一声，中途停止或出错不响）",
+             foreground=COLOR["text_secondary"], font=FONTS["sm"]).pack(
+        side=tk.LEFT, padx=(8, 0))
+
     # ---------------- 执行 / 进度 ----------------
     run_row = ui.Frame(parent)
     run_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(2, 2))
-    run_row.grid_columnconfigure(4, weight=1)
 
     btn_start = ui.Button(run_row, text="开始扫描", bg=COLOR["accent"], fg=COLOR["text_on_accent"],
                           disabledforeground=COLOR["text_on_accent"],
@@ -3077,13 +3091,6 @@ def build_hash_tab(parent, app=None):
     bar_all.grid(row=0, column=2, sticky="w")
     bar_cur = ttk.Progressbar(run_row, mode="determinate", maximum=100, length=110)
     bar_cur.grid(row=0, column=3, sticky="w", padx=(8, 10))
-    # 完成提示音：默认不勾选，勾选后记住；扫描 / 补哈希 / 校验 / 合并等
-    # 正常结束时播放一次 Windows 系统提示音（中途停止或出错不响）。
-    var_sound = tk.BooleanVar(value=load_done_sound("hashscan"))
-    ttk.Checkbutton(run_row, text="完成后提示音", variable=var_sound,
-                    command=lambda: save_done_sound("hashscan",
-                                                    var_sound.get())).grid(
-        row=0, column=4, sticky="e")
 
     def maybe_beep():
         if var_sound.get():
@@ -3092,7 +3099,7 @@ def build_hash_tab(parent, app=None):
     lbl_prog = ui.Label(run_row, text="未开始", foreground=COLOR["text_secondary"],
                         justify="left")
     # 单独占一行：扫描结果文案可能很长，放按钮 / 进度条同一行会溢出窗口
-    lbl_prog.grid(row=1, column=0, columnspan=5, sticky="ew", pady=(4, 0))
+    lbl_prog.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 0))
 
     # ---------------- 搜索 ----------------
     search_row = ui.Frame(parent)
