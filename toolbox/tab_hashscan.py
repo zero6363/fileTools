@@ -660,6 +660,67 @@ def check_db_file(db_path):
     return True, "", "ok"
 
 
+# 这些 SQLite 错误意味着「写不进库」，继续扫下去只是白跑（每个文件错一次）
+_WRITE_FAIL_WORDS = ("readonly", "read-only", "disk i/o", "disk is full",
+                     "database or disk is full", "unable to open database file",
+                     "database is locked", "database table is locked")
+
+
+def is_write_failure(exc):
+    """这个异常是不是「库写不进去」——写不进去就没必要继续扫完了"""
+    text = str(exc).lower()
+    return any(w in text for w in _WRITE_FAIL_WORDS)
+
+
+def probe_db_write(db_path):
+    """写档模式开扫前探测库能不能写，返回 (ok, message)。
+
+    光看 os.access 不够：网络盘/U 盘写保护、NTFS 权限、被独占都可能
+    要到真正写那一刻才暴露。这里做一次「写了再回滚」的最小验证：
+
+      * 库不存在 → 只验证所在目录能否新建文件（建不了就一定存不下）
+      * 库存在   → 事务内改 PRAGMA user_version 再 ROLLBACK
+
+    user_version 落在库头部，是真实页写入；实测回滚后库文件大小、
+    前 200 字节、user_version 全部不变，不会污染库。
+    """
+    if os.path.exists(db_path):
+        if not os.access(db_path, os.W_OK):
+            return False, "数据库文件是只读的（只读属性 / 权限不足 / 写保护）"
+        try:
+            conn = sqlite3.connect(db_path, timeout=8, isolation_level=None)
+        except sqlite3.Error as e:
+            return False, f"无法以读写方式打开：{e}"
+        try:
+            ver = conn.execute("PRAGMA user_version").fetchone()[0] or 0
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute("PRAGMA user_version=%d" % (ver + 1))
+            finally:
+                conn.execute("ROLLBACK")
+            return True, ""
+        except sqlite3.Error as e:
+            if "locked" in str(e).lower() or "busy" in str(e).lower():
+                return False, "数据库正被其他程序占用，拿不到写锁"
+            return False, f"数据库写不进去：{e}"
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # 还没有库：必须能在目标目录建文件，否则扫完也存不下
+    folder = os.path.dirname(os.path.abspath(db_path)) or "."
+    probe = os.path.join(folder, ".filehash_write_probe")
+    try:
+        with open(probe, "wb") as f:
+            f.write(b"x")
+        os.remove(probe)
+    except OSError as e:
+        return False, f"目录不允许新建文件，无法建立数据库：{e}"
+    return True, ""
+
+
 # 统计结果缓存：db 路径 -> (库文件签名, stats 元组)
 # stats() 是整表聚合（无 WHERE，必须逐行回表），100 万条的库单次就要 300ms 以上。
 # 「管理…」列目录时要看每个库的记录数，库没被改过就没必要重算，按签名直接复用。
@@ -954,7 +1015,7 @@ class Scanner:
     """一次扫描任务。所有 UI 更新交给主线程轮询 ui 字典完成，避免跨线程操作 Tk。"""
 
     def __init__(self, root, db_path, prefix, mode, log, logfile=None,
-                 stop_event=None):
+                 stop_event=None, readonly=False):
         self.root = os.path.abspath(root)
         self.db_path = db_path
         self.prefix = prefix
@@ -963,6 +1024,8 @@ class Scanner:
         self.logfile = logfile
         self.stop = stop_event or threading.Event()
         self.started_at = time.time()
+        # 写档模式但开扫前探测到库写不进去时，整场退化成只读（差异只在列表里看）
+        self.readonly = readonly
         self.ui = {"phase": "准备", "done": 0, "total": 0,
                    "cur_name": "", "cur_done": 0, "cur_total": 0,
                    "done_flag": False, "aborted": False, "error": None,
@@ -975,8 +1038,8 @@ class Scanner:
 
     @property
     def writable(self):
-        """会写库的模式：快速建档 / 完整建档"""
-        return self.mode in WRITABLE_MODES
+        """会写库的模式：快速建档 / 完整建档（被降级成只读时为 False）"""
+        return self.mode in WRITABLE_MODES and not self.readonly
 
     @property
     def hashing(self):
@@ -1009,7 +1072,8 @@ class Scanner:
         self._log("=" * 60)
         self._log(f"扫描开始：{self.root}")
         self._log(f"模式：{MODE_NAMES.get(self.mode, self.mode)}"
-                  f"（{'写库' if self.writable else '只读，不写库'} · "
+                  f"（{'写库' if self.writable else '只读，不写库'}"
+                  f"{' · 库不可写已降级' if self.readonly else ''} · "
                   f"{'算哈希' if self.hashing else '不算哈希'}）；"
                   f"数据库：{self.db_path}"
                   + (f"；相对路径前缀：{self.prefix}/" if self.prefix else ""))
@@ -1117,6 +1181,18 @@ class Scanner:
                     self._log(f"[跳过文件] {rel}：{e}")
                 except sqlite3.Error as e:
                     self.stats["errors"] += 1
+                    if self.writable and is_write_failure(e):
+                        # 中途库突然写不进去（拔盘 / 磁盘满 / 被设成只读）：
+                        # 立刻停，别让用户对着几万个文件等一个注定存不下的扫描
+                        self.ui["error"] = f"数据库写不进去：{e}"
+                        self._log(f"[数据库写不进去] {rel}：{e}")
+                        self._log(f"已扫描 {i - 1}/{len(files)} 个文件，"
+                                  f"之前每 {COMMIT_EVERY} 条提交一次，已提交的已保存；"
+                                  f"剩下的不再继续。")
+                        self._log("请检查：只读属性 / 写保护开关 / 磁盘空间 / "
+                                  "磁盘是否还在")
+                        self.ui["aborted"] = True
+                        break
                     self._log(f"[数据库错误] {rel}：{e}")
                 # 无论成功/跳过都登记到 seen，避免仅因读失败被误判为「缺失」
                 seen_buf.append((stored,))
@@ -1129,7 +1205,15 @@ class Scanner:
 
             flush_seen()
             if self.writable:
-                db.conn.execute("COMMIT")
+                try:
+                    if db.conn.in_transaction:
+                        db.conn.execute("COMMIT")
+                except sqlite3.Error as e:
+                    self.stats["errors"] += 1
+                    if not self.ui["error"]:
+                        self.ui["error"] = f"数据库提交失败：{e}"
+                    self._log(f"[数据库写不进去] 提交失败：{e}"
+                              f"（最后一批可能没保存，之前的已提交）")
 
             # ---------- 阶段 4：缺失标记 ----------
             if self.ui["aborted"]:
@@ -3847,6 +3931,17 @@ def build_hash_tab(parent, app=None):
             messagebox.showwarning("数据库被占用", lmsg + f"\n\n{own_db}")
             return
         state["lock"] = lock
+
+        w_ok, w_msg = probe_db_write(own_db)
+        if not w_ok:
+            lock.release()
+            state["lock"] = None
+            messagebox.showerror(
+                "目标库无法写入",
+                f"{own_db}\n\n{w_msg}\n\n"
+                f"这个功能要往目标库里写记录，先处理权限 / 占用再试。")
+            return
+
         state["task"] = "seed"
         state["stop"] = threading.Event()
         task = SeedTask(parent_root, parent_db, root, own_db, prefix,
@@ -3988,6 +4083,18 @@ def build_hash_tab(parent, app=None):
             return
         state["lock"] = lock
         state["task"] = "merge"
+
+        # 合并是纯写操作：目标库写不进去，跑完只会得到一堆失败
+        w_ok, w_msg = probe_db_write(dbp)
+        if not w_ok:
+            lock.release()
+            state["lock"] = None
+            messagebox.showerror(
+                "目标库无法写入",
+                f"{dbp}\n\n{w_msg}\n\n"
+                f"合并要往这个库里写记录，先处理权限 / 占用再试。")
+            return
+
         state["stop"] = threading.Event()
         mt = MergeTask(plan["target_root"], dbp, sources,
                        upward=plan["upward"], log=log, stop_event=state["stop"])
@@ -4317,7 +4424,11 @@ def build_hash_tab(parent, app=None):
                     pass
                 done_db, failed_db = 0, len(items)
                 ok_ids.clear()
-                log(f"[写入失败] 已回滚 {db_path}：{e}")
+                if is_write_failure(e):
+                    log(f"[写入失败] {db_path} 写不进去：{e}")
+                    log("（只读属性 / 写保护 / 磁盘空间不足，已整库回滚，一条没写）")
+                else:
+                    log(f"[写入失败] 已回滚 {db_path}：{e}")
             except Exception as e:
                 done_db, failed_db = 0, len(items)
                 ok_ids.clear()
@@ -4837,12 +4948,31 @@ def build_hash_tab(parent, app=None):
         db_root, prefix = resolve_db_root(root, False)
         db_path = os.path.join(db_root, DB_NAME)
 
+        # quick_check 在大库上要扫全部页，先给个状态免得看起来像没反应
+        lbl_prog.config(text="检查数据库…")
+        try:
+            parent.update_idletasks()
+        except Exception:
+            pass
+
         ok, msg, kind = check_db_file(db_path)
+        force_readonly = False
         if kind == "unreadable":
             # 只读介质 / 没有权限 / 被别的程序独占：不是损坏，别怂恿用户改名。
-            # 扫描线程里会再用 immutable 快照 / 内存空库兜底，这里只提示。
-            log(f"[提示] {msg} —— 将尝试按只读快照读取；"
-                f"若仍失败则按空库比对（不写任何文件）")
+            # 但库都读不出来，扫出来全是「新增」—— 先问清楚，别让人白等一晚上。
+            log(f"[提示] {msg}")
+            if not messagebox.askyesno(
+                    "数据库打不开",
+                    f"{db_path}\n\n{msg}\n\n"
+                    f"读不到库里的记录，这次扫描会把所有文件都当成「新增」，"
+                    f"结果仅供参考，也不会写入任何文件。\n\n"
+                    f"是先去处理权限 / 关掉占用它的程序，\n"
+                    f"还是就这样按「只看差异」继续？"):
+                return
+            if mode in WRITABLE_MODES:
+                # 库连读都读不了，写更无从谈起：直接降级，不再问第二遍
+                force_readonly = True
+                log("库不可读，已改为只读扫描（不写数据库）")
         elif not ok:
             if not messagebox.askyesno(
                     "数据库可能损坏",
@@ -4865,9 +4995,30 @@ def build_hash_tab(parent, app=None):
             return
         state["lock"] = lock
 
+        # 写档模式：开扫前先真写一次验证（写进去再回滚），别等几万个文件
+        # 扫完才发现存不下。探测失败可以让用户选「降级只读」或直接取消。
+        if mode in WRITABLE_MODES and not force_readonly:
+            w_ok, w_msg = probe_db_write(db_path)
+            if not w_ok:
+                log(f"[警告] 数据库不可写：{w_msg}")
+                if not messagebox.askyesno(
+                        "数据库无法写入",
+                        f"{db_path}\n\n{w_msg}\n\n"
+                        f"现在扫下去，结果存不进数据库，等于白扫一遍。\n"
+                        f"建议先处理：去掉只读属性 / 关掉占用库的程序 / "
+                        f"换一个可写的位置。\n\n"
+                        f"要以「只读方式」继续扫描吗？\n"
+                        f"（差异只显示在列表里，可勾选后另存）"):
+                    lock.release()
+                    state["lock"] = None
+                    return
+                force_readonly = True
+                log("已改为只读扫描：结果只显示在列表里，不写数据库")
+
         state["stop"] = threading.Event()
         # 不写 scan_log.txt（日志只在界面里看）；子库固定自动并入
-        sc = Scanner(root, db_path, prefix, mode, log, "", state["stop"])
+        sc = Scanner(root, db_path, prefix, mode, log, "", state["stop"],
+                     readonly=force_readonly)
         state["scanner"] = sc
         state["task"] = "scan"
         state["running"] = True
