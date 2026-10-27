@@ -14,7 +14,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ui_scale
 
-APP_VERSION = "1.43"
+APP_VERSION = "1.44"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
