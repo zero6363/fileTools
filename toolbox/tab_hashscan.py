@@ -20,9 +20,13 @@
       先按磁盘当前大小粗筛，只对同尺寸的候选比对 SHA256（库里的哈希在大小 + 修改时间
       都对得上时直接复用），结果按组展开，可导出 CSV。跨目录、单目录内都能查。
   三、合并数据库（独立按钮，扫描不再自动并入）
-      「合并数据库」把当前目录下各级子文件夹的 filehash.db 合并进当前库：
-      rel_path 加上子目录前缀，重复记录**保留较新的那条**（先比 last_hash_time，
-      再比 mtime），合并成功后删除子库文件。只操作数据库，不读任何普通文件。
+      「合并数据库」先往上找最近的上级库：找到就把「本级库 + 各级子库」都并进
+      上级库（rel_path 加各自相对上级的目录前缀），本级库用完即删 ——
+      D:/code 扫出来的数据会回到 D:/filehash.db 里统一管理，不留第二份库；
+      没有上级库时退化成原来的方向：把各级子库并进本级库。
+      重复记录**保留较新的那条**（先比 last_hash_time，再比 mtime，
+      都相同再比两个库的最后扫描时间，让「缺失」标记也能传播），
+      合并成功后删除来源库文件。只操作数据库，不读任何普通文件。
   三之二、用上级库生成当前目录的库（反方向）
       「用上级库」从当前目录**逐级往上**找最近的 filehash.db（上级不一定是一级，
       一直找到盘符根），把属于本目录范围的记录搬过来、rel_path 去掉前缀，
@@ -52,6 +56,7 @@ UNIQUE(rel_path) 自带唯一索引，所以文档里的 idx_rel_path 不再重�
 import csv
 import hashlib
 import os
+import queue
 import sqlite3
 import subprocess
 import threading
@@ -285,16 +290,6 @@ def fmt_relative_time(ts):
     return f"{max(1, days // 365)}年前（{full}）"
 
 
-def fmt_date(ts):
-    """表格用短日期（完整时间仍在导出/详情里显示），避免列被撑宽。"""
-    if not ts:
-        return "—"
-    try:
-        return time.strftime("%Y-%m-%d", time.localtime(float(ts)))
-    except (ValueError, OverflowError, OSError):
-        return "—"
-
-
 def _like_escape(s):
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -461,6 +456,16 @@ class HashDB:
             self.conn = sqlite3.connect(uri, uri=True, timeout=15,
                                         isolation_level=None)
             self.readonly = True
+            # 只读连接专门调优：整表扫描时 mmap 少一次页拷贝、temp_store 放内存，
+            # 30 万条的库实测比默认设置快 25%~30%（跨库检索主要就吃这一块）。
+            for pragma in ("PRAGMA query_only=ON",
+                           "PRAGMA mmap_size=%d" % (256 * 1024 * 1024),
+                           "PRAGMA cache_size=-16000",
+                           "PRAGMA temp_store=MEMORY"):
+                try:
+                    self.conn.execute(pragma)
+                except sqlite3.Error:
+                    pass
         else:
             self.conn = sqlite3.connect(self.path, timeout=15, isolation_level=None)
             try:
@@ -501,12 +506,18 @@ class HashDB:
         except sqlite3.Error:
             return (0, 0, 0, 0, 0)
 
+    # status 前面那个一元「+」是有意的：不加时 SQLite 会先走 idx_status 取行、
+    # 再为 ORDER BY rel_path 建临时 B 树排序（30 万条实测 980ms）；加了以后
+    # 它顺着 rel_path 的唯一索引扫、天然有序（740ms），跨库检索直接受益。
+    # 只要「全部记录」这种大结果集，别去掉。
+    ACTIVE = "(+status='active')"
+
     def _search_sql(self, cond, order="rel_path"):
         return ("SELECT rel_path, sha256, file_size, mtime, last_hash_time, status "
                 "FROM file_records WHERE " + cond + " ORDER BY " + order)
 
     def search_path(self, kw, include_deleted=False):
-        cond = ("" if include_deleted else "status='active' AND ") + \
+        cond = ("" if include_deleted else self.ACTIVE + " AND ") + \
                "rel_path LIKE ? ESCAPE '\\'"
         return self.conn.execute(self._search_sql(cond),
                                  ("%" + _like_escape(kw) + "%",)).fetchall()
@@ -527,7 +538,7 @@ class HashDB:
             (_like_escape(kw.strip().lower()) + "%",)).fetchone()[0]
 
     def list_all(self, include_deleted=False):
-        cond = "1=1" if include_deleted else "status='active'"
+        cond = "1=1" if include_deleted else self.ACTIVE
         return self.conn.execute(self._search_sql(cond)).fetchall()
 
     def count_all(self, include_deleted=False):
@@ -2259,31 +2270,38 @@ def execute_sync_plan(plan, use_trash, log=None, on_progress=None):
 
 
 
-# 合并时「谁更新」的判定：先比 last_hash_time，再比 mtime，都相同就保留主库原值
+# 合并时「谁更新」的判定：先比 last_hash_time（上次校验），再比 mtime（文件修改时间）。
+# 两者都相同（典型是「快速建档」的记录，根本没有哈希时间）时，按两个库的
+# 「最后一次扫描完成时间」再比一次：来源库更新就让来源覆盖同值记录 ——
+# 否则来源库新扫出来的「缺失」标记永远传不过来（缺失记录只改 status，
+# last_hash_time / mtime 都还是老值，按前两条比永远算「没更新」）。
 _NEWER_SQL = (
     "(COALESCE(excluded.last_hash_time, 0) > COALESCE(file_records.last_hash_time, 0)"
     " OR (COALESCE(excluded.last_hash_time, 0) = COALESCE(file_records.last_hash_time, 0)"
     " AND COALESCE(excluded.mtime, 0) > COALESCE(file_records.mtime, 0)))"
 )
-
-MERGE_UPSERT_SQL = (
-    "INSERT INTO file_records"
-    " (rel_path, sha256, file_size, mtime, last_hash_time, status, note)"
-    " VALUES (?,?,?,?,?,?,?)"
-    " ON CONFLICT(rel_path) DO UPDATE SET"
-    " sha256 = CASE WHEN " + _NEWER_SQL +
-    " THEN excluded.sha256 ELSE file_records.sha256 END,"
-    " file_size = CASE WHEN " + _NEWER_SQL +
-    " THEN excluded.file_size ELSE file_records.file_size END,"
-    " mtime = CASE WHEN " + _NEWER_SQL +
-    " THEN excluded.mtime ELSE file_records.mtime END,"
-    " last_hash_time = CASE WHEN " + _NEWER_SQL +
-    " THEN excluded.last_hash_time ELSE file_records.last_hash_time END,"
-    " status = CASE WHEN " + _NEWER_SQL +
-    " THEN excluded.status ELSE file_records.status END,"
-    " note = CASE WHEN " + _NEWER_SQL +
-    " THEN excluded.note ELSE file_records.note END"
+_TIE_SQL = (
+    "(COALESCE(excluded.last_hash_time, 0) = COALESCE(file_records.last_hash_time, 0)"
+    " AND COALESCE(excluded.mtime, 0) = COALESCE(file_records.mtime, 0))"
 )
+
+
+def _merge_upsert(newer_expr):
+    """按「谁更新」的表达式拼 UPSERT：更新的那份整体覆盖，否则保留原值。"""
+    sets = []
+    for col in ("sha256", "file_size", "mtime", "last_hash_time", "status", "note"):
+        sets.append(" " + col + " = CASE WHEN " + newer_expr +
+                    " THEN excluded." + col + " ELSE file_records." + col + " END")
+    return ("INSERT INTO file_records"
+            " (rel_path, sha256, file_size, mtime, last_hash_time, status, note)"
+            " VALUES (?,?,?,?,?,?,?)"
+            " ON CONFLICT(rel_path) DO UPDATE SET" + ",".join(sets))
+
+
+# 来源库不比目标库新：只覆盖「记录本身更新」的行
+MERGE_UPSERT_SQL = _merge_upsert(_NEWER_SQL)
+# 来源库比目标库新：同值行也一并覆盖（缺失 / 删除标记得以生效）
+MERGE_UPSERT_TIE_SQL = _merge_upsert("(" + _NEWER_SQL + " OR " + _TIE_SQL + ")")
 
 
 def db_row_count(db_path):
@@ -2334,54 +2352,129 @@ def find_sub_dbs(root, skip=None):
     return out
 
 
-class MergeTask:
-    """把 root 下各级子目录的 filehash.db 合并进 root 自己的库。
+def db_scan_time(db_path):
+    """库的「最后一次扫描完成时间」，用来判断两个库谁的数据更新。
 
-    规则（按需求）：
-      · rel_path 加上「子库相对 root 的目录」前缀；
-      · 重复 rel_path 时**保留较新的那条**（先比 last_hash_time，再比 mtime）；
-      · 每个子库合并完立即提交，成功后**删除子库文件**（-wal / -shm / -journal 一起删）；
+    优先取扫描记录里最近一条完成时间；没有扫描记录的老库退回归档记录里
+    最新的上次校验时间；都没有就返回 0（谁都不比谁新，按记录逐条比）。
+    """
+    if not os.path.isfile(db_path):
+        return 0.0
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+    except sqlite3.Error:
+        return 0.0
+    try:
+        try:
+            row = conn.execute("SELECT MAX(finished_at) FROM scan_history").fetchone()
+            t = float((row and row[0]) or 0)
+        except (sqlite3.Error, TypeError, ValueError):
+            t = 0.0
+        if t:
+            return t
+        try:
+            row = conn.execute("SELECT MAX(last_hash_time) FROM file_records").fetchone()
+            return float((row and row[0]) or 0)
+        except (sqlite3.Error, TypeError, ValueError):
+            return 0.0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def plan_merge(root):
+    """决定「合并数据库」的目标库与来源库。
+
+    规则（v1.52 起）：
+      · 先往上找最近的上级库（一级一级往上看，直到盘符根）——
+        找到就把「本级库 + 各级子库」都并进那个上级库，rel_path 加本目录前缀，
+        本级库用完即删。这样 D:/code 扫出来的数据会回到 D:/filehash.db 里统一管理，
+        不会在 D:/code 里另起一份各说各话的库。
+      · 没有上级库时维持原样：把各级子库并进本级库。
+
+    返回 dict(target_root, target_db, sources=[(rel_dir, db_path, kind)], upward)，
+    kind：self = 本级库 / sub = 子目录库，两者合并完都会被删除。
+    """
+    root = os.path.abspath(root)
+    own_db = os.path.join(root, DB_NAME)
+    found = find_parent_db(root)
+    if found:
+        target_root, target_db = found
+        base = scope_prefix(root, target_root)          # 本级相对上级的前缀
+        sources = []
+        if os.path.isfile(own_db):
+            sources.append((base, own_db, "self"))
+        for rel_dir, sub_path in find_sub_dbs(root, skip=own_db):
+            prefix = "/".join(x for x in (base, rel_dir) if x)
+            sources.append((prefix, sub_path, "sub"))
+        if sources:
+            return dict(target_root=target_root, target_db=target_db,
+                        sources=sources, upward=True)
+    subs = find_sub_dbs(root, skip=own_db)
+    return dict(target_root=root, target_db=own_db,
+                sources=[(rel_dir, p, "sub") for rel_dir, p in subs],
+                upward=False)
+
+
+class MergeTask:
+    """把 sources 里的库合并进 target_db（rel_path 加各自前缀）。
+
+    规则：
+      · 逐条比「谁更新」：上次校验时间 → 文件修改时间 → 所属库的最后扫描时间；
+        来源库比目标库新时，同值记录也覆盖（缺失 / 删除标记这才传得过去）；
+      · 每个来源库合并完立即提交，成功后删除该库文件（-wal / -shm / -journal 一起删）；
       · 只操作数据库文件，不读取、不修改任何普通文件（连大小/时间都不看）。
     """
 
-    def __init__(self, root, db_path, log=None, stop_event=None):
-        self.root = os.path.abspath(root)
-        self.db_path = os.path.abspath(db_path)
+    def __init__(self, target_root, target_db, sources, upward=False,
+                 log=None, stop_event=None):
+        self.target_root = os.path.abspath(target_root)
+        self.db_path = os.path.abspath(target_db)
+        self.sources = list(sources)
+        self.upward = bool(upward)
         self.log = log or (lambda *_: None)
         self.stop = stop_event or threading.Event()
         self.started_at = time.time()
-        self.ui = {"phase": "扫描子库", "done": 0, "total": 0,
+        self.ui = {"phase": "扫描待合并的库", "done": 0, "total": len(self.sources),
                    "cur_name": "", "cur_done": 0, "cur_total": 0,
                    "done_flag": False, "aborted": False, "error": None}
         self.stats = dict(dbs=0, rows=0, inserted=0, updated=0,
-                          removed=0, errors=0, failed=[], removed_paths=[])
+                          removed=0, errors=0, failed=[], removed_paths=[],
+                          newer_src=0)
 
     def run(self):
         self.log("=" * 60)
-        self.log(f"合并数据库：{self.root} → {self.db_path}")
+        self.log(f"合并数据库：{len(self.sources)} 个库 → {self.db_path}"
+                 + ("（并进上级库）" if self.upward else ""))
         try:
-            subs = find_sub_dbs(self.root, skip=self.db_path)
-            self.ui["total"] = len(subs)
-            if not subs:
-                self.log("没有找到子目录里的 filehash.db")
+            if not self.sources:
+                self.log("没有需要合并的库")
                 return self.stats
-            self.log(f"找到 {len(subs)} 个子库，开始合并")
+            # 目标库的扫描时间要在合并前取：合并会改库，但不动扫描记录
+            dst_time = db_scan_time(self.db_path)
             db = HashDB(self.db_path)
             try:
-                db.open()          # 主库不存在时自动建表
-                for i, (rel_dir, sub_path) in enumerate(subs, 1):
+                db.open()          # 目标库不存在时自动建表
+                for i, (rel_dir, src_path, kind) in enumerate(self.sources, 1):
                     if self.stop.is_set():
                         self.ui["aborted"] = True
-                        self.log("已手动停止（已合并的子库都已提交并删除）")
+                        self.log("已手动停止（已合并的库都已提交并删除）")
                         break
-                    self.ui["phase"] = f"合并子库 {i}/{len(subs)}"
-                    self.ui["cur_name"] = rel_dir or os.path.basename(sub_path)
+                    self.ui["phase"] = f"合并 {i}/{len(self.sources)}"
+                    self.ui["cur_name"] = rel_dir or os.path.basename(src_path)
                     self.ui["done"] = i - 1
+                    src_time = db_scan_time(src_path)
+                    src_newer = src_time > dst_time
+                    if src_newer:
+                        self.stats["newer_src"] += 1
                     try:
-                        n, ins, upd = self._merge_one(db, rel_dir, sub_path)
+                        n, ins, upd = self._merge_one(db, rel_dir, src_path,
+                                                      src_newer)
                     except Exception as e:
                         self.stats["errors"] += 1
-                        self.stats["failed"].append(sub_path)
+                        self.stats["failed"].append(src_path)
                         self.log(f"[合并失败] {rel_dir or '.'}：{e}")
                         self.ui["done"] = i
                         continue
@@ -2390,17 +2483,18 @@ class MergeTask:
                     self.stats["inserted"] += ins
                     self.stats["updated"] += upd
                     self.log(f"[已合并] {rel_dir or '.'}：{n} 条"
-                             f"（新增 {ins}，更新 {upd}）")
-                    if self._remove_db(sub_path):
+                             f"（新增 {ins}，更新 {upd}）"
+                             + ("，来源库更新" if src_newer else ""))
+                    if self._remove_db(src_path):
                         self.stats["removed"] += 1
-                        self.stats["removed_paths"].append(sub_path)
+                        self.stats["removed_paths"].append(src_path)
                     self.ui["done"] = i
             finally:
                 db.close()
             s = self.stats
-            self.log(f"合并完成 —— {s['dbs']} 个子库，共 {s['rows']} 条"
+            self.log(f"合并完成 —— {s['dbs']} 个库，共 {s['rows']} 条"
                      f"（新增 {s['inserted']}，更新 {s['updated']}），"
-                     f"删除子库 {s['removed']} 个"
+                     f"删除来源库 {s['removed']} 个"
                      + (f"，失败 {s['errors']} 个" if s["errors"] else ""))
             return s
         except Exception as e:
@@ -2411,8 +2505,8 @@ class MergeTask:
         finally:
             self.ui["done_flag"] = True
 
-    def _merge_one(self, db, rel_dir, sub_path):
-        """合并一个子库，返回 (行数, 新增, 更新)"""
+    def _merge_one(self, db, rel_dir, sub_path, src_newer=False):
+        """合并一个来源库，返回 (行数, 新增, 更新)"""
         sub = sqlite3.connect(sub_path, timeout=10)
         try:
             rows = sub.execute(
@@ -2428,18 +2522,19 @@ class MergeTask:
                 for r in rows]
         if not data:
             return 0, 0, 0
+        sql = MERGE_UPSERT_TIE_SQL if src_newer else MERGE_UPSERT_SQL
         before = db.conn.execute("SELECT COUNT(*) FROM file_records").fetchone()[0]
         try:
-            db.conn.executemany(MERGE_UPSERT_SQL, data)
+            db.conn.executemany(sql, data)
         except sqlite3.OperationalError:
             # 老版本 SQLite 没有 UPSERT：退化成逐条比对
-            self._merge_slow(db, data)
+            self._merge_slow(db, data, src_newer)
         after = db.conn.execute("SELECT COUNT(*) FROM file_records").fetchone()[0]
         inserted = max(0, int(after) - int(before))
         return len(data), inserted, len(data) - inserted
 
     @staticmethod
-    def _merge_slow(db, data):
+    def _merge_slow(db, data, src_newer=False):
         for rel, sha, size, mt, lh, st, note in data:
             old = db.conn.execute(
                 "SELECT last_hash_time, mtime FROM file_records WHERE rel_path=?",
@@ -2450,8 +2545,10 @@ class MergeTask:
                     " last_hash_time, status, note) VALUES(?,?,?,?,?,?,?)",
                     (rel, sha, size, mt, lh, st, note))
                 continue
+            same = ((lh or 0) == (old[0] or 0) and (mt or 0) == (old[1] or 0))
             newer = ((lh or 0) > (old[0] or 0)
-                     or ((lh or 0) == (old[0] or 0) and (mt or 0) > (old[1] or 0)))
+                     or ((lh or 0) == (old[0] or 0) and (mt or 0) > (old[1] or 0))
+                     or (same and src_newer))
             if newer:
                 db.conn.execute(
                     "UPDATE file_records SET sha256=?, file_size=?, mtime=?,"
@@ -2605,6 +2702,10 @@ def build_hash_tab(parent, app=None):
         "lock": None,
         "anim": False,
         "multi": False,      # 当前表格是否为跨库结果（多显示「所属目录」列）
+        "search_gen": 0,     # 跨库检索的代数，新搜索会让旧线程自行退出
+        "search_q": None,    # 跨库检索的进度队列（线程 → 主线程）
+        "search_n_dbs": 0,   # 本次跨库检索的库个数
+        "data_gen": 0,       # 列表数据代数，翻页时据此复用已算好的筛选/计数
     }
 
     # ---------------- 表单 ----------------
@@ -2718,8 +2819,9 @@ def build_hash_tab(parent, app=None):
     var_scope = tk.StringVar(value="当前目录")
     ttk.Combobox(search_row, textvariable=var_scope, width=15, state="readonly",
                  values=["当前目录", "全部已管理目录"]).pack(side=tk.LEFT, padx=(0, 6))
-    ui.Button(search_row, text="搜索", width=6, command=lambda: do_search()).pack(
-        side=tk.LEFT, padx=(0, 6))
+    btn_search = ui.Button(search_row, text="搜索", width=6,
+                           command=lambda: do_search())
+    btn_search.pack(side=tk.LEFT, padx=(0, 6))
     var_inc_deleted = tk.BooleanVar(value=False)
     ttk.Checkbutton(search_row, text="含缺失", variable=var_inc_deleted).pack(
         side=tk.LEFT, padx=(0, 6))
@@ -2768,6 +2870,35 @@ def build_hash_tab(parent, app=None):
     tree.grid(row=1, column=0, sticky="nsew")
     vsb.grid(row=1, column=1, sticky="ns")
     add_table_hscroll(tree, tree_frame, row=2, column=0)
+
+    def _widen_time_cols():
+        """「修改时间 / 上次校验」改成显示到秒（186px 起）后，
+        旧配置里记的窄宽度会把时间切成两半 —— 一次性放宽到能放下完整时间，
+        之后仍以用户自己拖的宽度为准。没有记忆宽度时不用动：默认宽度本身就按
+        当前缩放换算，不会截字；这种情况也就不写配置文件。"""
+        sec = config.get_section("tables")
+        if sec.get("hashscan.timefmt") == 2:
+            return
+        widths = sec.get("hashscan.main")
+        if not isinstance(widths, dict) or not widths:
+            return
+        widths = dict(widths)                # get_section 是浅拷贝，别改到缓存
+        widened = False
+        for _k in ("mtime", "last"):
+            try:
+                _w = int(widths.get(_k) or 0)
+            except (TypeError, ValueError):
+                _w = 0
+            if 0 < _w < 200:
+                widths[_k] = 200
+                widened = True
+        if not widened:
+            return
+        sec["hashscan.main"] = widths
+        sec["hashscan.timefmt"] = 2
+        config.set_section("tables", sec)
+
+    _widen_time_cols()
     setup_tree_columns(tree, "hashscan.main")
 
     # 列表下方：左侧分类筛选（全部 / 新增 / 更新 / 删除 / 已计算 / 未计算），右侧分页
@@ -2944,10 +3075,34 @@ def build_hash_tab(parent, app=None):
                 return not r[1]
             return row_cat(r, p) == flt
 
-        base = [(r, p) for r, p in zip(all_rows, all_pend) if search_match(r)]
-        state["search_hits"] = len(base)
-        shown = [(r, p) for r, p in base if match(r, p)]
-        state["shown"] = shown
+        # 搜索过滤 + 分类计数只跟「数据 + 搜索条件」有关，翻页 / 切分类不必重算。
+        # 几百万行时这两步各是一次全量 Python 循环，比画 500 行贵得多。
+        base_sig = (state["data_gen"], kw, kind)
+        if state.get("base_sig") != base_sig:
+            base = [(r, p) for r, p in zip(all_rows, all_pend) if search_match(r)]
+            state["base"] = base
+            state["base_sig"] = base_sig
+            state["search_hits"] = len(base)
+            counts = {k: 0 for k in CATS}
+            counts["全部"] = len(base)
+            for r, p in base:
+                c = row_cat(r, p)
+                if c in counts:
+                    counts[c] += 1
+                counts[CAT_HASHED if r[1] else CAT_NOHASH] += 1
+            state["counts"] = counts
+            state["has_pending"] = any(p is not None for p in all_pend)
+        else:
+            base = state["base"]
+            counts = state["counts"]
+
+        shown_sig = (base_sig, flt)
+        if state.get("shown_sig") != shown_sig:
+            shown = [(r, p) for r, p in base if match(r, p)]
+            state["shown"] = shown
+            state["shown_sig"] = shown_sig
+        else:
+            shown = state["shown"]
 
         # ---- 分页切片 ----
         total = len(shown)
@@ -2978,19 +3133,12 @@ def build_hash_tab(parent, app=None):
             tree.insert("", tk.END, iid=f"r{start + k}",
                         values=("☐", short_path(root), rel,
                                 fmt_size(size_b) if size_b is not None else "—",
-                                fmt_date(mtime) if mtime else "—",
-                                fmt_date(last) if last else "—",
+                                fmt_time(mtime),
+                                fmt_time(last),
                                 short_sha(sha, 10) or hashed, text),
                         tags=(tag,) if tag else ())
 
-        # 分类计数 + 高亮当前筛选（搜索时按命中结果计数）
-        counts = {k: 0 for k in CATS}
-        counts["全部"] = len(base)
-        for r, p in base:
-            c = row_cat(r, p)
-            if c in counts:
-                counts[c] += 1
-            counts[CAT_HASHED if r[1] else CAT_NOHASH] += 1
+        # 分类计数 + 高亮当前筛选（计数在上面按数据代数缓存过，这里直接用）
         for k, b in filter_btns.items():
             on = (k == flt)
             try:
@@ -3014,9 +3162,9 @@ def build_hash_tab(parent, app=None):
         except Exception:
             pass
 
+        # 有没有差异行只跟数据有关：在缓存那一层顺手算好，翻页时不用再扫全表
         lbl_hint.config(
-            text="勾选差异行后可跨页写入"
-            if any(p for _r, p in shown) else "")
+            text="勾选差异行后可跨页写入" if state.get("has_pending") else "")
         sync_tree_selection()
         btn_sel_all.config(state=tk.NORMAL if page_items else tk.DISABLED)
         btn_sel_all_pages.config(state=tk.NORMAL if shown else tk.DISABLED)
@@ -3078,6 +3226,10 @@ def build_hash_tab(parent, app=None):
         return out
 
     def prune_checked():
+        # 没勾任何行时直接跳过：给几十万行建一遍 row_key 集合比画一页还贵，
+        # 而翻页 / 切分类都会走到这里。
+        if not state["checked"]:
+            return
         valid = {row_key(r, p) for r, p in zip(state["rows"], state["pending"])}
         state["checked"].intersection_update(valid)
 
@@ -3167,8 +3319,10 @@ def build_hash_tab(parent, app=None):
         prune_checked()
         refresh_checks()
         n = len(state["checked"])
-        nd = sum(1 for r, p in zip(state["rows"], state["pending"])
-                 if p is not None and row_key(r, p) in state["checked"])
+        nd = 0
+        if n:
+            nd = sum(1 for r, p in zip(state["rows"], state["pending"])
+                     if p is not None and row_key(r, p) in state["checked"])
         if n:
             text = f"已选 {n} 条"
             if nd != n:
@@ -3198,6 +3352,7 @@ def build_hash_tab(parent, app=None):
         state["rows"] = rows
         state["pending"] = (list(pending) if pending is not None
                             and len(pending) == len(rows) else [None] * len(rows))
+        state["data_gen"] += 1     # 数据换代：render 里缓存的筛选结果自动失效
         state["checked"].clear()
         state["syncing"] = False
         state["page"] = 0          # 新数据从第一页开始
@@ -3244,7 +3399,11 @@ def build_hash_tab(parent, app=None):
         return out
 
     def query_one(db_path, kw, kind, inc):
-        """查一个库；不截断条数，全部交给列表分页显示。"""
+        """查一个库：一次查询取全量，条数就是 len(rows)。
+
+        以前每种查询都额外跑一遍 COUNT(*) 只为拿总数，等于把同一张表扫两次；
+        现在结果集不分页截断，len() 就是总数，跨库检索的 SQL 时间直接砍半。
+        """
         db = HashDB(db_path)
         try:
             try:
@@ -3253,17 +3412,14 @@ def build_hash_tab(parent, app=None):
                 db.open()
             if not kw:
                 rows = db.list_all(include_deleted=inc)
-                total = db.count_all(include_deleted=inc)
             elif kind.startswith("按路径"):
                 rows = db.search_path(kw, include_deleted=inc)
-                total = db.count_path(kw, include_deleted=inc)
             else:
                 rows = db.search_hash(kw)
-                total = db.count_hash(kw)
-            return [tuple(r) for r in rows], total
+            return [tuple(r) for r in rows]
         except Exception as e:
             log(f"查询 {db_path} 失败：{e}")
-            return [], 0
+            return []
         finally:
             db.close()
 
@@ -3274,6 +3430,14 @@ def build_hash_tab(parent, app=None):
         inc = var_inc_deleted.get()
         multi = var_scope.get().startswith("全部")
         state["filter"] = "全部"
+        # 新一轮检索：作废还在跑的上一轮跨库查询（它会在下一个库开始时自行退出），
+        # 否则上一轮查完会把「当前目录」的结果覆盖掉。
+        state["search_gen"] += 1
+        state["search_q"] = None
+        try:
+            btn_search.config(state=tk.NORMAL)
+        except Exception:
+            pass
 
         if state["source"] == "scan":
             state["search_kw"] = kw
@@ -3296,31 +3460,82 @@ def build_hash_tab(parent, app=None):
                 messagebox.showwarning("提示", err)
                 return
             db.close()
-            rows, total = query_one(current_db_path(), kw, kind, inc)
+            rows = query_one(current_db_path(), kw, kind, inc)
             fill_tree(rows, multi=False, source="db")
             label = "数据库全部记录" if not kw else f"数据库搜索「{kw}」"
-        else:
-            targets = managed_dbs()
-            if not targets:
-                messagebox.showwarning(
-                    "提示", "还没有可搜的库。先扫描几个目录，它们会自动记进「已管理目录」。")
-                return
-            rows, total = [], 0
-            for root_path, dbp in targets:
-                part, t = query_one(dbp, kw, kind, inc)
-                total += t
-                rows.extend([tuple(r) + (root_path,) for r in part])
-            rows.sort(key=lambda r: (r[6].lower(), r[0].lower()))
-            fill_tree(rows, multi=True, source="db")
-            label = ("数据库全部记录" if not kw else f"数据库搜索「{kw}」") + \
-                    f"（{len(targets)} 个库）"
+            lbl_count.config(text=f"命中 {len(rows)} 条")
+            log(f"{label}命中 {len(rows)} 条")
+            return
 
-        if total > len(rows):
-            lbl_count.config(text=f"命中 {total} 条，显示 {len(rows)} 条")
-            log(f"{label}命中 {total} 条，实际显示 {len(rows)} 条")
-        else:
-            lbl_count.config(text=f"命中 {total} 条")
-            log(f"{label}命中 {total} 条")
+        targets = managed_dbs()
+        if not targets:
+            messagebox.showwarning(
+                "提示", "还没有可搜的库。先扫描几个目录，它们会自动记进「已管理目录」。")
+            return
+        # 跨库检索放到后台线程：库多 / 库大时一次性查完要好几秒，
+        # 以前是在主线程里死等，界面整块卡住、连进度都看不到。
+        # 线程只往队列里塞结果，表格和文字一律回主线程更新。
+        gen = state["search_gen"]
+        q = queue.Queue()
+        state["search_q"] = q
+        state["search_n_dbs"] = len(targets)
+        btn_search.config(state=tk.DISABLED)
+        lbl_count.config(text=f"正在查询 0/{len(targets)} 个库…")
+        log(f"开始在 {len(targets)} 个库里搜索"
+            + (f"「{kw}」" if kw else "全部记录"))
+
+        def worker():
+            rows = []
+            try:
+                for i, (root_path, dbp) in enumerate(targets, 1):
+                    if gen != state["search_gen"]:
+                        return                  # 已被新的搜索取代
+                    part = query_one(dbp, kw, kind, inc)
+                    rows.extend([tuple(r) + (root_path,) for r in part])
+                    q.put(("progress", i, root_path, len(rows)))
+            except Exception as e:
+                q.put(("error", str(e)))
+                return
+            q.put(("done", rows))
+
+        threading.Thread(target=worker, daemon=True).start()
+        parent.after(120, lambda: poll_search(gen))
+
+    def poll_search(gen):
+        """主线程轮询跨库检索进度，查完再填表（表格操作只能在主线程做）。"""
+        if gen != state["search_gen"]:
+            return                              # 这一轮已被新搜索取代
+        q = state.get("search_q")
+        if q is None:
+            return
+        done_rows = None
+        while True:
+            try:
+                item = q.get_nowait()
+            except queue.Empty:
+                break
+            if item[0] == "progress":
+                _, i, _root_path, got = item
+                lbl_count.config(
+                    text=f"正在查询 {i}/{state['search_n_dbs']} 个库 · "
+                         f"已读到 {got} 条…")
+            elif item[0] == "error":
+                log(f"搜索出错：{item[1]}")
+            elif item[0] == "done":
+                done_rows = item[1]
+        if done_rows is None:
+            parent.after(120, lambda: poll_search(gen))
+            return
+        state["search_q"] = None
+        btn_search.config(state=tk.NORMAL)
+        kw = var_kw.get().strip()
+        n = len(done_rows)
+        # 每个库内部已经按 rel_path 排好序，跨库保持「按库分组」的顺序即可，
+        # 不再对合并后的几百万行做一次全量排序（那一步比查询本身还慢）。
+        fill_tree(done_rows, multi=True, source="db")
+        lbl_count.config(text=f"命中 {n} 条")
+        log(f"{'数据库搜索「%s」' % kw if kw else '数据库全部记录'}"
+            f"（{state['search_n_dbs']} 个库）命中 {n} 条")
 
     def show_db_view():
         """切回数据库视图并刷新列表（补哈希 / 合并 / 校验写回后用）。"""
@@ -3517,7 +3732,7 @@ def build_hash_tab(parent, app=None):
         state["scanner"] = None
 
     def merge_dbs():
-        """把当前目录下各级子文件夹的 filehash.db 合并进当前库（只动数据库）"""
+        """合并数据库：有上级库就并上去（本级 + 子库 → 上级库），否则子库并本级。"""
         if state["running"]:
             messagebox.showinfo("提示", "当前有任务在跑，等它结束再合并")
             return
@@ -3525,44 +3740,62 @@ def build_hash_tab(parent, app=None):
         if not root or not os.path.isdir(root):
             messagebox.showwarning("提示", "请先选择一个存在的扫描根目录")
             return
-        db_root, _prefix = resolve_db_root(root, False)
-        dbp = os.path.join(db_root, DB_NAME)
-        subs = find_sub_dbs(db_root, skip=dbp)
-        if not subs:
+        plan = plan_merge(root)
+        sources = plan["sources"]
+        if not sources:
             messagebox.showinfo(
-                "提示", f"「{db_root}」下面没有子文件夹的 {DB_NAME}，不需要合并")
+                "提示",
+                f"「{root}」自己没有 {DB_NAME}，各级子文件夹里也没有找到，"
+                f"没有需要合并的库。")
             return
+
         lines = []
-        for rel_dir, sp in subs[:10]:
+        for rel_dir, sp, kind in sources[:10]:
             n = db_row_count(sp)
-            lines.append(f"  · {rel_dir}  （{'读不出' if n < 0 else str(n) + ' 条'}）")
-        if len(subs) > 10:
-            lines.append(f"  · …… 另有 {len(subs) - 10} 个")
-        if not messagebox.askyesno(
-                "合并数据库",
-                f"把「{db_root}」下 {len(subs)} 个子库合并进来？\n\n"
-                + "\n".join(lines)
-                + f"\n\n目标库：{dbp}\n"
-                  f"· 记录路径加子目录前缀；重复的保留较新的那条\n"
-                  f"· 合并成功后删除子库文件（连同 -wal / -shm）\n"
-                  f"· 只操作数据库，不读取、不修改任何普通文件"):
+            tag = "本级" if kind == "self" else "子目录"
+            lines.append(f"  · {rel_dir or '.'}（{tag}）"
+                         f"  {'读不出' if n < 0 else str(n) + ' 条'}")
+        if len(sources) > 10:
+            lines.append(f"  · …… 另有 {len(sources) - 10} 个")
+
+        dst_time = db_scan_time(plan["target_db"])
+        if plan["upward"]:
+            title = "合并数据库（并进上级库）"
+            head = (f"「{root}」的数据会并进上级库：\n"
+                    f"{plan['target_db']}\n\n"
+                    f"参与合并的库（合并成功后删除）：\n")
+        else:
+            title = "合并数据库"
+            head = (f"把「{plan['target_root']}」下的 {len(sources)} 个子库"
+                    f"合并进来？\n\n")
+        msg = (head + "\n".join(lines)
+               + f"\n\n目标库：{plan['target_db']}"
+               + (f"\n最后一次扫描：{fmt_time(dst_time)}" if dst_time else "")
+               + "\n\n· 逐条比「上次校验 → 修改时间 → 库的最后扫描时间」，谁新用谁"
+               + "\n· 来源库更新时，连「缺失」标记一起覆盖目标库"
+               + "\n· 合并成功后删除来源库（连同 -wal / -shm）"
+               + "\n· 只操作数据库，不读取、不修改任何普通文件")
+        if not messagebox.askyesno(title, msg):
             return
+
+        dbp = plan["target_db"]
         lock = DbLock(dbp)
-        ok, msg = lock.acquire()
+        ok, lmsg = lock.acquire()
         if not ok:
-            messagebox.showwarning("数据库被占用", msg + f"\n\n{dbp}")
+            messagebox.showwarning("数据库被占用", lmsg + f"\n\n{dbp}")
             return
         state["lock"] = lock
         state["task"] = "merge"
         state["stop"] = threading.Event()
-        mt = MergeTask(db_root, dbp, log, state["stop"])
+        mt = MergeTask(plan["target_root"], dbp, sources,
+                       upward=plan["upward"], log=log, stop_event=state["stop"])
         state["scanner"] = mt
         state["running"] = True
         btn_start.config(state=tk.DISABLED)
         btn_stop.config(state=tk.NORMAL)
         bar_all["value"] = 0
         bar_cur["value"] = 0
-        lbl_prog.config(text=f"准备合并 {len(subs)} 个子库…")
+        lbl_prog.config(text=f"准备合并 {len(sources)} 个库…")
 
         def worker():
             try:
@@ -3920,6 +4153,7 @@ def build_hash_tab(parent, app=None):
                 keep_rows.append(r)
                 keep_pend.append(p)
             state["rows"], state["pending"] = keep_rows, keep_pend
+            state["data_gen"] += 1     # 数据换代：缓存的筛选 / 计数失效
         prune_checked()
         left = sum(1 for p in state["pending"] if p)
         if left == 0 or not any(row_cat(r, p) == state["filter"]
@@ -4332,6 +4566,7 @@ def build_hash_tab(parent, app=None):
         errored = bool(mt and mt.ui.get("error"))
         aborted = bool(mt and mt.ui.get("aborted"))
         completed = not errored and not aborted
+        upward = bool(mt and getattr(mt, "upward", False))
         if completed:
             maybe_beep()
         if errored:
@@ -4340,13 +4575,13 @@ def build_hash_tab(parent, app=None):
             bar_all["value"] = 0 if aborted else 100
             lbl_prog.config(
                 text=f"{'已停止' if aborted else '合并完成'} —— "
-                     f"{s.get('dbs', 0)} 个子库，共 {s.get('rows', 0)} 条"
+                     f"{s.get('dbs', 0)} 个库，共 {s.get('rows', 0)} 条"
                      f"（新增 {s.get('inserted', 0)}，更新 {s.get('updated', 0)}），"
-                     f"已删子库 {s.get('removed', 0)} 个"
+                     f"已删来源库 {s.get('removed', 0)} 个"
                      + (f"，失败 {s.get('errors', 0)} 个" if s.get("errors") else ""))
         if mt is not None and not errored:
             try:
-                remember_root(mt.root, mt.db_path, touch_last=completed)
+                remember_root(mt.target_root, mt.db_path, touch_last=completed)
             except Exception:
                 pass
         if mt is not None:
@@ -4357,17 +4592,21 @@ def build_hash_tab(parent, app=None):
                 processed=int(s.get("dbs", 0)),
                 added=s.get("inserted", 0), updated=s.get("updated", 0),
                 removed=s.get("removed", 0), failed=s.get("errors", 0),
-                detail=(f"合并子库 {s.get('dbs', 0)} 个"
-                        f" · 共 {s.get('rows', 0)} 条记录"
+                detail=(("并进上级库" if upward else "合并子库")
+                        + f" {s.get('dbs', 0)} 个 · 共 {s.get('rows', 0)} 条记录"
                         + (" · 中途停止" if aborted else "")),
                 started_at=mt.started_at)
-        # 子库文件已删 → 顺手把「已管理目录」里对应的条目去掉
+        # 来源库文件已删 → 顺手把「已管理目录」里对应的条目去掉
         if s.get("removed_paths"):
             try:
                 roots = drop_roots_by_db(load_roots(), s["removed_paths"])
                 save_roots(roots)
             except Exception:
                 pass
+        # 并进上级库后本级已经没有库了：把扫描根切到上级，让用户直接看到合并结果
+        if upward and not errored and mt is not None:
+            var_root.set(mt.target_root)
+            log(f"本级库已并入上级库 {mt.db_path}，扫描根已切到 {mt.target_root}")
         refresh_managed()
         refresh_db_info()
         if not errored:

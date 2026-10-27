@@ -16,8 +16,8 @@ from .theme import FONTS
 
 from . import config
 from .common import (APP_TITLE, _module_available, add_table_hscroll,
-                     clean_path, clear_log, make_log_panel, make_tip,
-                     paste_path_to, run_task, setup_tree_columns)
+                     app_data_roots, clean_path, clear_log, make_log_panel,
+                     make_tip, paste_path_to, run_task, setup_tree_columns)
 from .theme import COLOR
 
 
@@ -36,10 +36,15 @@ def _tool_base_dir():
 
 
 def _bundled(rel):
-    """打包后资源在 sys._MEIPASS，开发时在脚本同目录"""
-    if getattr(sys, "frozen", False):
-        return os.path.join(sys._MEIPASS, rel)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), rel)
+    """资源定位（onedir / onefile / 源码 三态通用）：
+    PyInstaller 打包后资源在 _internal（onedir）或 _MEIPASS（onefile），
+    源码运行在项目根；统一按候选根探测第一个存在的文件。"""
+    roots = app_data_roots()
+    for root in roots:
+        p = os.path.join(root, rel)
+        if os.path.isfile(p):
+            return p
+    return os.path.join(roots[0], rel)
 
 
 MOZ_CJPEG = _bundled(os.path.join("bin", "mozjpeg", "cjpeg.exe"))

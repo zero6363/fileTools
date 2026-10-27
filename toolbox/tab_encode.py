@@ -28,6 +28,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tkinter import filedialog, messagebox
+from . import common
 from . import ui, ui as ttk
 from .theme import FONTS
 
@@ -108,11 +109,7 @@ _MI_TRIED = False
 
 
 def _mediainfo_dll_path():
-    roots = [_base_dir()]
-    meipass = getattr(sys, "_MEIPASS", "")
-    if meipass:
-        roots.append(meipass)
-    for root in roots:
+    for root in common.app_data_roots():
         for rel in (("bin", "mediainfo", "MediaInfo.dll"), ("MediaInfo.dll",)):
             p = os.path.join(root, *rel)
             if os.path.isfile(p):
@@ -184,11 +181,7 @@ def _mediainfo_dll_mode(path):
 
 def _mediainfo_cli_path():
     """找 MediaInfo 命令行版（可选；放进 bin/mediainfo 或 exe 同目录即启用）"""
-    roots = [_base_dir()]
-    meipass = getattr(sys, "_MEIPASS", "")
-    if meipass:
-        roots.append(meipass)
-    for root in roots:
+    for root in common.app_data_roots():
         for rel in (("bin", "mediainfo", "MediaInfo.exe"), ("MediaInfo.exe",)):
             p = os.path.join(root, *rel)
             if os.path.isfile(p):
@@ -261,13 +254,9 @@ def _exe_pair(dir_path):
 
 
 def _search_roots():
-    """ffmpeg 可能的存放位置：exe 目录 / 打包解压目录 / 程序目录"""
-    roots = [_base_dir()]
-    meipass = getattr(sys, "_MEIPASS", "")
-    if meipass:
-        roots.append(meipass)
+    """ffmpeg 可能的存放位置：exe 目录 / _internal（onedir）/ 打包解压目录 / 程序目录"""
     dirs = []
-    for root in roots:
+    for root in common.app_data_roots():
         dirs += [root, os.path.join(root, "bin", "ffmpeg"), os.path.join(root, "ffmpeg")]
     return dirs
 

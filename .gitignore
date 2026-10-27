@@ -4,6 +4,7 @@ build/
 dist/
 *.spec
 /文件工具箱.exe
+/文件工具箱_便携版/
 
 # Python 缓存
 __pycache__/

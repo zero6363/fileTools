@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """通用基础设施：日志 / 后台任务 / 常用输入行 / Windows 文件拖放"""
 import os
+import sys
 import queue
 import re
 import shutil
@@ -15,9 +16,31 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ttk_font, ui_scale
 
-APP_VERSION = "1.50"
+APP_VERSION = "1.52"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
+
+
+def app_data_roots():
+    """PyInstaller 打包后资源/数据可能的根目录（按优先级返回列表）：
+      · onedir   -> exe 同级的 _internal 目录（PyInstaller 把 add-data / add-binary 放这里）
+      · onefile  -> sys._MEIPASS（临时解压目录）
+      · 两者都包含 exe 所在目录本身（兜底）
+      · 源码运行 -> 项目根目录（bin/ 实际在此）
+    各模块据此探测 mozjpeg / MediaInfo / ffmpeg 等资源，onedir / onefile / 源码三态通用。
+    """
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+        roots = [base]
+        internal = os.path.join(base, "_internal")
+        if os.path.isdir(internal):
+            roots.append(internal)
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass and meipass not in roots:
+            roots.append(meipass)
+        return roots
+    # 源码运行：toolbox/common.py -> toolbox -> 项目根
+    return [os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
 
 
 # ============================================================

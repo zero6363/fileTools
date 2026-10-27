@@ -2,8 +2,10 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-:: ============ 一键打包：文件工具箱.exe ============
-:: 源码已按功能拆分为 toolbox/ 包，此处打包仍为单个无控制台 exe
+:: ============ 一键打包：文件工具箱_便携版\ ============
+:: 源码已按功能拆分为 toolbox/ 包；产物是 onedir 便携版文件夹
+:: （整个文件夹可拷贝带走，配置和日志都写在 exe 同级，不写 AppData）。
+:: 不再出单文件 exe：onefile 每次启动都要解压到临时目录，启动慢、退出也慢。
 
 set "PY=%LOCALAPPDATA%\Programs\Python\Python315\python.exe"
 if not exist "%PY%" (
@@ -30,7 +32,7 @@ echo [1/3] 清理旧构建 ...
 if exist .pybuild rmdir /s /q .pybuild
 
 echo [2/3] PyInstaller 打包中（约 1 分钟，请稍候）...
-"%PY%" -m PyInstaller --onefile --windowed --noconfirm --clean ^
+"%PY%" -m PyInstaller --onedir --windowed --noconfirm --clean ^
     --name 文件工具箱 ^
     --add-data "%CD%\bin\mozjpeg;bin/mozjpeg" ^
     --add-binary "%CD%\bin\mediainfo\MediaInfo.dll;bin/mediainfo" ^
@@ -52,23 +54,29 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [3/3] 复制到根目录并清理 ...
-:: 杀毒软件可能瞬时占用旧 exe，重试几次再报错
-set "_copied="
-for /l %%i in (1,1,5) do (
-    if not defined _copied (
-        copy /y ".pybuild\dist\文件工具箱.exe" "文件工具箱.exe" >nul 2>nul
-        if not errorlevel 1 set "_copied=1"
-        if not defined _copied (
-            echo   复制被占用，1 秒后重试 %%i/5 ...
-            timeout /t 1 /nobreak >nul
+echo [3/3] 整理便携版文件夹 ...
+set "PORTABLE=文件工具箱_便携版"
+:: 删除旧便携版（可能正被运行占用，重试几次）
+if exist "%PORTABLE%" (
+    set "_delok="
+    for /l %%i in (1,1,5) do (
+        if not defined _delok (
+            rmdir /s /q "%PORTABLE%" >nul 2>nul
+            if not exist "%PORTABLE%" ( set "_delok=1" ) else (
+                echo   旧便携版被占用，1 秒后重试 %%i/5 ...
+                timeout /t 1 /nobreak >nul
+            )
         )
     )
+    if exist "%PORTABLE%" (
+        echo [警告] 无法删除旧便携版（可能被占用），将覆盖更新。
+    )
 )
-if not defined _copied (
-    echo [错误] 复制 exe 失败：文件被其他程序占用
-    echo        请关闭正在运行的文件工具箱后重试，或手动复制：
-    echo        .pybuild\dist\文件工具箱.exe -^> 文件工具箱.exe
+:: 复制整个 onedir 产物为便携版文件夹（可直接整体拷贝带走，不写系统目录）
+robocopy ".pybuild\dist\文件工具箱" "%PORTABLE%" /E /R:3 /W:1 /NFL /NDL /NJH /NJS
+if errorlevel 8 (
+    echo [错误] 复制便携版失败，请检查上方信息或手动复制：
+    echo        .pybuild\dist\文件工具箱 -^> %PORTABLE%\
     pause
     exit /b 1
 )
@@ -76,6 +84,6 @@ rmdir /s /q .pybuild
 
 echo.
 echo ========================================
-echo   打包完成: 文件工具箱.exe
+echo   打包完成: %PORTABLE%\  （便携版文件夹，可整体复制使用）
 echo ========================================
 pause
