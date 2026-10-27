@@ -187,6 +187,8 @@ class ToolboxApp:
         self._drop_handlers = {}  # {frame: handler} 各工具页注册的拖放处理器
         self._show_handlers = {}  # {frame: handler} 各工具页注册的「切换到该页时」回调
         self._current_index = 0
+        self._hash_api = None    # ⑲ 页面首次打开后才创建（懒加载）
+        self._encode_api = None  # ⑦ 同上
         builders = [
             ("① 文件分组", build_group_tab),
             ("② 移动到根目录", build_flatten_tab),
@@ -208,20 +210,13 @@ class ToolboxApp:
             ("⑱ 文本翻译", build_translate_tab),
             ("⑲ 硬盘哈希扫描", build_hash_tab),
         ]
-        for index, (title, builder) in enumerate(builders):
-            frame = ui.Frame(page_host)
-            if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
-                            build_compress_tab, build_rsbackup_tab, build_encode_tab,
-                            build_translate_tab, build_hash_tab):
-                result = builder(frame, self)
-                if builder is build_hash_tab:
-                    # 暴露给自动化冒烟测试（不影响正常使用）
-                    self._hash_api = result
-                elif builder is build_encode_tab:
-                    self._encode_api = result
-            else:
-                builder(frame)
-            self.tool_frames.append(frame)
+        # 启动时只造 19 个空容器，页面内容等第一次点开再建。
+        # 19 页 CTk 控件一次性造完要 2.3 秒（占启动耗时八成），
+        # 而用户每次只看一页，不该为没打开的 18 页付这笔时间。
+        self._builders = builders
+        self._built = [False] * len(builders)
+        for _index in range(len(builders)):
+            self.tool_frames.append(ui.Frame(page_host))
 
         # 导航按场景分组显示；nav_items 仍按工具编号索引，
         # show_tool 的编号映射不受左侧显示顺序影响。
@@ -305,8 +300,52 @@ class ToolboxApp:
             self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑦视频常用压制 / "
                                     "⑧视频横竖屏 / ⑯图片压缩 / ⑱文本翻译 / ⑲硬盘哈希扫描）")
 
+    def _build_page(self, index):
+        """首次打开某页时才构建它的内容（空容器在启动时已经建好）。
+
+        CTk 控件是一个个 canvas 画出来的，19 页一次性造完要 2.3 秒左右，
+        占了冷启动的八成；而用户每次只看一页，拆成按需构建后
+        冷启动只造第 ① 页，其余各页打开时花 40~130 ms。
+        """
+        if self._built[index]:
+            return
+        # 先置位：即使构建抛异常也标记为已尝试，避免每次切页都重试一遍
+        self._built[index] = True
+        frame = self.tool_frames[index]
+        title, builder = self._builders[index]
+        # 最复杂的 ⑲ / ⑥ 首次构建约 0.4~0.5 秒，先把状态栏刷出来再建，
+        # 免得点下去像是没反应（构建完 show_tool 会把状态栏改回当前工具）
+        try:
+            self.status.config(text=f"正在打开「{title}」…")
+            self.root.update_idletasks()
+        except Exception:
+            pass
+        try:
+            if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
+                           build_compress_tab, build_rsbackup_tab, build_encode_tab,
+                           build_translate_tab, build_hash_tab):
+                result = builder(frame, self)
+                if builder is build_hash_tab:
+                    # 暴露给自动化冒烟测试（不影响正常使用）
+                    self._hash_api = result
+                elif builder is build_encode_tab:
+                    self._encode_api = result
+            else:
+                builder(frame)
+        except Exception:
+            detail = traceback.format_exc()
+            print(detail, file=sys.stderr)
+            try:
+                self.status.config(text=f"打开「{title}」失败，详见弹窗")
+                messagebox.showerror(
+                    "页面构建失败",
+                    f"打开「{title}」时出错：\n\n{detail[-1200:]}")
+            except Exception:
+                pass
+
     def show_tool(self, index):
         """切换到指定工具：隐藏其他页，显示对应页，并高亮菜单按钮"""
+        self._build_page(index)
         self._current_index = index
         frame = self.tool_frames[index]
         for i, f in enumerate(self.tool_frames):

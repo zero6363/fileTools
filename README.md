@@ -88,11 +88,11 @@ python 文件工具箱.py
 fileTools/
 ├─ 文件工具箱.py          入口脚本（打包时也是它）
 ├─ 启动工具箱.bat         源码启动（优先找带 tkinter 的 pythonw）
-├─ 打包.bat               一键 PyInstaller 打包成便携版文件夹（onedir）
+├─ 打包.bat               一键 PyInstaller 打包成单文件 exe（onefile）
 ├─ bin/
 │  └─ mozjpeg/            ⑯ 图片压缩用的 mozjpeg 官方构建
 └─ toolbox/               源码包
-   ├─ main.py             主窗口：左侧菜单、页面切换、窗口几何记忆
+   ├─ main.py             主窗口：左侧菜单、页面按需构建、窗口几何记忆
    ├─ common.py           通用基础设施：日志、后台任务、路径行、拖放、自然排序
    ├─ config.py           统一配置（toolbox_config.json 分区读写 + 旧配置迁移）
    ├─ theme.py / ui.py    配色与控件适配层（设计系统）
@@ -111,25 +111,29 @@ fileTools/
 
 运行期生成、不进版本库的文件：`toolbox_config.json`（唯一配置文件，按 `window` / `compress` / `ffmpeg` / `hashscan` 分区存所有记忆项，删掉即恢复默认）。老版本分散的四个 json 会在首次启动自动并入并删除。
 
-## 打包成便携版
+## 打包成单文件
 
 双击 `打包.bat`，或手动执行：
 
 ```bat
-python -m PyInstaller --onedir --windowed --noconfirm --clean ^
+python -m PyInstaller --onefile --windowed --noconfirm --clean ^
     --name 文件工具箱 ^
     --add-data "D:\...\bin\mozjpeg;bin/mozjpeg" ^
     --add-binary "D:\...\bin\mediainfo\MediaInfo.dll;bin/mediainfo" ^
+    --add-binary "D:\...\bin\mediainfo\LIBCURL.DLL;bin/mediainfo" ^
     --collect-all customtkinter ^
     --hidden-import PIL.Image --hidden-import PIL.ImageDraw --hidden-import PIL.ImageFont ^
     --hidden-import Crypto.Cipher.AES --hidden-import Crypto.Util._raw_api ^
     文件工具箱.py
 ```
 
-- `--onedir --windowed`：产物是「一个文件夹 + 一个无控制台 exe」，整体可拷贝带走。
-- 打包脚本会把产物整理成根目录的 `文件工具箱_便携版\`，配置 / 日志写在 exe 同级（便携，不写 AppData）。
+- `--onefile --windowed`：产物是单个无控制台 `文件工具箱.exe`（约 37 MB），直接拷走即可。
+- 打包脚本把产物放到根目录 `文件工具箱.exe`；配置 / 日志写在 exe 同级（便携，不写 AppData）。
+- **onefile 的固有代价**：每次启动把内置资源解压到 `%TEMP%\_MEIxxxx`，退出时再删一遍。
+  冷启动约 1~3 秒（杀软实时扫描临时目录时更久）。启动/关闭更快就换 `--onedir`，
+  产物变成文件夹（`_internal\` 里放资源），脚本第 3 步相应改成复制整个文件夹。
 - `--add-data bin\mozjpeg`：把 mozjpeg 一起打包（缺失时 ⑯ 自动回退 `libjpeg-turbo`）；
-  onedir 下这些资源落在 `exe同级\_internal\`，程序启动时按 `_internal` / `_MEIPASS` / exe 目录依次探测。
+  程序启动时按 `_MEIPASS` / `exe同级\_internal` / exe 目录 依次探测（onefile / onedir / 源码三态通用）。
 - `--hidden-import`：Pillow / PyCryptodome 部分子模块动态导入，不声明会被裁掉。
 - **FFmpeg 不内置**：体积大且需匹配显卡驱动，放 exe 同目录（或 `bin\ffmpeg\`）即可。
 
@@ -189,6 +193,17 @@ python -m PyInstaller --onedir --windowed --noconfirm --clean ^
   库打不开时同样先问一句，避免扫完了才发现差异全是「新增」。
 
 ## 更新记录
+
+### 2026-10-27（v1.56）
+- **启动提速：19 个页面改为按需构建**。原先 `ToolboxApp.__init__` 会把 19 页的 CTk 控件
+  一次性造完（实测 2.33 秒，占冷启动八成），onedir 换 onefile 都没用的就是这个。现在启动只
+  建第 ① 页，其余各页第一次点开时才建（40~130 ms，最复杂的 ⑲/⑥ 约 0.4~0.5 秒，构建前先在
+  状态栏显示「正在打开「xx」…」）。实测 `ToolboxApp` 构建 **2.33 s → 0.60 s**，整体冷启动
+  2.9 s → 0.9 s（源码运行口径）。
+- **打包改回单文件**：`打包.bat` 用 `--onefile`，产物变成根目录 `文件工具箱.exe`（约 37 MB），
+  不再是 `文件工具箱_便携版\` 文件夹；脚本会顺手清理旧的便携版目录。onefile 每次启动要把
+  内置资源解压到 `%TEMP%\_MEIxxxx`（约 1~2 秒，杀软扫描时更久），这是单文件的固有代价，
+  换来「一个 exe 直接拷走」。资源探测走 `app_data_roots()`，onefile / onedir / 源码三态通用。
 
 ### 2026-10-27（v1.55）
 - **⑲ 开扫前检查库能不能写**：写档模式（快速建档 / 完整建档）点「开始」时，先对目标库做一次

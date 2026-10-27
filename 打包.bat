@@ -2,10 +2,13 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-:: ============ 一键打包：文件工具箱_便携版\ ============
-:: 源码已按功能拆分为 toolbox/ 包；产物是 onedir 便携版文件夹
-:: （整个文件夹可拷贝带走，配置和日志都写在 exe 同级，不写 AppData）。
-:: 不再出单文件 exe：onefile 每次启动都要解压到临时目录，启动慢、退出也慢。
+:: ============ 一键打包：单文件 文件工具箱.exe ============
+:: 源码已按功能拆分为 toolbox/ 包；产物是单个 exe（可直接拷走，
+:: 配置和日志都写在 exe 同级目录，不写 AppData）。
+:: 注意：onefile 每次启动都要把内置资源解压到 %TEMP%\_MEIxxxx，
+:: 退出时再删一遍 —— 这是单文件的固有代价（约 1~3 秒，取决于杀软扫描）。
+:: 如果哪天更在意启动速度，把下面的 --onefile 换成 --onedir，
+:: 第 3 步改成复制整个文件夹即可（产物变成 文件工具箱_便携版\）。
 
 set "PY=%LOCALAPPDATA%\Programs\Python\Python315\python.exe"
 if not exist "%PY%" (
@@ -31,8 +34,8 @@ if errorlevel 1 (
 echo [1/3] 清理旧构建 ...
 if exist .pybuild rmdir /s /q .pybuild
 
-echo [2/3] PyInstaller 打包中（约 1 分钟，请稍候）...
-"%PY%" -m PyInstaller --onedir --windowed --noconfirm --clean ^
+echo [2/3] PyInstaller 打包中（约 1~2 分钟，请稍候）...
+"%PY%" -m PyInstaller --onefile --windowed --noconfirm --clean ^
     --name 文件工具箱 ^
     --add-data "%CD%\bin\mozjpeg;bin/mozjpeg" ^
     --add-binary "%CD%\bin\mediainfo\MediaInfo.dll;bin/mediainfo" ^
@@ -54,36 +57,34 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [3/3] 整理便携版文件夹 ...
-set "PORTABLE=文件工具箱_便携版"
-:: 删除旧便携版（可能正被运行占用，重试几次）
-if exist "%PORTABLE%" (
-    set "_delok="
-    for /l %%i in (1,1,5) do (
-        if not defined _delok (
-            rmdir /s /q "%PORTABLE%" >nul 2>nul
-            if not exist "%PORTABLE%" ( set "_delok=1" ) else (
-                echo   旧便携版被占用，1 秒后重试 %%i/5 ...
-                timeout /t 1 /nobreak >nul
-            )
+echo [3/3] 整理产物 ...
+:: 覆盖根目录的旧 exe（可能正被运行占用，重试几次）
+set "_ok="
+for /l %%i in (1,1,5) do (
+    if not defined _ok (
+        copy /y ".pybuild\dist\文件工具箱.exe" "文件工具箱.exe" >nul 2>nul
+        if not errorlevel 1 ( set "_ok=1" ) else (
+            echo   旧 exe 被占用，2 秒后重试 %%i/5 ...
+            timeout /t 2 /nobreak >nul
         )
     )
-    if exist "%PORTABLE%" (
-        echo [警告] 无法删除旧便携版（可能被占用），将覆盖更新。
-    )
 )
-:: 复制整个 onedir 产物为便携版文件夹（可直接整体拷贝带走，不写系统目录）
-robocopy ".pybuild\dist\文件工具箱" "%PORTABLE%" /E /R:3 /W:1 /NFL /NDL /NJH /NJS
-if errorlevel 8 (
-    echo [错误] 复制便携版失败，请检查上方信息或手动复制：
-    echo        .pybuild\dist\文件工具箱 -^> %PORTABLE%\
+if not defined _ok (
+    echo [错误] 无法覆盖 文件工具箱.exe（程序可能正在运行，先关掉再打包）
     pause
     exit /b 1
 )
+
+:: 顺手清掉旧的 onedir 便携版目录（不再产出，避免占 70+MB）
+if exist "文件工具箱_便携版" (
+    rmdir /s /q "文件工具箱_便携版" >nul 2>nul
+    if exist "文件工具箱_便携版" echo [提示] 旧便携版目录删不掉（可能被占用），可手动删除。
+)
+
 rmdir /s /q .pybuild
 
 echo.
 echo ========================================
-echo   打包完成: %PORTABLE%\  （便携版文件夹，可整体复制使用）
+echo   打包完成: 文件工具箱.exe  （单文件，可直接拷走）
 echo ========================================
 pause
