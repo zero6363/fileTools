@@ -11,6 +11,7 @@
   · 字号：导航 19 > 正文 16，层级清晰
 """
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import ttk
 
 # ============================================================
@@ -80,9 +81,24 @@ FONTS = {
     "nav":         font(19),          # 导航项：比内容正文(base 16)大四号
     "nav_active":  font(19, "bold"),
     "page_title":  font(22, "bold"),  # 内容页标题
-    "table_head":  font(15, "bold"),  # 表格表头
+    "table":       font(14),          # 表格正文（正文 16 → 14）
+    "table_head":  font(13, "bold"),  # 表格表头（原 15 → 13）
     "log":         (FONT_MONO, 13),
 }
+
+# 96 DPI 下 FONTS["table"] 的行高（像素）。高分屏 / 系统缩放时字体按 DPI
+# 变大，而表格列宽、行高都是固定像素，必须按同一比例放大，否则文字会被
+# 列边界裁掉。用实际字体行高算比例，比直接读 DPI 更贴近真实渲染尺寸。
+_TABLE_BASE_LINE = 25
+
+
+def ui_scale():
+    """当前界面的实际缩放系数（96 DPI = 1.0）。"""
+    try:
+        line = tkfont.Font(font=FONTS["table"]).metrics("linespace")
+        return max(1.0, min(3.0, float(line) / _TABLE_BASE_LINE))
+    except Exception:
+        return 1.0
 
 # ============================================================
 # 3. 间距 / 圆角（Spacing / Radius，4px 基准）
@@ -243,14 +259,20 @@ def apply_theme(root):
         foreground=[("selected", COLOR["text_on_accent"])])
 
     # 表格（硬盘哈希扫描等）
+    # 行高 / 表头内边距跟着字体缩放：高分屏下 14 号字实际行高会超过 30px，
+    # 固定行高会把文字上下裁掉。
+    _scale = ui_scale()
+    _row_h = max(30, int(round(30 * _scale)))
+    _head_pad = (max(6, int(round(6 * _scale))),
+                 max(3, int(round(3 * _scale))))
     style.configure("Treeview",
         background=COLOR["surface_bright"], foreground=COLOR["text"],
         fieldbackground=COLOR["surface_bright"], bordercolor=COLOR["border"],
-        rowheight=34, font=FONTS["base"])
+        rowheight=_row_h, font=FONTS["table"])
     style.configure("Treeview.Heading",
         background=COLOR["surface_alt"], foreground=COLOR["text"],
         font=FONTS["table_head"], relief="flat", borderwidth=1,
-        padding=(6, 4))
+        padding=_head_pad)
     style.map("Treeview",
         background=[("selected", COLOR["accent"])],
         foreground=[("selected", COLOR["text_on_accent"])])

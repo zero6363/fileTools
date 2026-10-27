@@ -62,15 +62,14 @@ from . import ui, ui as ttk
 from .theme import FONTS
 
 from . import config
-from .common import (clean_path, clear_log, form_label, make_form,
-                     make_logger, make_tip)
+from .common import (add_table_hscroll, clean_path, clear_log, form_label,
+                     load_done_sound, make_form, make_logger, make_tip,
+                     play_done_sound, save_done_sound, setup_tree_columns)
 from .theme import COLOR
 
 DB_NAME = "filehash.db"
 LOG_NAME = "scan_log.txt"
 CHUNK = 1024 * 1024          # 哈希读取块大小 1MB
-SEARCH_LIMIT = 5000          # 搜索结果最多显示条数
-PER_DB_LIMIT = 2000          # 跨库搜索时单个库最多取多少条
 COMMIT_EVERY = 400           # 每处理多少个文件提交一次事务
 
 # 四种模式 = 是否改库 × 是否算哈希
@@ -119,7 +118,40 @@ CREATE TABLE IF NOT EXISTS file_records (
 );
 CREATE INDEX IF NOT EXISTS idx_sha256 ON file_records(sha256);
 CREATE INDEX IF NOT EXISTS idx_status ON file_records(status);
+
+CREATE TABLE IF NOT EXISTS scan_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at REAL,
+    finished_at REAL NOT NULL,
+    op TEXT NOT NULL,
+    status TEXT NOT NULL,
+    total INTEGER DEFAULT 0,
+    processed INTEGER DEFAULT 0,
+    added INTEGER DEFAULT 0,
+    updated INTEGER DEFAULT 0,
+    removed INTEGER DEFAULT 0,
+    failed INTEGER DEFAULT 0,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_scan_history_time
+    ON scan_history(finished_at DESC);
 """
+
+# 扫描记录：操作名 / 完成状态（数据库里存英文，界面显示中文）
+HISTORY_OP_NAMES = {
+    "scan": "扫描",
+    "fill": "补全哈希",
+    "merge": "合并数据库",
+    "seed": "用上级库",
+    "write_scan": "写入扫描差异",
+    "write_verify": "校验结果写回",
+}
+HISTORY_STATUS_NAMES = {
+    "done": "完成",
+    "aborted": "未完成",
+    "partial": "部分完成",
+    "error": "失败",
+}
 
 # 子库并入主库：已有记录优先，缺的字段用子库的补上
 UPSERT_SQL = """
@@ -216,6 +248,39 @@ def fmt_time(ts):
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(ts)))
     except (ValueError, OverflowError, OSError):
         return "—"
+
+
+def fmt_relative_time(ts):
+    """管理列表里的「最后扫描」：n天前 / n周前 / n月前 / n年前（完整时间）。
+
+    同一天显示「今天」，避免刚扫完就出现「0天前」。未来时间按刚刚处理。
+    """
+    if not ts:
+        return "—"
+    try:
+        t = float(ts)
+    except (TypeError, ValueError, OverflowError):
+        return "—"
+    full = fmt_time(t)
+    if full == "—":
+        return "—"
+    now = time.time()
+    diff = max(0.0, now - t)
+    try:
+        lt, nt = time.localtime(t), time.localtime(now)
+        same_day = (lt.tm_year, lt.tm_yday) == (nt.tm_year, nt.tm_yday)
+    except (ValueError, OverflowError, OSError):
+        same_day = False
+    if same_day:
+        return f"今天（{full}）"
+    days = int(diff // 86400)
+    if days < 7:
+        return f"{max(1, days)}天前（{full}）"
+    if days < 30:
+        return f"{max(1, days // 7)}周前（{full}）"
+    if days < 365:
+        return f"{max(1, days // 30)}月前（{full}）"
+    return f"{max(1, days // 365)}年前（{full}）"
 
 
 def fmt_date(ts):
@@ -436,13 +501,13 @@ class HashDB:
 
     def _search_sql(self, cond, order="rel_path"):
         return ("SELECT rel_path, sha256, file_size, mtime, last_hash_time, status "
-                "FROM file_records WHERE " + cond + " ORDER BY " + order + " LIMIT ?")
+                "FROM file_records WHERE " + cond + " ORDER BY " + order)
 
-    def search_path(self, kw, limit=SEARCH_LIMIT, include_deleted=False):
+    def search_path(self, kw, include_deleted=False):
         cond = ("" if include_deleted else "status='active' AND ") + \
                "rel_path LIKE ? ESCAPE '\\'"
         return self.conn.execute(self._search_sql(cond),
-                                 ("%" + _like_escape(kw) + "%", limit)).fetchall()
+                                 ("%" + _like_escape(kw) + "%",)).fetchall()
 
     def count_path(self, kw, include_deleted=False):
         cond = ("" if include_deleted else "status='active' AND ") + \
@@ -450,33 +515,32 @@ class HashDB:
         return self.conn.execute("SELECT COUNT(*) FROM file_records WHERE " + cond,
                                  ("%" + _like_escape(kw) + "%",)).fetchone()[0]
 
-    def search_hash(self, kw, limit=SEARCH_LIMIT):
+    def search_hash(self, kw):
         return self.conn.execute(self._search_sql("sha256 LIKE ? ESCAPE '\\'"),
-                                 (_like_escape(kw.strip().lower()) + "%", limit)).fetchall()
+                                 (_like_escape(kw.strip().lower()) + "%",)).fetchall()
 
     def count_hash(self, kw):
         return self.conn.execute(
             "SELECT COUNT(*) FROM file_records WHERE sha256 LIKE ? ESCAPE '\\'",
             (_like_escape(kw.strip().lower()) + "%",)).fetchone()[0]
 
-    def list_all(self, limit=SEARCH_LIMIT, include_deleted=False):
+    def list_all(self, include_deleted=False):
         cond = "1=1" if include_deleted else "status='active'"
-        return self.conn.execute(self._search_sql(cond), (limit,)).fetchall()
+        return self.conn.execute(self._search_sql(cond)).fetchall()
 
     def count_all(self, include_deleted=False):
         cond = "1=1" if include_deleted else "status='active'"
         return self.conn.execute(
             "SELECT COUNT(*) FROM file_records WHERE " + cond).fetchone()[0]
 
-    def list_deleted(self, prefix="", limit=SEARCH_LIMIT):
+    def list_deleted(self, prefix=""):
         """列出标记缺失的记录（只查指定范围）"""
         if prefix:
             return self.conn.execute(
                 self._search_sql("status='deleted' AND "
                                  "(rel_path = ? OR rel_path LIKE ? ESCAPE '\\')"),
-                (prefix, _like_escape(prefix) + "/%", limit)).fetchall()
-        return self.conn.execute(self._search_sql("status='deleted'"),
-                                 (limit,)).fetchall()
+                (prefix, _like_escape(prefix) + "/%")).fetchall()
+        return self.conn.execute(self._search_sql("status='deleted'")).fetchall()
 
     def count_nohash(self, prefix=""):
         """范围内「有效但还没算哈希」的记录数"""
@@ -524,6 +588,93 @@ def db_counts(db_path):
         return None
     finally:
         db.close()
+
+
+# ============================================================
+# 扫描记录（存在各扫描根目录的 filehash.db 里）
+# ============================================================
+
+def record_history(db_path, op, status, total=0, processed=0, added=0,
+                   updated=0, removed=0, failed=0, detail="",
+                   started_at=None, finished_at=None):
+    """往数据库的 scan_history 写一条处理记录。
+
+    记录失败绝不影响主流程（数据库被占用 / 老库没有表等情况只返回 False）。
+    """
+    if not db_path or not os.path.isfile(db_path):
+        return False
+    now = time.time()
+    started = started_at if started_at else now
+    finished = finished_at if finished_at else now
+    db = HashDB(db_path)
+    try:
+        db.open()
+        db.conn.execute(
+            "INSERT INTO scan_history"
+            " (started_at, finished_at, op, status, total, processed,"
+            "  added, updated, removed, failed, detail)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (started, finished, op, status, int(total or 0),
+             int(processed or 0), int(added or 0), int(updated or 0),
+             int(removed or 0), int(failed or 0), detail or ""))
+        return True
+    except Exception:
+        return False
+    finally:
+        db.close()
+
+
+def read_history(db_path, limit=1000):
+    """读取数据库里的扫描记录（新→旧）。老库没有 scan_history 表时返回 []。"""
+    if not db_path or not os.path.isfile(db_path):
+        return []
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path, timeout=8)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, started_at, finished_at, op, status, total,"
+            " processed, added, updated, removed, failed, detail"
+            " FROM scan_history"
+            " ORDER BY finished_at DESC, id DESC LIMIT ?",
+            (max(1, int(limit)),)).fetchall()
+        return [dict(r) for r in rows]
+    except (sqlite3.Error, ValueError):
+        return []
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def remember_root(root, db_path, mode=None, touch_last=False, stats=None):
+    """更新「已管理目录」里的统计；只有 touch_last=True 才刷新最后扫描时间。"""
+    try:
+        root = os.path.abspath(root)
+        roots = load_roots()
+        key = os.path.normcase(root)
+        old = next((r for r in roots
+                    if os.path.normcase(os.path.abspath(r["path"])) == key), None)
+        if stats is None:
+            stats = db_counts(db_path) or (0, 0, 0, 0, 0)
+        info = {
+            "db": db_path,
+            "files": stats[0],
+            "active": stats[1],
+            "deleted": stats[2],
+            "nohash": stats[4],
+            "last_scan": time.time() if touch_last else
+                         ((old or {}).get("last_scan") or 0),
+        }
+        if mode is not None:
+            info["mode"] = mode
+        upsert_root(roots, root, **info)
+        save_roots(roots)
+        return True
+    except Exception:
+        return False
 
 
 # ============================================================
@@ -672,6 +823,7 @@ class Scanner:
         self.log = log
         self.logfile = logfile
         self.stop = stop_event or threading.Event()
+        self.started_at = time.time()
         self.ui = {"phase": "准备", "done": 0, "total": 0,
                    "cur_name": "", "cur_done": 0, "cur_total": 0,
                    "done_flag": False, "aborted": False, "error": None,
@@ -703,6 +855,12 @@ class Scanner:
 
     def _stored_rel(self, rel):
         return f"{self.prefix}/{rel}" if self.prefix else rel
+
+    def _display_rel(self, stored):
+        """库里的 rel_path → 当前扫描根下的相对路径（去掉上级库前缀）"""
+        if self.prefix and stored.startswith(self.prefix + "/"):
+            return stored[len(self.prefix) + 1:]
+        return stored
 
     def run(self):
         """返回 stats 字典（结束后 ui["done_flag"]=True）"""
@@ -811,7 +969,8 @@ class Scanner:
                 except sqlite3.Error:
                     pass
 
-            self.ui["done"] = len(files)
+            if not self.ui["aborted"]:
+                self.ui["done"] = len(files)
             dur = time.time() - started
             s = self.stats
             self._log(
@@ -852,11 +1011,14 @@ class Scanner:
                     return 0
             self.stats["new"] += 1
             if writable:
+                last = time.time() if digest else None
                 db.conn.execute(
                     "INSERT INTO file_records"
                     "(rel_path, sha256, file_size, mtime, last_hash_time, status)"
                     " VALUES(?,?,?,?,?,'active')",
-                    (stored, digest, size, mtime, time.time() if digest else None))
+                    (stored, digest, size, mtime, last))
+                self._add_written("新增", rel, stored, size, mtime,
+                                  digest=digest, last=last)
                 return 1
             self._add_diff("新增", rel, stored, size, mtime, digest=digest)
             return 0
@@ -865,79 +1027,117 @@ class Scanner:
         same = (old_size == size and old_mtime is not None
                 and abs(old_mtime - mtime) < 1e-6)
 
-        # ---- 分支 B-1：有效且 size+mtime 一致 ----
-        if status == "active" and same:
-            if hashing and not old_sha:
-                # 之前只是快速建档（没算哈希）→ 这次补上
-                digest = self._hash(abs_path, size)
-                if digest is None:
-                    return 0
-                self.stats["filled"] += 1
-                if writable:
-                    db.conn.execute(
-                        "UPDATE file_records SET sha256=?, last_hash_time=? WHERE id=?",
-                        (digest, time.time(), rid))
-                    return 1
-                self._add_diff("补哈希", rel, stored, size, mtime, digest=digest,
-                               old_size=old_size, old_last=old_last)
-                return 0
-            self.stats["same"] += 1
-            return 0
-
-        # ---- 分支 B-2：有效但变了 ----
+        # ---- 分支 B：有效记录 ----
         if status == "active":
-            digest = None
+            # 算哈希的模式（完整建档 / 完整检查）必须逐个文件实际计算 SHA256，
+            # 再和库里的哈希比较；不能因为 size+mtime 一致就跳过，否则修改时间
+            # 被保留、内容被替换的文件会被误判成「一致」。
             if hashing:
                 digest = self._hash(abs_path, size)
                 if digest is None:
                     return 0
-            self.stats["changed"] += 1
-            if writable:
-                if digest:
+
+                if not old_sha:
+                    # 之前只是快速建档（没算哈希）→ 这次补上
+                    self.stats["filled"] += 1
+                    if writable:
+                        last = time.time()
+                        db.conn.execute(
+                            "UPDATE file_records SET sha256=?, file_size=?,"
+                            " mtime=?, last_hash_time=? WHERE id=?",
+                            (digest, size, mtime, last, rid))
+                        self._add_written("补哈希", rel, stored, size, mtime,
+                                          digest=digest, last=last,
+                                          old_size=old_size)
+                        return 1
+                    self._add_diff("补哈希", rel, stored, size, mtime,
+                                   digest=digest, old_size=old_size,
+                                   old_last=old_last)
+                    return 0
+
+                if digest == old_sha:
+                    # 内容哈希一致 → 真的一致。若只是大小/修改时间变了
+                    # （复制、恢复备份等），可写模式静默刷新元数据，不当作差异。
+                    self.stats["same"] += 1
+                    if writable and not same:
+                        db.conn.execute(
+                            "UPDATE file_records SET file_size=?, mtime=?,"
+                            " last_hash_time=? WHERE id=?",
+                            (size, mtime, time.time(), rid))
+                        return 1
+                    return 0
+
+                # 哈希不同 → 内容确实变了（即使 size+mtime 完全相同）
+                self.stats["changed"] += 1
+                if writable:
+                    last = time.time()
                     db.conn.execute(
                         "UPDATE file_records SET sha256=?, file_size=?, mtime=?,"
                         " last_hash_time=? WHERE id=?",
-                        (digest, size, mtime, time.time(), rid))
-                else:
-                    # 不算哈希的模式：旧哈希已经不可信，清掉等完整建档补
-                    db.conn.execute(
-                        "UPDATE file_records SET sha256=NULL, file_size=?, mtime=?,"
-                        " last_hash_time=NULL WHERE id=?", (size, mtime, rid))
+                        (digest, size, mtime, last, rid))
+                    self._add_written("变更", rel, stored, size, mtime,
+                                      digest=digest, last=last,
+                                      old_size=old_size)
+                    return 1
+                self._add_diff("变更", rel, stored, size, mtime, digest=digest,
+                               old_sha=old_sha, old_size=old_size,
+                               old_last=old_last)
+                return 0
+
+            # 不算哈希的模式（快速预检 / 快速建档）：仍用 size+mtime 判断
+            if same:
+                self.stats["same"] += 1
+                return 0
+            self.stats["changed"] += 1
+            if writable:
+                # 旧哈希已经不可信，清掉等完整建档补
+                db.conn.execute(
+                    "UPDATE file_records SET sha256=NULL, file_size=?, mtime=?,"
+                    " last_hash_time=NULL WHERE id=?", (size, mtime, rid))
+                self._add_written("变更", rel, stored, size, mtime,
+                                  digest=None, last=None, old_size=old_size)
                 return 1
-            self._add_diff("变更", rel, stored, size, mtime, digest=digest,
-                           old_sha=old_sha, old_size=old_size, old_last=old_last)
+            self._add_diff("变更", rel, stored, size, mtime, digest=None,
+                           old_sha=old_sha, old_size=old_size,
+                           old_last=old_last)
             return 0
 
         # ---- 分支 C：库里标 deleted，磁盘上又出现 → 恢复有效 ----
         digest = None
         if hashing:
-            if same and old_sha:
-                digest = old_sha          # 大小时间都没变、哈希还在 → 不必重读
-            else:
-                digest = self._hash(abs_path, size)
-                if digest is None:
-                    return 0
+            # 完整检查同样要实际算哈希，不能凭旧的大小/时间复用旧哈希
+            digest = self._hash(abs_path, size)
+            if digest is None:
+                return 0
         elif same and old_sha:
             digest = old_sha              # 没算哈希，但大小/时间一致，旧哈希仍可信
         self.stats["restored"] += 1
         if writable:
+            last = None
             if hashing and digest:
-                if same:
+                if same and digest == old_sha:
+                    # 大小/时间一致且哈希也一致 → 只恢复状态，不必重写哈希
                     db.conn.execute(
                         "UPDATE file_records SET status='active' WHERE id=?", (rid,))
+                    last = old_last
                 else:
+                    last = time.time()
                     db.conn.execute(
                         "UPDATE file_records SET sha256=?, file_size=?, mtime=?,"
                         " last_hash_time=?, status='active' WHERE id=?",
-                        (digest, size, mtime, time.time(), rid))
+                        (digest, size, mtime, last, rid))
             elif not hashing and same and old_sha:
                 db.conn.execute(
                     "UPDATE file_records SET status='active' WHERE id=?", (rid,))
+                last = old_last
             else:
                 db.conn.execute(
                     "UPDATE file_records SET status='active', sha256=NULL,"
                     " file_size=?, mtime=?, last_hash_time=NULL WHERE id=?",
                     (size, mtime, rid))
+            self._add_written("恢复", rel, stored, size, mtime,
+                              digest=digest, last=last,
+                              old_size=old_size)
             return 1
         self._add_diff("恢复", rel, stored, size, mtime, digest=digest,
                        old_sha=old_sha, old_size=old_size, old_last=old_last)
@@ -962,17 +1162,21 @@ class Scanner:
             self._log("已停止（当前文件哈希中断，未写入该记录）")
         return digest
 
-    def _add_diff(self, kind, rel, stored, size, mtime, digest=None,
-                  old_sha=None, old_size=None, old_last=None, hash_state=None):
-        """只读模式：差异清单加一条（表格行 + 写回库用的结构化记录）。
-        digest 是本次算出的新哈希（不算哈希的模式为 None）；
-        old_sha 是库里的旧哈希，变更行也显示出来，但写回时绝不会用它。"""
+    def _diff_detail(self, kind, size, old_size=None):
         detail = kind
         if kind == "变更" and old_size is not None and size is not None:
             try:
                 detail = "变更 " + fmt_delta(size - old_size)
             except (TypeError, ValueError):
                 pass
+        return detail
+
+    def _add_diff(self, kind, rel, stored, size, mtime, digest=None,
+                  old_sha=None, old_size=None, old_last=None, hash_state=None):
+        """只读模式：差异清单加一条（表格行 + 写回库用的结构化记录）。
+        digest 是本次算出的新哈希（不算哈希的模式为 None）；
+        old_sha 是库里的旧哈希，变更行也显示出来，但写回时绝不会用它。"""
+        detail = self._diff_detail(kind, size, old_size)
         if hash_state is None:
             hash_state = ("已计算" if digest
                           else ("旧哈希" if old_sha else "未计算"))
@@ -992,6 +1196,15 @@ class Scanner:
             "db": self.db_path,
         })
 
+    def _add_written(self, kind, rel, stored, size, mtime, digest=None,
+                     last=None, old_size=None):
+        """可写模式：本次已经写进数据库的修改，作为结果行显示。
+        没有 pending，因此不会被「写入数据库」当成待写回的差异。"""
+        self.ui["rows"].append(
+            (rel, digest or "", size, mtime, last,
+             self._diff_detail(kind, size, old_size), self.root))
+        self.ui["pending"].append(None)
+
     def _scope_sql(self):
         """缺失标记的范围：本次扫描根在库里对应的 rel_path 子集"""
         if self.prefix:
@@ -1002,7 +1215,8 @@ class Scanner:
     def _mark_missing(self, db):
         scope_sql, params = self._scope_sql()
         rows = db.conn.execute(
-            f"SELECT rel_path FROM file_records WHERE status='active' AND {scope_sql} "
+            f"SELECT rel_path, sha256, file_size, mtime, last_hash_time "
+            f"FROM file_records WHERE status='active' AND {scope_sql} "
             f"AND rel_path NOT IN (SELECT rel_path FROM seen)", params).fetchall()
         if not rows:
             return 0
@@ -1011,10 +1225,13 @@ class Scanner:
             f"UPDATE file_records SET status='deleted' WHERE status='active' "
             f"AND {scope_sql} AND rel_path NOT IN (SELECT rel_path FROM seen)", params)
         db.conn.execute("COMMIT")
-        for (rp,) in rows[:200]:
+        for rp, _sha, _size, _mt, _last in rows[:200]:
             self._log(f"[缺失] {rp}")
         if len(rows) > 200:
             self._log(f"[缺失] …… 另有 {len(rows) - 200} 条，详见数据库")
+        for rp, sha, fsize, fmtime, flast in rows:
+            self._add_written("缺失", self._display_rel(rp), rp,
+                              fsize, fmtime, digest=sha, last=flast)
         return len(rows)
 
     def _list_missing(self, db):
@@ -1030,10 +1247,7 @@ class Scanner:
         if len(rows) > 200:
             self._log(f"[{tag}·缺失] …… 另有 {len(rows) - 200} 条")
         for rp, sha, _size, _mt in rows:
-            rel = rp
-            if self.prefix and rp.startswith(self.prefix + "/"):
-                rel = rp[len(self.prefix) + 1:]
-            self._add_diff("缺失", rel, rp, None, None,
+            self._add_diff("缺失", self._display_rel(rp), rp, None, None,
                            old_sha=sha, hash_state="—")
         return len(rows)
 
@@ -1076,6 +1290,7 @@ class HashFiller:
         self.db_path = db_path
         self.log = log or (lambda *_: None)
         self.stop = stop_event or threading.Event()
+        self.started_at = time.time()
         self.ui = {"phase": "补全哈希", "done": 0, "total": 0,
                    "cur_name": "", "cur_done": 0, "cur_total": 0,
                    "done_flag": False, "aborted": False, "error": None}
@@ -1229,6 +1444,7 @@ class SeedTask:
         self.prefix = prefix or ""
         self.log = log or (lambda *_: None)
         self.stop = stop_event or threading.Event()
+        self.started_at = time.time()
         self.ui = {"phase": "读取上级库", "done": 0, "total": 0,
                    "cur_name": "", "cur_done": 0, "cur_total": 0,
                    "done_flag": False, "aborted": False, "error": None}
@@ -2077,6 +2293,7 @@ class MergeTask:
         self.db_path = os.path.abspath(db_path)
         self.log = log or (lambda *_: None)
         self.stop = stop_event or threading.Event()
+        self.started_at = time.time()
         self.ui = {"phase": "扫描子库", "done": 0, "total": 0,
                    "cur_name": "", "cur_done": 0, "cur_total": 0,
                    "done_flag": False, "aborted": False, "error": None}
@@ -2290,15 +2507,15 @@ STATUS_TEXT = {"active": "有效", "deleted": "缺失"}
 COLS = [("chk", "选", 32, 30, False),
         ("root", "所属目录", 150, 110, False),
         ("rel", "相对路径", 260, 120, True),
-        ("size", "文件大小", 96, 80, False),
-        ("mtime", "修改时间", 126, 110, False),
-        ("last", "上次校验", 126, 110, False),
+        ("size", "文件大小", 110, 90, False),
+        # 日期列按「2024-11-23 12:34:56」实际宽度留足，避免被列边界裁掉
+        ("mtime", "修改时间", 200, 190, False),
+        ("last", "上次校验", 200, 190, False),
         ("sha", "SHA256", 170, 120, False),
-        ("status", "状态", 64, 56, False)]
+        # 状态列会显示「变更 +2.25 KB」这类带大小的文案，按完整宽度留足
+        ("status", "状态", 150, 140, False)]
 COLS_SINGLE = ("chk", "rel", "size", "mtime", "last", "sha", "status")
 COLS_MULTI = ("chk", "root", "rel", "size", "mtime", "last", "sha", "status")
-FIXED_W_SINGLE = sum(c[2] for c in COLS if c[0] not in ("root", "rel"))
-FIXED_W_MULTI = FIXED_W_SINGLE + 180
 
 
 def build_hash_tab(parent, app=None):
@@ -2318,7 +2535,13 @@ def build_hash_tab(parent, app=None):
         "pending": [],        # 与 rows 平行：差异行的结构化记录，库内记录为 None
         "shown": [],          # 当前筛选后真正显示的行 [(row, pending)]
         "page_rows": [],      # 当前页实际渲染的行（shown 的切片）
+        "checked": set(),     # 跨页勾选集合（差异行用 pending id，库内行用 root+rel）
+        "syncing": False,     # 程序同步 Treeview selection 时抑制回调
         "filter": "全部",     # 底部筛选：全部 / 新增 / 更新 / 删除 / 已计算 / 未计算
+        "source": "db",       # 当前列表来源：db = 数据库查询 / scan = 本次扫描结果
+        "search_kw": "",      # 扫描结果视图的搜索条件（数据库视图直接用 SQL 查）
+        "search_kind": "按路径模糊",
+        "search_hits": 0,     # 扫描结果视图里搜索命中的条数
         "page": 0,            # 当前页码（0 基）
         "page_size": DEFAULT_PAGE_SIZE,   # 每页条数，0 = 不分页
         "scanner": None,
@@ -2405,8 +2628,22 @@ def build_hash_tab(parent, app=None):
     bar_all.grid(row=0, column=2, sticky="w")
     bar_cur = ttk.Progressbar(run_row, mode="determinate", maximum=100, length=110)
     bar_cur.grid(row=0, column=3, sticky="w", padx=(8, 10))
-    lbl_prog = ui.Label(run_row, text="未开始", foreground=COLOR["text_secondary"])
-    lbl_prog.grid(row=0, column=4, sticky="w")
+    # 完成提示音：默认不勾选，勾选后记住；扫描 / 补哈希 / 校验 / 合并等
+    # 正常结束时播放一次 Windows 系统提示音（中途停止或出错不响）。
+    var_sound = tk.BooleanVar(value=load_done_sound("hashscan"))
+    ttk.Checkbutton(run_row, text="完成后提示音", variable=var_sound,
+                    command=lambda: save_done_sound("hashscan",
+                                                    var_sound.get())).grid(
+        row=0, column=4, sticky="e")
+
+    def maybe_beep():
+        if var_sound.get():
+            play_done_sound()
+
+    lbl_prog = ui.Label(run_row, text="未开始", foreground=COLOR["text_secondary"],
+                        justify="left")
+    # 单独占一行：扫描结果文案可能很长，放按钮 / 进度条同一行会溢出窗口
+    lbl_prog.grid(row=1, column=0, columnspan=5, sticky="ew", pady=(4, 0))
 
     # ---------------- 搜索 ----------------
     search_row = ui.Frame(parent)
@@ -2448,6 +2685,9 @@ def build_hash_tab(parent, app=None):
     btn_apply.pack(side=tk.LEFT)
     btn_sel_all = ui.Button(bar_list, text="全选本页", width=9, state=tk.DISABLED)
     btn_sel_all.pack(side=tk.LEFT, padx=(8, 0))
+    btn_sel_all_pages = ui.Button(bar_list, text="全选全部", width=9,
+                                  state=tk.DISABLED)
+    btn_sel_all_pages.pack(side=tk.LEFT, padx=(4, 0))
     btn_sel_none = ui.Button(bar_list, text="全不选", width=7, state=tk.DISABLED)
     btn_sel_none.pack(side=tk.LEFT, padx=(4, 0))
     lbl_sel = ui.Label(bar_list, text="", foreground=COLOR["text_secondary"])
@@ -2463,31 +2703,12 @@ def build_hash_tab(parent, app=None):
         tree.column(key, width=width, minwidth=minwidth,
                     anchor="center" if key == "chk" else "w", stretch=stretch)
 
-    def _fit_columns(_e=None):
-        """除「相对路径」外都是固定宽，剩余空间全给路径列。
-        Tk 的 stretch 只会加宽不会收窄，不自己算的话最后一列会掉到横向滚动区外面。"""
-        try:
-            w = tree.winfo_width()
-        except Exception:
-            return
-        if w <= 1:
-            return
-        fixed = FIXED_W_MULTI if state["multi"] else FIXED_W_SINGLE
-        rel_w = max(100, w - fixed - 14)
-        try:
-            if int(tree.column("rel", "width")) != rel_w:
-                tree.column("rel", width=rel_w)
-        except Exception:
-            pass
-
-    tree.bind("<Configure>", _fit_columns)
     vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
     tree.configure(yscrollcommand=vsb.set)
     tree.grid(row=1, column=0, sticky="nsew")
     vsb.grid(row=1, column=1, sticky="ns")
-    hsb = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=tree.xview)
-    tree.configure(xscrollcommand=hsb.set)
-    hsb.grid(row=2, column=0, sticky="ew")
+    add_table_hscroll(tree, tree_frame, row=2, column=0)
+    setup_tree_columns(tree, "hashscan.main")
 
     # 列表下方：左侧分类筛选（全部 / 新增 / 更新 / 删除 / 已计算 / 未计算），右侧分页
     filter_bar = ui.Frame(tree_frame)
@@ -2606,10 +2827,14 @@ def build_hash_tab(parent, app=None):
     # ============================================================
 
     def row_cat(row, pend):
-        """一行的分类：差异行用 pending 里的 cat；库内记录只有 deleted 算「删除」"""
+        """一行的分类：差异行用 pending 里的 cat；建档结果行按状态文字映射；
+        库内记录只有 deleted 算「删除」。"""
         if pend:
             return pend["cat"]
-        return CAT_DEL if row[5] == "deleted" else ""
+        status = str(row[5] or "")
+        if status in ("active", "deleted"):
+            return CAT_DEL if status == "deleted" else ""
+        return DIFF_CAT.get(status.split(" ")[0], "")
 
     def page_count(total=None):
         """总页数（每页 0 条 = 不分页，永远 1 页）"""
@@ -2636,6 +2861,18 @@ def build_hash_tab(parent, app=None):
         if len(all_pend) != len(all_rows):
             all_pend = state["pending"] = [None] * len(all_rows)
 
+        kw = str(state.get("search_kw") or "").strip()
+        kind = state.get("search_kind") or "按路径模糊"
+        kw_l = kw.lower()
+
+        def search_match(r):
+            """扫描结果视图的搜索：只过滤 state["rows"]，不碰数据库。"""
+            if not kw:
+                return True
+            if kind.startswith("按 SHA256"):
+                return str(r[1] or "").lower().startswith(kw_l)
+            return kw_l in str(r[0] or "").lower()
+
         def match(r, p):
             if flt == "全部":
                 return True
@@ -2645,7 +2882,9 @@ def build_hash_tab(parent, app=None):
                 return not r[1]
             return row_cat(r, p) == flt
 
-        shown = [(r, p) for r, p in zip(all_rows, all_pend) if match(r, p)]
+        base = [(r, p) for r, p in zip(all_rows, all_pend) if search_match(r)]
+        state["search_hits"] = len(base)
+        shown = [(r, p) for r, p in base if match(r, p)]
         state["shown"] = shown
 
         # ---- 分页切片 ----
@@ -2669,7 +2908,8 @@ def build_hash_tab(parent, app=None):
             if pend:
                 hashed = pend.get("hash_state") or "—"
             elif is_diff:
-                hashed = "—"
+                hashed = ("—" if status_raw == "缺失"
+                          else ("已计算" if sha else "未计算"))
             else:
                 hashed = "已计算" if sha else "未计算"
             tag = DIFF_TAGS.get(status_raw.split(" ")[0]) if is_diff else None
@@ -2681,10 +2921,10 @@ def build_hash_tab(parent, app=None):
                                 short_sha(sha, 10) or hashed, text),
                         tags=(tag,) if tag else ())
 
-        # 分类计数 + 高亮当前筛选
+        # 分类计数 + 高亮当前筛选（搜索时按命中结果计数）
         counts = {k: 0 for k in CATS}
-        counts["全部"] = len(all_rows)
-        for r, p in zip(all_rows, all_pend):
+        counts["全部"] = len(base)
+        for r, p in base:
             c = row_cat(r, p)
             if c in counts:
                 counts[c] += 1
@@ -2692,7 +2932,7 @@ def build_hash_tab(parent, app=None):
         for k, b in filter_btns.items():
             on = (k == flt)
             try:
-                b.config(text=(f"{k} {counts[k]}" if all_rows else k),
+                b.config(text=(f"{k} {counts[k]}" if base else k),
                          bg=COLOR["accent"] if on else COLOR["surface_alt"],
                          fg=COLOR["text_on_accent"] if on else COLOR["text"],
                          activebackground=COLOR["accent_active"] if on else COLOR["border"],
@@ -2712,15 +2952,20 @@ def build_hash_tab(parent, app=None):
         except Exception:
             pass
 
-        lbl_hint.config(text="勾选差异行（可 Ctrl / Shift 多选）后点「写入数据库」"
-                        if any(p for _r, p in shown) else "")
-        for b in (btn_sel_all, btn_sel_none):
-            b.config(state=tk.NORMAL if page_items else tk.DISABLED)
+        lbl_hint.config(
+            text="勾选差异行后可跨页写入"
+            if any(p for _r, p in shown) else "")
+        sync_tree_selection()
+        btn_sel_all.config(state=tk.NORMAL if page_items else tk.DISABLED)
+        btn_sel_all_pages.config(state=tk.NORMAL if shown else tk.DISABLED)
+        btn_sel_none.config(state=tk.NORMAL if
+                            (state["checked"] or page_items) else tk.DISABLED)
         update_sel()
 
     def set_filter(key):
         state["filter"] = key
         state["page"] = 0          # 换分类回到第一页
+        state["checked"].clear()   # 避免隐藏分类里还留着勾选
         render()
 
     def jump_page(_e=None):
@@ -2754,14 +2999,76 @@ def build_hash_tab(parent, app=None):
         render()
         return "break"
 
+    def row_key(row, pend):
+        """跨页勾选键：差异行用 pending 对象 id，库内行用 root + rel。"""
+        if pend is not None:
+            return ("diff", id(pend))
+        return ("rec", os.path.normcase(str(row[6] or "")), str(row[0]))
+
+    def checked_rows():
+        """当前 checked 集合对应的 (row, pend)，按 state 原顺序返回。"""
+        out, seen = [], set()
+        for r, p in zip(state["rows"], state["pending"]):
+            key = row_key(r, p)
+            if key in state["checked"] and key not in seen:
+                out.append((r, p))
+                seen.add(key)
+        return out
+
+    def prune_checked():
+        valid = {row_key(r, p) for r, p in zip(state["rows"], state["pending"])}
+        state["checked"].intersection_update(valid)
+
     def refresh_checks():
-        """按当前 selection 刷新每行开头的复选框（只改内容变了的单元格）"""
+        """按跨页 checked 集合刷新当前页的复选框（只改内容变了的单元格）"""
         try:
-            sel = set(tree.selection())
-            for iid in tree.get_children():
-                mark = "☑" if iid in sel else "☐"
+            for k, iid in enumerate(tree.get_children()):
+                if k >= len(state["page_rows"]):
+                    continue
+                r, p = state["page_rows"][k]
+                mark = "☑" if row_key(r, p) in state["checked"] else "☐"
                 if tree.set(iid, "chk") != mark:
                     tree.set(iid, "chk", mark)
+        except Exception:
+            pass
+
+    def sync_tree_selection():
+        """把当前页 Treeview 的 selection 同步成 checked 集合的样子。"""
+        state["syncing"] = True
+        try:
+            ids = []
+            for k, iid in enumerate(tree.get_children()):
+                if k >= len(state["page_rows"]):
+                    continue
+                r, p = state["page_rows"][k]
+                if row_key(r, p) in state["checked"]:
+                    ids.append(iid)
+            if ids:
+                tree.selection_set(*ids)
+            else:
+                all_ids = tree.get_children()
+                if all_ids:
+                    tree.selection_remove(*all_ids)
+        except Exception:
+            pass
+        finally:
+            state["syncing"] = False
+
+    def on_tree_select(_e=None):
+        """用户在表格里正常选中 / Ctrl / Shift 多选时，同步当前页的 checked。"""
+        if state["syncing"]:
+            return
+        try:
+            sel = set(tree.selection())
+            for k, iid in enumerate(tree.get_children()):
+                if k >= len(state["page_rows"]):
+                    continue
+                key = row_key(*state["page_rows"][k])
+                if iid in sel:
+                    state["checked"].add(key)
+                else:
+                    state["checked"].discard(key)
+            update_sel()
         except Exception:
             pass
 
@@ -2775,45 +3082,71 @@ def build_hash_tab(parent, app=None):
             iid = tree.identify_row(e.y)
             if not iid:
                 return None
-            if iid in tree.selection():
-                tree.selection_remove(iid)
-            else:
-                tree.selection_add(iid)
-            refresh_checks()
+            idx = tree.index(iid)
+            if not (0 <= idx < len(state["page_rows"])):
+                return None
+            key = row_key(*state["page_rows"][idx])
+            state["syncing"] = True
+            try:
+                if key in state["checked"]:
+                    state["checked"].discard(key)
+                    tree.selection_remove(iid)
+                else:
+                    state["checked"].add(key)
+                    tree.selection_add(iid)
+            finally:
+                state["syncing"] = False
             update_sel()
             return "break"
         except Exception:
             return None
 
     def update_sel(_e=None):
+        prune_checked()
         refresh_checks()
-        n = len(tree.selection()) if tree.get_children() else 0
-        lbl_sel.config(text=f"已选 {n} 条" if n else "")
-
-    def select_all(flag=True):
-        ids = tree.get_children()
-        if not ids:
-            return
-        if flag:
-            tree.selection_set(ids)
-            try:
-                tree.focus_set()
-            except Exception:
-                pass
+        n = len(state["checked"])
+        nd = sum(1 for r, p in zip(state["rows"], state["pending"])
+                 if p is not None and row_key(r, p) in state["checked"])
+        if n:
+            text = f"已选 {n} 条"
+            if nd != n:
+                text += f"（差异 {nd} 条）" if nd else "（没有差异行）"
+            lbl_sel.config(text=text)
         else:
-            tree.selection_remove(*ids)
+            lbl_sel.config(text="")
+
+    def select_all(flag=True, scope="page"):
+        """全选 / 取消全选：scope=page 只作用于当前页，all 作用于当前筛选全部页。"""
+        pairs = state["page_rows"] if scope == "page" else state["shown"]
+        keys = {row_key(r, p) for r, p in pairs}
+        if flag:
+            state["checked"].update(keys)
+        else:
+            state["checked"].difference_update(keys)
+        sync_tree_selection()
         update_sel()
 
-    def fill_tree(rows, multi=False, pending=None):
+    def select_none():
+        state["checked"].clear()
+        sync_tree_selection()
+        update_sel()
+
+    def fill_tree(rows, multi=False, pending=None, source=None):
         rows = [r if len(r) == 7 else tuple(r) + ("",) for r in rows]
         state["rows"] = rows
         state["pending"] = (list(pending) if pending is not None
                             and len(pending) == len(rows) else [None] * len(rows))
+        state["checked"].clear()
+        state["syncing"] = False
         state["page"] = 0          # 新数据从第一页开始
+        state["search_kw"] = ""    # 新数据默认不带旧搜索条件
+        state["search_kind"] = "按路径模糊"
+        state["search_hits"] = len(rows)
+        if source is not None:
+            state["source"] = source
         if multi != state["multi"]:
             state["multi"] = multi
             tree.configure(displaycolumns=COLS_MULTI if multi else COLS_SINGLE)
-            _fit_columns()
         render()
 
     def db_conn_readonly():
@@ -2848,7 +3181,8 @@ def build_hash_tab(parent, app=None):
                 out.append((r["path"], dbp))
         return out
 
-    def query_one(db_path, kw, kind, inc, limit):
+    def query_one(db_path, kw, kind, inc):
+        """查一个库；不截断条数，全部交给列表分页显示。"""
         db = HashDB(db_path)
         try:
             try:
@@ -2856,13 +3190,13 @@ def build_hash_tab(parent, app=None):
             except Exception:
                 db.open()
             if not kw:
-                rows = db.list_all(limit, include_deleted=inc)
+                rows = db.list_all(include_deleted=inc)
                 total = db.count_all(include_deleted=inc)
             elif kind.startswith("按路径"):
-                rows = db.search_path(kw, limit=limit, include_deleted=inc)
+                rows = db.search_path(kw, include_deleted=inc)
                 total = db.count_path(kw, include_deleted=inc)
             else:
-                rows = db.search_hash(kw, limit=limit)
+                rows = db.search_hash(kw)
                 total = db.count_hash(kw)
             return [tuple(r) for r in rows], total
         except Exception as e:
@@ -2872,11 +3206,27 @@ def build_hash_tab(parent, app=None):
             db.close()
 
     def do_search():
+        """按当前列表来源搜索：数据库视图查库，扫描结果视图只过滤本次结果。"""
         kw = var_kw.get().strip()
         kind = var_kind.get()
         inc = var_inc_deleted.get()
         multi = var_scope.get().startswith("全部")
         state["filter"] = "全部"
+
+        if state["source"] == "scan":
+            state["search_kw"] = kw
+            state["search_kind"] = kind
+            state["checked"].clear()
+            state["page"] = 0
+            render()
+            hits, total = state["search_hits"], len(state["rows"])
+            if kw:
+                lbl_count.config(text=f"扫描结果中搜索「{kw}」命中 {hits} 条")
+                log(f"搜索本次扫描结果「{kw}」命中 {hits} 条（共 {total} 条）")
+            else:
+                lbl_count.config(text=f"本次扫描结果 {total} 条")
+                log(f"显示本次扫描结果 {total} 条")
+            return
 
         if not multi:
             db, err = db_conn_readonly()
@@ -2884,9 +3234,9 @@ def build_hash_tab(parent, app=None):
                 messagebox.showwarning("提示", err)
                 return
             db.close()
-            rows, total = query_one(current_db_path(), kw, kind, inc, SEARCH_LIMIT)
-            fill_tree(rows, multi=False)
-            label = "全部记录" if not kw else f"搜索「{kw}」"
+            rows, total = query_one(current_db_path(), kw, kind, inc)
+            fill_tree(rows, multi=False, source="db")
+            label = "数据库全部记录" if not kw else f"数据库搜索「{kw}」"
         else:
             targets = managed_dbs()
             if not targets:
@@ -2895,23 +3245,25 @@ def build_hash_tab(parent, app=None):
                 return
             rows, total = [], 0
             for root_path, dbp in targets:
-                part, t = query_one(dbp, kw, kind, inc, PER_DB_LIMIT)
+                part, t = query_one(dbp, kw, kind, inc)
                 total += t
                 rows.extend([tuple(r) + (root_path,) for r in part])
-                if len(rows) >= SEARCH_LIMIT:
-                    break
             rows.sort(key=lambda r: (r[6].lower(), r[0].lower()))
-            rows = rows[:SEARCH_LIMIT]
-            fill_tree(rows, multi=True)
-            label = ("全部记录" if not kw else f"搜索「{kw}」") + \
+            fill_tree(rows, multi=True, source="db")
+            label = ("数据库全部记录" if not kw else f"数据库搜索「{kw}」") + \
                     f"（{len(targets)} 个库）"
 
         if total > len(rows):
-            lbl_count.config(text=f"命中 {total} 条，显示前 {len(rows)} 条")
-            log(f"{label}命中 {total} 条，表格只显示前 {len(rows)} 条")
+            lbl_count.config(text=f"命中 {total} 条，显示 {len(rows)} 条")
+            log(f"{label}命中 {total} 条，实际显示 {len(rows)} 条")
         else:
             lbl_count.config(text=f"命中 {total} 条")
             log(f"{label}命中 {total} 条")
+
+    def show_db_view():
+        """切回数据库视图并刷新列表（补哈希 / 合并 / 校验写回后用）。"""
+        state["source"] = "db"
+        do_search()
 
     def fill_hashes():
         """只给「有效但没算哈希」的记录补 SHA256（只写哈希值）"""
@@ -3057,8 +3409,15 @@ def build_hash_tab(parent, app=None):
         bar_cur["value"] = 0
         s = task.stats if task else {}
         errored = bool(task and task.ui.get("error"))
+        aborted = bool(task and task.ui.get("aborted"))
+        completed = not errored and not aborted
+        if completed:
+            maybe_beep()
         if errored:
             lbl_prog.config(text="用上级库生成出错，详见日志")
+        elif aborted:
+            bar_all["value"] = 0
+            lbl_prog.config(text="已停止 —— 目标库尚未写入，保持原样")
         else:
             bar_all["value"] = 100
             tail = f"，其中库内标缺失 {s['missing']} 条" if s.get("missing") else ""
@@ -3066,23 +3425,33 @@ def build_hash_tab(parent, app=None):
                 text=f"已生成 —— 从上级库搬入 {s.get('rows', 0)} 条"
                      f"（新增 {s.get('inserted', 0)}，更新 {s.get('updated', 0)}）"
                      f"{tail}，未读取任何文件")
-        # 记进「已管理目录」，模式标「继承上级」
-        if not errored and s.get("rows"):
+        # 记进「已管理目录」，模式标「继承上级」；最后扫描只记完成的
+        if task is not None and not errored:
             try:
-                d = db_counts(os.path.join(clean_path(var_root.get()), DB_NAME)) \
-                    or (0, 0, 0, 0, 0)
-                roots = upsert_root(
-                    load_roots(), clean_path(var_root.get()),
-                    db=os.path.join(clean_path(var_root.get()), DB_NAME),
-                    last_scan=time.time(), mode="seed",
-                    files=d[0], active=d[1], deleted=d[2], nohash=d[4])
-                save_roots(roots)
+                remember_root(
+                    task.target_root, task.target_db,
+                    mode=("seed" if completed and s.get("rows") else None),
+                    touch_last=bool(completed and s.get("rows")))
             except Exception:
                 pass
+        if task is not None:
+            seed_total = int(task.ui.get("total") or s.get("rows", 0))
+            seed_done = 0 if (errored or aborted) else int(s.get("rows", 0))
+            record_history(
+                task.target_db, "seed",
+                "error" if errored else ("aborted" if aborted else "done"),
+                total=seed_total, processed=seed_done,
+                added=s.get("inserted", 0), updated=s.get("updated", 0),
+                failed=s.get("errors", 0),
+                detail=(f"用上级库：{task.parent_root} → 本目录"
+                        + (f" · 库内标缺失 {s.get('missing', 0)} 条"
+                           if s.get("missing") else "")
+                        + (" · 中途停止" if aborted else "")),
+                started_at=task.started_at)
         refresh_managed()
         refresh_db_info()
         if not errored:
-            do_search()
+            show_db_view()
         state["scanner"] = None
 
     def merge_dbs():
@@ -3151,25 +3520,8 @@ def build_hash_tab(parent, app=None):
             return
         var_kw.set("")
         var_scope.set("当前目录")
-        do_search()
+        show_db_view()
         log(f"查看数据库：{dbp}")
-
-    def show_deleted(prefix, root):
-        db, err = db_conn_readonly()
-        if db is None:
-            return
-        state["filter"] = "全部"
-        try:
-            rows = [tuple(r) + (root,) for r in db.list_deleted(prefix)]
-        except Exception as e:
-            log(f"读取缺失清单失败：{e}")
-            db.close()
-            return
-        db.close()
-        fill_tree(rows)
-        lbl_count.config(text=f"缺失 {len(rows)} 条")
-        log(f"本次标记缺失 {len(rows)} 条（库内状态 deleted，"
-            f"勾选「含缺失」可重新搜出来）")
 
     def absolute_of(rel, root=None):
         """表格里的 rel 是相对扫描根的路径 → 还原成绝对路径"""
@@ -3179,17 +3531,10 @@ def build_hash_tab(parent, app=None):
         return os.path.join(os.path.abspath(base), *rel.split("/"))
 
     def selected_rows():
-        """选中行的原始数据 (rel, sha, size, mtime, last, status, root)。
-        取的是数据本身而不是表格显示值——列顺序调整、哈希截断都不影响复制/定位。"""
-        out, shown = [], state["shown"]
-        for iid in tree.selection():
-            try:
-                i = int(str(iid)[1:])
-            except ValueError:
-                continue
-            if 0 <= i < len(shown):
-                out.append(shown[i][0])
-        return out
+        """勾选行的原始数据 (rel, sha, size, mtime, last, status, root)。
+        取的是数据本身而不是表格显示值——列顺序调整、哈希截断都不影响复制/定位；
+        跨页勾选也能完整取到。"""
+        return [r for r, _p in checked_rows()]
 
     def on_open_folder():
         rows = selected_rows()
@@ -3329,100 +3674,207 @@ def build_hash_tab(parent, app=None):
         threading.Thread(target=worker, daemon=True).start()
         parent.after(200, poll_progress)
 
-    def apply_selected():
-        """把表格里选中的差异行写回数据库（只读模式扫描的产物）"""
-        shown = state["shown"]
-        picked = []
-        for iid in tree.selection():
+    def ask_write_scope(page_n, all_n):
+        """没有勾选时让用户选：写本页差异 / 写全部差异 / 否。"""
+        dlg = ui.Toplevel(parent)
+        dlg.title("没有选中行")
+        dlg.geometry("650x250")
+        dlg.resizable(False, False)
+        try:
+            dlg.transient(parent.winfo_toplevel())
+            dlg.grab_set()
+        except Exception:
+            pass
+        dlg.grid_columnconfigure(0, weight=1)
+        ui.Label(
+            dlg,
+            text=(f"当前没有勾选任何行。\n\n"
+                  f"本页差异 {page_n} 条；当前筛选下全部差异 {all_n} 条。\n"
+                  f"要写入哪一部分？\n"
+                  f"（只想写一部分的话，先勾选再点「写入数据库」）"),
+            wraplength=610, justify="left").grid(
+            row=0, column=0, sticky="w", padx=18, pady=(18, 8))
+        result = {"value": None}
+
+        def close(value=None):
+            result["value"] = value
             try:
-                i = int(str(iid)[1:])
-            except ValueError:
-                continue
-            if 0 <= i < len(shown) and shown[i][1]:
-                picked.append(shown[i][1])
-        if not picked:
-            avail = [p for _r, p in state["page_rows"] if p]
-            if not avail:
+                dlg.grab_release()
+            except Exception:
+                pass
+            dlg.destroy()
+
+        box = ui.Frame(dlg)
+        box.grid(row=1, column=0, sticky="e", padx=18, pady=(8, 16))
+        ui.Button(box, text="写入本页差异",
+                  state=tk.NORMAL if page_n else tk.DISABLED,
+                  command=lambda: close("page")).pack(side=tk.LEFT, padx=(0, 6))
+        ui.Button(box, text="写入全部差异",
+                  state=tk.NORMAL if all_n else tk.DISABLED,
+                  command=lambda: close("all")).pack(side=tk.LEFT, padx=(0, 6))
+        ui.Button(box, text="否", command=lambda: close(None)).pack(side=tk.LEFT)
+        dlg.protocol("WM_DELETE_WINDOW", lambda: close(None))
+        dlg.bind("<Escape>", lambda _e: close(None))
+        parent.wait_window(dlg)
+        return result["value"]
+
+    def apply_selected():
+        """把勾选的差异行写回数据库；没有勾选时可选本页 / 全部差异。"""
+        prune_checked()
+        checked_pairs = [(r, p) for r, p in checked_rows() if p is not None]
+        page_pairs = [p for _r, p in state["page_rows"] if p]
+        all_pairs = [p for _r, p in state["shown"] if p]
+        if state["source"] == "scan" and not all_pairs:
+            messagebox.showinfo(
+                "提示",
+                "当前扫描结果里没有待写回的差异。\n\n"
+                "快速建档 / 完整建档的修改会直接写入数据库，不需要再点这个按钮；\n"
+                "快速预检 / 完整检查没有扫出差异时也无需写回。\n"
+                "需要写回差异时，请用【快速预检】或【完整检查】扫描后再勾选。")
+            return
+        if state["checked"] and not checked_pairs:
+            messagebox.showinfo(
+                "提示",
+                "勾选的行里没有差异行。\n\n"
+                "差异行是扫描结果里「新增 / 更新 / 删除」等带颜色的行；\n"
+                "库内普通记录不能通过这个按钮写回。")
+            return
+        if checked_pairs:
+            picked = [p for _r, p in checked_pairs]
+            scope_text = "勾选"
+        else:
+            if not all_pairs:
                 messagebox.showinfo(
                     "提示",
                     "当前列表没有可写回的差异行。\n\n"
                     "先用【快速预检】或【完整检查】扫描根目录，扫出来的差异清单\n"
-                    "勾选（可 Ctrl / Shift 多选，或点「全选」）后再点这个按钮，\n"
-                    "程序只把选中的行写进数据库，其余记录一律不动。")
+                    "勾选（可 Ctrl / Shift 多选，或点「全选本页 / 全选全部」）后\n"
+                    "再点这个按钮，程序只把选中的行写进数据库，其余记录一律不动。")
                 return
-            if not messagebox.askyesno(
-                    "没有选中行",
-                    f"当前没有选中任何行。\n\n"
-                    f"要把这一页的 {len(avail)} 条差异全部写入数据库吗？\n"
-                    f"（只想写一部分的话，先勾选再点按钮）"):
+            choice = ask_write_scope(len(page_pairs), len(all_pairs))
+            if choice is None:
                 return
-            picked = avail
+            if choice == "page":
+                if not page_pairs:
+                    messagebox.showinfo("提示", "当前页没有差异行，请先翻到有差异的页。")
+                    return
+                picked, scope_text = page_pairs, "本页"
+            else:
+                picked, scope_text = all_pairs, "全部"
+
         counts = {CAT_NEW: 0, CAT_UPD: 0, CAT_DEL: 0}
+        by_db = {}
         for p in picked:
             counts[p["cat"]] = counts.get(p["cat"], 0) + 1
-        db_path = picked[0]["db"]
+            by_db.setdefault(p["db"], []).append(p)
+        db_lines = list(by_db.keys())
+        db_text = "\n".join(db_lines[:4])
+        if len(db_lines) > 4:
+            db_text += f"\n…… 另有 {len(db_lines) - 4} 个数据库"
         if not messagebox.askyesno(
                 "写入数据库",
-                f"把选中的 {len(picked)} 条写回数据库？\n\n"
+                f"把{scope_text}的 {len(picked)} 条差异写回数据库？\n\n"
                 f"新增 {counts[CAT_NEW]} 条，更新 {counts[CAT_UPD]} 条，"
-                f"标记删除 {counts[CAT_DEL]} 条\n\n{db_path}"):
+                f"标记删除 {counts[CAT_DEL]} 条\n"
+                f"涉及 {len(by_db)} 个数据库：\n{db_text}"):
             return
-        lock = DbLock(db_path)
-        ok, msg = lock.acquire()
-        if not ok:
-            messagebox.showwarning("数据库被占用", msg + f"\n\n{db_path}")
-            return
-        done, failed = 0, 0
-        try:
+
+        started = time.time()
+        done = failed = 0
+        written_ids = set()
+        for db_path, items in by_db.items():
+            lock = DbLock(db_path)
+            ok, msg = lock.acquire()
+            if not ok:
+                failed += len(items)
+                log(f"[跳过] 数据库被占用：{db_path}（{msg}）")
+                record_history(
+                    db_path, "write_scan", "error",
+                    total=len(items), processed=0,
+                    failed=len(items),
+                    detail=f"写入{scope_text}差异 · 数据库被占用",
+                    started_at=started)
+                continue
+            done_db = failed_db = 0
+            ok_ids = set()
+            db = None
             try:
                 db = HashDB(db_path)
                 db.open()
-            except Exception as e:
-                messagebox.showerror("写入失败", f"打不开数据库：{e}")
-                return
-            try:
                 db.conn.execute("BEGIN")
-                for p in picked:
+                for p in items:
                     try:
                         write_pending(db.conn, p)
-                        done += 1
+                        done_db += 1
+                        ok_ids.add(id(p))
                     except sqlite3.Error as e:
-                        failed += 1
+                        failed_db += 1
                         log(f"[写入失败] {p['rel']}：{e}")
                 db.conn.execute("COMMIT")
             except sqlite3.Error as e:
                 try:
-                    db.conn.execute("ROLLBACK")
+                    if db is not None and db.conn is not None:
+                        db.conn.execute("ROLLBACK")
                 except sqlite3.Error:
                     pass
-                messagebox.showerror("写入失败", f"已回滚，数据库没有改动：\n{e}")
-                return
+                done_db, failed_db = 0, len(items)
+                ok_ids.clear()
+                log(f"[写入失败] 已回滚 {db_path}：{e}")
+            except Exception as e:
+                done_db, failed_db = 0, len(items)
+                ok_ids.clear()
+                log(f"[写入失败] {db_path}：{e}")
             finally:
-                db.close()
-        finally:
-            lock.release()
+                if db is not None:
+                    db.close()
+                lock.release()
+            done += done_db
+            failed += failed_db
+            written_ids |= ok_ids
+            ok_c = {CAT_NEW: 0, CAT_UPD: 0, CAT_DEL: 0}
+            for p in items:
+                if id(p) in ok_ids:
+                    ok_c[p["cat"]] = ok_c.get(p["cat"], 0) + 1
+            status = ("done" if failed_db == 0
+                      else ("partial" if done_db else "error"))
+            record_history(
+                db_path, "write_scan", status,
+                total=len(items), processed=done_db,
+                added=ok_c[CAT_NEW], updated=ok_c[CAT_UPD],
+                removed=ok_c[CAT_DEL],
+                failed=failed_db, detail=f"写入{scope_text}差异",
+                started_at=started)
 
         log(f"写入数据库：成功 {done} 条"
-            + (f"，失败 {failed} 条" if failed else "") + f" → {db_path}")
-        # 已写回的行从差异清单里移除，剩下的继续处理
-        written = {id(p) for p in picked}
-        keep_rows, keep_pend = [], []
-        for r, p in zip(state["rows"], state["pending"]):
-            if p is not None and id(p) in written:
-                continue
-            keep_rows.append(r)
-            keep_pend.append(p)
-        state["rows"], state["pending"] = keep_rows, keep_pend
-        left = sum(1 for p in keep_pend if p)
+            + (f"，失败 {failed} 条" if failed else "")
+            + f" → {len(by_db)} 个数据库")
+        # 只把真正写成功的差异行从清单里移除，失败的行留着方便重试
+        if written_ids:
+            keep_rows, keep_pend = [], []
+            for r, p in zip(state["rows"], state["pending"]):
+                if p is not None and id(p) in written_ids:
+                    continue
+                keep_rows.append(r)
+                keep_pend.append(p)
+            state["rows"], state["pending"] = keep_rows, keep_pend
+        prune_checked()
+        left = sum(1 for p in state["pending"] if p)
         if left == 0 or not any(row_cat(r, p) == state["filter"]
-                                for r, p in zip(keep_rows, keep_pend)):
+                                for r, p in zip(state["rows"], state["pending"])):
             state["filter"] = "全部"          # 当前分类已经处理完，回到「全部」
         render()
         lbl_count.config(text=f"剩余差异 {left} 条" if left else "差异已全部处理")
         refresh_db_info()
+        if not done:
+            messagebox.showerror(
+                "写入失败",
+                f"没有写入任何记录，失败 {failed} 条（详见运行日志）。\n"
+                f"失败的行仍保留在清单里。")
+            return
         messagebox.showinfo(
             "完成",
-            f"已写入 {done} 条" + (f"，失败 {failed} 条（详见运行日志）" if failed else "")
+            f"已写入 {done} 条"
+            + (f"，失败 {failed} 条（详见运行日志，失败行仍保留）" if failed else "")
             + ("。\n写过的行已从清单里移除。" if left else "。\n差异清单已清空。"))
 
     menu = tk.Menu(parent, tearoff=0)
@@ -3440,10 +3892,11 @@ def build_hash_tab(parent, app=None):
         iid = tree.identify_row(e.y)
         if iid and iid not in tree.selection():
             tree.selection_set(iid)
+        on_tree_select()          # 立刻同步 checked，菜单里的数量才准确
         if not tree.selection():
             return
         try:
-            n = len(tree.selection())
+            n = len(selected_rows())
             menu.entryconfigure(0, label=f"校验哈希（{n} 条，只读）")
             menu.entryconfigure(1, label=f"重新计算哈希（{n} 条）")
         except Exception:
@@ -3592,39 +4045,80 @@ def build_hash_tab(parent, app=None):
                 text += f"，未计哈希 {stats['nohash']}"
             lbl_prog.config(text=text + extra)
 
-        # 记录到「已管理目录」配置；被并入的子库条目去掉
+        # 记录到「已管理目录」配置：统计每次都刷新，最后扫描时间只记完成的
+        completed = not errored and not aborted
+        if completed:
+            maybe_beep()
         if sc is not None and not errored:
             try:
-                roots = load_roots()
-                dstat = db_counts(sc.db_path) or (0, 0, 0, 0, 0)
-                upsert_root(roots, sc.root, db=sc.db_path,
-                            last_scan=time.time(), mode=mode,
-                            files=dstat[0], active=dstat[1],
-                            deleted=dstat[2], nohash=dstat[4])
-                save_roots(roots)
+                remember_root(sc.root, sc.db_path,
+                              mode=(mode if completed else None),
+                              touch_last=completed)
                 refresh_managed()
             except Exception:
                 pass
 
-        # 只读模式：表格直接显示差异清单（可多选写回）；建档有缺失时优先摆出缺失清单
+        # 写入数据库的扫描记录（中途停止 / 出错也记，状态区分完成与否）
+        if sc is not None:
+            total = int(sc.ui.get("total") or 0)
+            processed = int(sc.ui.get("done") or 0)
+            if completed:
+                processed = total
+            detail = MODE_NAMES.get(mode, mode)
+            if not sc.writable:
+                detail += " · 只读未写库"
+            if aborted:
+                detail += " · 中途停止"
+            if errored:
+                detail += " · 出错"
+            record_history(
+                sc.db_path, "scan",
+                "error" if errored else ("aborted" if aborted else "done"),
+                total=total, processed=processed,
+                added=stats.get("new", 0),
+                updated=(stats.get("changed", 0) + stats.get("restored", 0)
+                         + stats.get("filled", 0)),
+                removed=stats.get("missing", 0),
+                failed=stats.get("errors", 0),
+                detail=detail, started_at=sc.started_at)
+
+        # 列表只显示本次扫描产生的结果：
+        # 只读模式 = 差异清单（可多选写回）；建档模式 = 本次修改（已写库）
         refresh_db_info()
         state["filter"] = "全部"
-        if mode in (MODE_PRECHECK, MODE_VERIFY) and sc is not None:
+        if sc is not None:
             rows = sc.ui.get("rows", [])
             pends = sc.ui.get("pending", [])
             if len(pends) != len(rows):
                 pends = [None] * len(rows)
             pairs = list(zip(rows, pends))
             order = {CAT_NEW: 0, CAT_UPD: 1, CAT_DEL: 2}
-            pairs.sort(key=lambda x: (order.get(x[1]["cat"], 9) if x[1] else 9,
-                                      str(x[0][0]).lower()))
-            fill_tree([p[0] for p in pairs], pending=[p[1] for p in pairs])
-            lbl_count.config(
-                text=f"{MODE_NAMES.get(mode, '')}差异 {len(pairs)} 条（未写库）")
-        elif sc is not None and stats.get("missing"):
-            show_deleted(sc.prefix, sc.root)
-        elif not aborted:
-            do_search()
+
+            def _pair_order(item):
+                row, pend = item
+                cat = pend["cat"] if pend else DIFF_CAT.get(
+                    str(row[5] or "").split(" ")[0], "")
+                return (order.get(cat, 9), str(row[0]).lower())
+
+            pairs.sort(key=_pair_order)
+            var_kw.set("")
+            fill_tree([p[0] for p in pairs], pending=[p[1] for p in pairs],
+                      source="scan")
+            if not sc.writable:
+                head = "已停止" if aborted else MODE_NAMES.get(mode, "")
+                lbl_count.config(text=f"{head}差异 {len(pairs)} 条（未写库）")
+            elif errored:
+                lbl_count.config(
+                    text=f"扫描出错：本次已修改 {len(pairs)} 条（部分）")
+            elif aborted:
+                lbl_count.config(
+                    text=f"已停止：本次已修改 {len(pairs)} 条（已写库）")
+            else:
+                lbl_count.config(
+                    text=f"{MODE_NAMES.get(mode, '')}完成：本次修改 "
+                         f"{len(pairs)} 条（已写库）")
+        else:
+            show_db_view()
         state["scanner"] = None
 
     def finish_fill():
@@ -3657,9 +4151,29 @@ def build_hash_tab(parent, app=None):
             lbl_prog.config(text=f"补全哈希完成 —— 已补 {s.get('filled', 0)}，"
                                  f"跳过(文件不在) {s.get('skipped', 0)}，"
                                  f"失败 {s.get('errors', 0)}")
+        completed = not errored and not aborted
+        if completed:
+            maybe_beep()
+        if fr is not None:
+            if not errored:
+                try:
+                    remember_root(fr.root, fr.db_path, touch_last=completed)
+                    refresh_managed()
+                except Exception:
+                    pass
+            record_history(
+                fr.db_path, "fill",
+                "error" if errored else ("aborted" if aborted else "done"),
+                total=int(fr.ui.get("total") or 0),
+                processed=int(fr.ui.get("done") or 0),
+                updated=s.get("filled", 0),
+                failed=s.get("errors", 0),
+                detail=(f"补全哈希 · 跳过(文件不在) {s.get('skipped', 0)} 条"
+                        + (" · 中途停止" if aborted else "")),
+                started_at=fr.started_at)
         refresh_db_info()
         if not errored:
-            do_search()          # 刷新列表里的哈希列
+            show_db_view()       # 切回数据库视图，刷新列表里的哈希列
         state["scanner"] = None
 
     def finish_verify():
@@ -3678,6 +4192,8 @@ def build_hash_tab(parent, app=None):
         s = task.stats if task else {}
         errored = bool(task and task.ui.get("error"))
         aborted = bool(task and task.ui.get("aborted"))
+        if not errored and not aborted:
+            maybe_beep()
         if errored:
             lbl_prog.config(text="校验哈希出错，详见日志")
         else:
@@ -3716,6 +4232,8 @@ def build_hash_tab(parent, app=None):
         s = tk_task.stats if tk_task else {}
         errored = bool(tk_task and tk_task.ui.get("error"))
         aborted = bool(tk_task and tk_task.ui.get("aborted"))
+        if not errored and not aborted:
+            maybe_beep()
         if errored:
             lbl_prog.config(text="重算哈希出错，详见日志")
         else:
@@ -3728,7 +4246,7 @@ def build_hash_tab(parent, app=None):
                      f"失败 {s.get('errors', 0)}")
         refresh_db_info()
         if not errored:
-            do_search()
+            show_db_view()
         state["scanner"] = None
 
     def finish_merge():
@@ -3750,6 +4268,9 @@ def build_hash_tab(parent, app=None):
         s = mt.stats if mt else {}
         errored = bool(mt and mt.ui.get("error"))
         aborted = bool(mt and mt.ui.get("aborted"))
+        completed = not errored and not aborted
+        if completed:
+            maybe_beep()
         if errored:
             lbl_prog.config(text="合并出错，详见日志")
         else:
@@ -3760,6 +4281,23 @@ def build_hash_tab(parent, app=None):
                      f"（新增 {s.get('inserted', 0)}，更新 {s.get('updated', 0)}），"
                      f"已删子库 {s.get('removed', 0)} 个"
                      + (f"，失败 {s.get('errors', 0)} 个" if s.get("errors") else ""))
+        if mt is not None and not errored:
+            try:
+                remember_root(mt.root, mt.db_path, touch_last=completed)
+            except Exception:
+                pass
+        if mt is not None:
+            record_history(
+                mt.db_path, "merge",
+                "error" if errored else ("aborted" if aborted else "done"),
+                total=int(mt.ui.get("total") or 0),
+                processed=int(s.get("dbs", 0)),
+                added=s.get("inserted", 0), updated=s.get("updated", 0),
+                removed=s.get("removed", 0), failed=s.get("errors", 0),
+                detail=(f"合并子库 {s.get('dbs', 0)} 个"
+                        f" · 共 {s.get('rows', 0)} 条记录"
+                        + (" · 中途停止" if aborted else "")),
+                started_at=mt.started_at)
         # 子库文件已删 → 顺手把「已管理目录」里对应的条目去掉
         if s.get("removed_paths"):
             try:
@@ -3770,7 +4308,7 @@ def build_hash_tab(parent, app=None):
         refresh_managed()
         refresh_db_info()
         if not errored:
-            do_search()
+            show_db_view()
         state["scanner"] = None
 
     def start():
@@ -3864,15 +4402,19 @@ def build_hash_tab(parent, app=None):
                           show="tree headings", selectmode="extended")
         tv.heading("#0", text="重复组 / 相对路径")
         tv.column("#0", width=420, minwidth=200, stretch=True, anchor="w")
-        for key, title, width, stretch in (("size", "文件大小", 100, False),
-                                           ("mtime", "修改时间", 140, False),
+        for key, title, width, stretch in (("size", "文件大小", 110, False),
+                                           ("mtime", "修改时间", 200, False),
                                            ("root", "所在目录", 250, True)):
             tv.heading(key, text=title)
-            tv.column(key, width=width, minwidth=70, anchor="w", stretch=stretch)
+            tv.column(key, width=width,
+                      minwidth={"mtime": 190, "size": 90}.get(key, 70),
+                      anchor="w", stretch=stretch)
         vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tv.yview)
         tv.configure(yscrollcommand=vsb.set)
         tv.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
+        add_table_hscroll(tv, frame, row=1, column=0)
+        setup_tree_columns(tv, "hashscan.dup")
         tv.tag_configure("group", background=COLOR["surface_alt"])
         tv.tag_configure("child", foreground=COLOR["text"])
 
@@ -4105,9 +4647,9 @@ def build_hash_tab(parent, app=None):
             tv.heading("#0", text="相对路径")
             tv.column("#0", width=280, minwidth=140, stretch=True, anchor="w")
             tv.heading("size", text="大小")
-            tv.column("size", width=84, minwidth=60, stretch=False, anchor="e")
+            tv.column("size", width=110, minwidth=90, stretch=False, anchor="e")
             tv.heading("mtime", text="修改时间")
-            tv.column("mtime", width=136, minwidth=80, stretch=False,
+            tv.column("mtime", width=200, minwidth=190, stretch=False,
                       anchor="w")
             return tv
 
@@ -4121,6 +4663,10 @@ def build_hash_tab(parent, app=None):
         mtv.grid(row=0, column=1, sticky="ns")
         rtv.grid(row=0, column=2, sticky="nsew")
         vsb.grid(row=0, column=3, sticky="ns")
+        add_table_hscroll(ltv, frame, row=1, column=0)
+        add_table_hscroll(rtv, frame, row=1, column=2)
+        setup_tree_columns(ltv, "hashscan.mirror.left")
+        setup_tree_columns(rtv, "hashscan.mirror.right")
 
         trees = (ltv, mtv, rtv)
 
@@ -4719,18 +5265,21 @@ def build_hash_tab(parent, app=None):
         frame.grid(row=2, column=0, sticky="nsew", padx=12)
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
-        cols = (("chk", "选", 34, False), ("kind", "结果", 100, False),
+        cols = (("chk", "选", 34, False), ("kind", "结果", 110, False),
                 ("rel", "相对路径", 320, True), ("expect", "库内哈希", 140, False),
                 ("actual", "当前哈希", 140, False),
-                ("size", "当前大小", 84, False),
-                ("mtime", "修改时间", 132, False),
+                ("size", "当前大小", 110, False),
+                ("mtime", "修改时间", 200, False),
                 ("root", "所在目录", 160, True))
+        min_widths = {"chk": 30, "kind": 110, "expect": 120, "actual": 120,
+                      "size": 90, "mtime": 190}
         tv = ttk.Treeview(frame, columns=[c[0] for c in cols],
                           show="headings", selectmode="extended")
         for key, title, width, stretch in cols:
             tv.heading(key, text=title,
                        anchor="center" if key == "chk" else "w")
-            tv.column(key, width=width, minwidth=30 if key == "chk" else 70,
+            tv.column(key, width=width,
+                      minwidth=min_widths.get(key, 70),
                       anchor="center" if key == "chk" else "w", stretch=stretch)
         vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tv.yview)
         tv.configure(yscrollcommand=vsb.set)
@@ -4739,6 +5288,7 @@ def build_hash_tab(parent, app=None):
         hsb = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tv.xview)
         tv.configure(xscrollcommand=hsb.set)
         hsb.grid(row=1, column=0, sticky="ew")
+        setup_tree_columns(tv, "hashscan.verify")
         tv.tag_configure("changed", foreground=COLOR["error"])
         tv.tag_configure("gone", foreground=COLOR["warning"])
         tv.tag_configure("bad", foreground=COLOR["error"])
@@ -4927,47 +5477,69 @@ def build_hash_tab(parent, app=None):
             for r in picked:
                 by_db.setdefault(r[6], []).append(r)
             done = failed = 0
+            ok_keys = set()
+            started = time.time()
             for dbp, rows in by_db.items():
                 lk = DbLock(dbp)
                 ok, msg = lk.acquire()
                 if not ok:
                     failed += len(rows)
                     log(f"[跳过] 数据库被占用：{dbp}（{msg}）")
+                    record_history(
+                        dbp, "write_verify", "error",
+                        total=len(rows), processed=0, updated=0,
+                        failed=len(rows),
+                        detail="检查结果写入数据库 · 数据库被占用",
+                        started_at=started)
                     continue
+                done_db = failed_db = 0
+                db = None
                 try:
                     db = HashDB(dbp)
+                    db.open()
+                    db.conn.execute("BEGIN")
+                    for r in rows:
+                        db.conn.execute(
+                            "UPDATE file_records SET sha256=?, file_size=?,"
+                            " mtime=?, last_hash_time=? WHERE rel_path=?",
+                            (r[3], r[4], r[7], time.time(), r[1]))
+                    db.conn.execute("COMMIT")
+                    done_db = len(rows)
+                    ok_keys.update((dbp, r[1]) for r in rows)
+                except sqlite3.Error as e:
                     try:
-                        db.open()
-                        db.conn.execute("BEGIN")
-                        for r in rows:
-                            db.conn.execute(
-                                "UPDATE file_records SET sha256=?, file_size=?,"
-                                " mtime=?, last_hash_time=? WHERE rel_path=?",
-                                (r[3], r[4], r[7], time.time(), r[1]))
-                        db.conn.execute("COMMIT")
-                        done += len(rows)
-                    except sqlite3.Error as e:
-                        try:
+                        if db is not None and db.conn is not None:
                             db.conn.execute("ROLLBACK")
-                        except sqlite3.Error:
-                            pass
-                        failed += len(rows)
-                        log(f"[写入失败] {dbp}：{e}")
-                    finally:
-                        db.close()
+                    except sqlite3.Error:
+                        pass
+                    failed_db = len(rows)
+                    log(f"[写入失败] {dbp}：{e}")
+                except Exception as e:
+                    failed_db = len(rows)
+                    log(f"[写入失败] {dbp}：{e}")
                 finally:
+                    if db is not None:
+                        db.close()
                     lk.release()
+                done += done_db
+                failed += failed_db
+                status = ("done" if failed_db == 0
+                          else ("partial" if done_db else "error"))
+                record_history(
+                    dbp, "write_verify", status,
+                    total=len(rows), processed=done_db,
+                    updated=done_db, failed=failed_db,
+                    detail="检查结果写入数据库", started_at=started)
             log(f"校验结果写回：成功 {done} 条"
                 + (f"，失败 {failed} 条" if failed else ""))
-            keys = {(r[6], r[1]) for r in picked}
             for i, r in enumerate(results):
-                if (r[6], r[1]) in keys:
+                if (r[6], r[1]) in ok_keys:
                     results[i] = (VERIFY_SAME, r[1], r[3], r[3], r[4], r[5],
                                   r[6], r[7], r[7])
             fill()
             try:
                 refresh_db_info()
-                do_search()
+                show_db_view()
             except Exception:
                 pass
             messagebox.showinfo(
@@ -5054,7 +5626,7 @@ def build_hash_tab(parent, app=None):
             fill()
             try:
                 refresh_db_info()
-                do_search()
+                show_db_view()
             except Exception:
                 pass
             messagebox.showinfo(
@@ -5098,7 +5670,7 @@ def build_hash_tab(parent, app=None):
             finally:
                 m.grab_release()
 
-        tv.bind("<Button-1>", on_click)
+        tv.bind("<Button-1>", on_click, add="+")
         tv.bind("<Button-3>", popup)
         tv.bind("<Double-1>", lambda _e: open_folder())
         tv.bind("<<TreeviewSelect>>", lambda _e: refresh_checks())
@@ -5155,8 +5727,11 @@ def build_hash_tab(parent, app=None):
             row=0, column=0, sticky="ew", padx=10, pady=(8, 4))
 
         cols = [("chk", "选", 34, False), ("path", "扫描目录", 280, True),
-                ("db", "数据库", 280, True), ("count", "记录", 110, False),
-                ("time", "最后扫描", 145, False), ("mode", "模式", 90, False)]
+                ("db", "数据库", 280, True), ("count", "记录", 190, False),
+                ("time", "最后扫描", 320, False), ("mode", "模式", 90, False)]
+        # 记录数会显示「有效 6000 / 共 6000」，最后扫描会显示
+        # 「今天（2026-10-27 08:43:48）」，最小宽度按完整文案留足。
+        min_widths = {"chk": 30, "count": 190, "time": 280, "mode": 80}
         frame = ui.Frame(win)
         frame.grid(row=1, column=0, sticky="nsew", padx=10)
         frame.grid_rowconfigure(0, weight=1)
@@ -5166,7 +5741,8 @@ def build_hash_tab(parent, app=None):
         for key, title, width, stretch in cols:
             tv.heading(key, text=title,
                        anchor="center" if key == "chk" else "w")
-            tv.column(key, width=width, minwidth=30 if key == "chk" else 80,
+            tv.column(key, width=width,
+                      minwidth=min_widths.get(key, 80),
                       anchor="center" if key == "chk" else "w", stretch=stretch)
         sb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tv.yview)
         tv.configure(yscrollcommand=sb.set)
@@ -5175,6 +5751,7 @@ def build_hash_tab(parent, app=None):
         hsb2 = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tv.xview)
         tv.configure(xscrollcommand=hsb2.set)
         hsb2.grid(row=1, column=0, sticky="ew")
+        setup_tree_columns(tv, "hashscan.manager")
         tv.tag_configure("gone", foreground=COLOR["error"])
 
         bar = ui.Frame(win)
@@ -5221,8 +5798,7 @@ def build_hash_tab(parent, app=None):
                 count = "库不存在" if gone else f"有效 {st[1]} / 共 {st[0]}"
                 tv.insert("", tk.END, iid=r["path"], values=(
                     "☐", r["path"], r["db"], count,
-                    fmt_time(r.get("last_scan")) if
-                    r.get("last_scan") else "—",
+                    fmt_relative_time(r.get("last_scan")),
                     ROOT_MODE_NAMES.get(r.get("mode", ""), r.get("mode", "") or "—")),
                     tags=("gone",) if gone else ())
 
@@ -5307,6 +5883,126 @@ def build_hash_tab(parent, app=None):
             except Exception:
                 pass
 
+        def open_history():
+            """查看选中目录的扫描记录（数据在各目录的 filehash.db 里）"""
+            sel = list(tv.selection())
+            if not sel:
+                messagebox.showinfo(
+                    "提示", "先选中要查看扫描记录的目录（Ctrl / Shift 可多选）",
+                    parent=win)
+                return
+            dbmap = {r["path"]: (r.get("db") or os.path.join(r["path"], DB_NAME))
+                     for r in load_roots()}
+            win.grab_release()
+            hw = ui.Toplevel(win)
+            hw.title("扫描记录")
+            hw.geometry("1400x620")
+            try:
+                hw.transient(win)
+                hw.grab_set()
+            except Exception:
+                pass
+            hw.grid_columnconfigure(0, weight=1)
+            hw.grid_rowconfigure(1, weight=1)
+
+            lbl_top = ui.Label(hw, text="", foreground=COLOR["text_secondary"])
+            lbl_top.grid(row=0, column=0, sticky="w", padx=12, pady=(8, 4))
+
+            frame = ui.Frame(hw)
+            frame.grid(row=1, column=0, sticky="nsew", padx=12)
+            frame.grid_rowconfigure(0, weight=1)
+            frame.grid_columnconfigure(0, weight=1)
+            cols = (("time", "时间", 200, False),
+                    ("op", "操作", 120, False),
+                    ("status", "状态", 70, False),
+                    ("count", "处理 / 总数", 130, False),
+                    ("changes", "新增 / 更新 / 删除", 170, False),
+                    ("failed", "失败", 50, False),
+                    ("detail", "说明", 260, True),
+                    ("root", "扫描目录", 300, True))
+            htv = ttk.Treeview(frame, columns=[c[0] for c in cols],
+                               show="headings", selectmode="browse")
+            for key, title, width, stretch in cols:
+                htv.heading(key, text=title,
+                            anchor="center" if key in ("status", "count", "failed") else "w")
+                htv.column(key, width=width,
+                           minwidth=190 if key == "time" else 60,
+                           anchor="center" if key in ("status", "count", "failed") else "w",
+                           stretch=stretch)
+            vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=htv.yview)
+            htv.configure(yscrollcommand=vsb.set)
+            htv.grid(row=0, column=0, sticky="nsew")
+            vsb.grid(row=0, column=1, sticky="ns")
+            hsb = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=htv.xview)
+            htv.configure(xscrollcommand=hsb.set)
+            hsb.grid(row=1, column=0, sticky="ew")
+            setup_tree_columns(htv, "hashscan.history")
+            htv.tag_configure("aborted", foreground=COLOR["warning"])
+            htv.tag_configure("error", foreground=COLOR["error"])
+            htv.tag_configure("partial", foreground=COLOR["warning"])
+
+            bottom = ui.Frame(hw)
+            bottom.grid(row=2, column=0, sticky="ew", padx=12, pady=8)
+            lbl_sum = ui.Label(bottom, text="", foreground=COLOR["text_secondary"])
+            lbl_sum.pack(side=tk.LEFT)
+
+            def load_records():
+                out = []
+                for p in sel:
+                    dbp = dbmap.get(p) or os.path.join(p, DB_NAME)
+                    for rec in read_history(dbp):
+                        out.append((rec, p, dbp))
+                out.sort(key=lambda x: (x[0].get("finished_at") or 0,
+                                        x[0].get("id") or 0), reverse=True)
+                return out
+
+            def fill_history():
+                htv.delete(*htv.get_children())
+                records = load_records()
+                for rec, p, _dbp in records:
+                    status = rec.get("status") or ""
+                    total = int(rec.get("total") or 0)
+                    processed = int(rec.get("processed") or 0)
+                    count = f"{processed} / {total}" if total else str(processed)
+                    changes = (f"{int(rec.get('added') or 0)} / "
+                               f"{int(rec.get('updated') or 0)} / "
+                               f"{int(rec.get('removed') or 0)}")
+                    htv.insert("", tk.END, values=(
+                        fmt_time(rec.get("finished_at")),
+                        HISTORY_OP_NAMES.get(rec.get("op"), rec.get("op") or ""),
+                        HISTORY_STATUS_NAMES.get(status, status or "—"),
+                        count, changes, int(rec.get("failed") or 0),
+                        rec.get("detail") or "", p),
+                        tags=(status,) if status in ("aborted", "error", "partial") else ())
+                done = sum(1 for r, _p, _d in records
+                           if (r.get("status") or "") == "done")
+                bad = sum(1 for r, _p, _d in records
+                          if (r.get("status") or "") in ("error", "partial"))
+                aborted = sum(1 for r, _p, _d in records
+                              if (r.get("status") or "") == "aborted")
+                lbl_top.config(
+                    text=f"共 {len(records)} 条记录 · 完成 {done} · "
+                         f"未完成 {aborted} · 失败/部分完成 {bad}　"
+                         f"（记录存在各扫描目录的 {DB_NAME} 里）")
+                if not records:
+                    lbl_sum.config(text="没有扫描记录（先做一次扫描或补全哈希）")
+                else:
+                    lbl_sum.config(text=f"显示最近 {len(records)} 条")
+
+            def close_history():
+                try:
+                    hw.grab_release()
+                except Exception:
+                    pass
+                hw.destroy()
+                _regrab(win)
+
+            ui.Button(bottom, text="关闭", command=close_history).pack(side=tk.RIGHT)
+            ui.Button(bottom, text="刷新", command=fill_history).pack(
+                side=tk.RIGHT, padx=(0, 6))
+            hw.protocol("WM_DELETE_WINDOW", close_history)
+            fill_history()
+
         def check_mirror():
             sel = list(tv.selection())
             if len(sel) != 2:
@@ -5322,20 +6018,22 @@ def build_hash_tab(parent, app=None):
 
         ui.Button(bar, text="检查重复", command=check_dup).pack(side=tk.LEFT, padx=(16, 3))
         ui.Button(bar, text="检查不重复", command=check_mirror).pack(side=tk.LEFT, padx=3)
+        ui.Button(bar, text="扫描记录", command=open_history).pack(side=tk.LEFT, padx=3)
         ui.Button(bar, text="打开文件夹", command=open_folder).pack(side=tk.LEFT, padx=3)
         ui.Button(bar, text="关闭", command=win.destroy).pack(side=tk.RIGHT, padx=3)
 
         tv.bind("<Double-1>", lambda _e: scan_this())
         tv.bind("<<TreeviewSelect>>", lambda _e: refresh_checks())
-        tv.bind("<Button-1>", on_click)      # 点第一列 = 勾选 / 取消
+        tv.bind("<Button-1>", on_click, add="+")      # 点第一列 = 勾选 / 取消
         refresh()
 
     btn_start.config(command=start)
     btn_apply.config(command=apply_selected)
-    btn_sel_all.config(command=lambda: select_all(True))
-    btn_sel_none.config(command=lambda: select_all(False))
-    tree.bind("<<TreeviewSelect>>", update_sel)
-    tree.bind("<Button-1>", on_tree_click)      # 点第一列 = 勾选 / 取消
+    btn_sel_all.config(command=lambda: select_all(True, "page"))
+    btn_sel_all_pages.config(command=lambda: select_all(True, "all"))
+    btn_sel_none.config(command=select_none)
+    tree.bind("<<TreeviewSelect>>", on_tree_select)
+    tree.bind("<Button-1>", on_tree_click, add="+")      # 点第一列 = 勾选 / 取消
     for _k, _b in filter_btns.items():
         _b.config(command=lambda k=_k: set_filter(k))
     # 分页：首页 / 上页 / 下页 / 末页 / 页码跳转 / 每页条数
@@ -5395,9 +6093,13 @@ def build_hash_tab(parent, app=None):
         "verify": verify_selected,
         "rehash": rehash_selected,
         "refresh": refresh_db_info,
+        "running": lambda: state["running"],
+        "task": lambda: state["task"],
         "rows": lambda: state["rows"],
         "pending": lambda: state["pending"],
         "shown": lambda: state["shown"],
+        "source": lambda: state["source"],
+        "search_hits": lambda: state["search_hits"],
         "page_rows": lambda: state["page_rows"],
         "page": lambda: state["page"] + 1,
         "pages": page_count,
@@ -5409,6 +6111,9 @@ def build_hash_tab(parent, app=None):
         "var_page_size": var_page_size,
         "apply": apply_selected,
         "select_all": select_all,
+        "select_all_pages": lambda: select_all(True, "all"),
+        "select_none": select_none,
+        "checked": lambda: set(state["checked"]),
         "filter": set_filter,
         "is_running": lambda: state["running"],
         "log": log,

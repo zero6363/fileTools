@@ -216,6 +216,8 @@ class ToolboxApp:
                 if builder is build_hash_tab:
                     # 暴露给自动化冒烟测试（不影响正常使用）
                     self._hash_api = result
+                elif builder is build_encode_tab:
+                    self._encode_api = result
             else:
                 builder(frame)
             self.tool_frames.append(frame)

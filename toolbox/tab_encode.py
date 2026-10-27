@@ -32,8 +32,10 @@ from . import ui, ui as ttk
 from .theme import FONTS
 
 from . import config
-from .common import (clean_path, clear_log, get_unique_path, make_logger,
-                     make_num_box, natural_key)
+from .common import (add_table_hscroll, clean_path, clear_log,
+                     get_unique_path, load_done_sound, make_logger,
+                     make_num_box, natural_key, play_done_sound,
+                     save_done_sound, setup_tree_columns)
 from .theme import COLOR
 
 # ============================================================
@@ -1417,13 +1419,24 @@ def run_encode(settings, info, plan, src, dst, work_dir, on_progress, stop_event
 
 COLS = (
     ("name", "文件", 200),
-    ("dur", "时长", 56),
-    ("res", "分辨率", 76),
-    ("fps", "帧率", 56),
-    ("codec", "编码", 100),
-    ("sub", "字幕", 60),
-    ("status", "状态", 200),
+    ("dur", "时长", 80),
+    ("res", "分辨率", 130),
+    ("fps", "帧率", 60),
+    ("codec", "编码", 190),
+    ("sub", "字幕", 80),
+    ("status", "状态", 320),
 )
+
+# 每列的最小宽度（100% 缩放下的像素，setup_tree_columns 会按 DPI 放大）。
+# 时长 / 分辨率 / 编码 / 字幕都按实际内容留足，避免 4K 下被列边界裁掉。
+COLS_MIN = {
+    "dur": 80,
+    "res": 130,
+    "fps": 60,
+    "codec": 190,
+    "sub": 80,
+    "status": 320,
+}
 
 
 def fmt_duration(sec):
@@ -1634,6 +1647,13 @@ def build_encode_tab(parent, app=None):
     var_console = tk.BooleanVar(value=False)
     ttk.Checkbutton(status_line, text="显示 ffmpeg 窗口", variable=var_console).pack(
         side=tk.LEFT, padx=(4, 16))
+    # 完成提示音：默认不勾选，勾选后记住；整批正常跑完（不是中途停止）
+    # 播放一次 Windows 系统提示音。
+    var_sound = tk.BooleanVar(value=load_done_sound("encode"))
+    ttk.Checkbutton(status_line, text="完成后提示音", variable=var_sound,
+                    command=lambda: save_done_sound("encode",
+                                                    var_sound.get())).pack(
+        side=tk.LEFT, padx=(0, 16))
     lbl_enc = ui.Label(status_line, text="编码器：检测中…", foreground=COLOR["success"])
     lbl_enc.pack(side=tk.LEFT)
 
@@ -1672,11 +1692,14 @@ def build_encode_tab(parent, app=None):
                         selectmode="extended", height=10)
     for key, title, width in COLS:
         tree.heading(key, text=title)
-        tree.column(key, width=width, minwidth=60, stretch=(key in ("name", "status")))
+        tree.column(key, width=width, minwidth=COLS_MIN.get(key, 60),
+                    stretch=(key in ("name", "status")))
     vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
     tree.configure(yscrollcommand=vsb.set)
     tree.grid(row=0, column=0, sticky="nsew")
     vsb.grid(row=0, column=1, sticky="ns")
+    add_table_hscroll(tree, tree_frame, row=1, column=0)
+    setup_tree_columns(tree, "encode.main")
 
     # ---------------- 按钮 + 总进度 ----------------
     btn_row = ui.Frame(parent)
@@ -2118,7 +2141,8 @@ def build_encode_tab(parent, app=None):
                 enc = ensure_encoders()
             except Exception as e:
                 run_ui(lambda: log(f"错误：{e}"))
-                run_ui(lambda: finish_batch(0, 0, 0, 0))
+                # 启动阶段就失败（比如没找到 ffmpeg）：不播完成提示音
+                run_ui(lambda: finish_batch(0, 0, 0, 0, fatal=True))
                 return
             settings["ffmpeg"] = state["ffmpeg"]
             settings["encoders"] = enc
@@ -2386,7 +2410,8 @@ def build_encode_tab(parent, app=None):
             run_ui(lambda: finish_batch(ok_n, fail_n, cancel_n, skip_n, grown_n,
                                     bool(settings.get("move_grow", True))))
 
-        def finish_batch(ok_n, fail_n, cancel_n, skip_n=0, grown_n=0, moved_grow=True):
+        def finish_batch(ok_n, fail_n, cancel_n, skip_n=0, grown_n=0, moved_grow=True,
+                         fatal=False):
             state["running"] = False
             btn_stop.config(state=tk.DISABLED)
             btn_start.config(state=tk.NORMAL)
@@ -2404,6 +2429,9 @@ def build_encode_tab(parent, app=None):
                 summary += f"（体积变大的源文件与成品都归到了 {OVERSIZE_DIR}/）"
             log(summary)
             lbl_prog.config(text=f"已完成 {ok_n}，失败 {fail_n}，变大 {grown_n} 个")
+            # 中途停止 / 启动失败不响，只有整批正常结束才提示（单个文件失败也算跑完）
+            if not fatal and not state["stop"].is_set() and var_sound.get():
+                play_done_sound()
             state["stop"].clear()
 
         threading.Thread(target=work, daemon=True).start()
@@ -2434,4 +2462,8 @@ def build_encode_tab(parent, app=None):
         parent.after(150, on_show)
 
     refresh_mode_ui()
+    # 供外部（自动化冒烟测试 / 其它模块）调用，不影响正常使用
+    state["add_paths"] = add_paths
+    state["start"] = start_batch
+    state["var_sound"] = var_sound
     return state

@@ -129,6 +129,20 @@ class Button(_CTkCompat, ctk.CTkButton):
 
 
 class Label(_CTkCompat, ctk.CTkLabel):
+    def configure(self, cnf=None, **kw):
+        """兼容 Tk 的 foreground/background 写法：CTkLabel 用 text_color/fg_color。"""
+        if isinstance(cnf, str):
+            return self.cget(cnf)
+        if cnf:
+            kw.update(cnf)
+        fg = kw.pop("foreground", kw.pop("fg", None))
+        if fg is not None:
+            kw["text_color"] = fg
+        bg = kw.pop("background", kw.pop("bg", None))
+        if bg is not None:
+            kw["fg_color"] = bg
+        return super().configure(**kw)
+
     def __init__(self, master=None, **kw):
         fg = kw.pop("foreground", kw.pop("fg", COLOR["text"]))
         bg = kw.pop("background", kw.pop("bg", None))
@@ -139,6 +153,18 @@ class Label(_CTkCompat, ctk.CTkLabel):
         kw.pop("highlightcolor", None)
         kw.pop("cursor", None)
         kw.pop("disabledforeground", None)
+
+        # 自动换行：长文本 / 动态状态文字默认按容器宽度折行，避免撑破窗口。
+        # 调用方显式给 wraplength 时把它当作上限（窗口更窄时继续收窄，
+        # 窗口更宽时不会超过调用方期望的宽度）；宽度很小的定宽标签
+        # （如百分比）保持原样，避免把一两个字拆成多行。
+        explicit_wrap = kw.get("wraplength")
+        auto_wrap = kw.pop("auto_wrap", None)
+        try:
+            wrap_cap = int(float(explicit_wrap)) if explicit_wrap not in (
+                None, "") else 0
+        except (TypeError, ValueError):
+            wrap_cap = 0
 
         kw["text_color"] = fg
         if bg is not None:
@@ -154,6 +180,60 @@ class Label(_CTkCompat, ctk.CTkLabel):
         if w:
             kw["width"] = w
         super().__init__(master, **kw)
+
+        if auto_wrap is None:
+            if explicit_wrap in (None, "", 0, "0"):
+                auto_wrap = (w is None or w >= 80)
+            else:
+                auto_wrap = wrap_cap > 0
+        self._wrap_cap = wrap_cap if wrap_cap > 0 else None
+        self._wrap_fixed = w if auto_wrap and w else None
+        if auto_wrap:
+            self._install_auto_wrap()
+
+    def _install_auto_wrap(self):
+        """按父容器可用宽度自动设置 wraplength；容器变宽 / 变窄时跟着调整。"""
+        state = {"job": None}
+
+        def apply():
+            state["job"] = None
+            try:
+                if not self.winfo_exists():
+                    return
+                if self._wrap_fixed:
+                    avail = self._wrap_fixed
+                else:
+                    master = self.master
+                    mw = master.winfo_width()
+                    if mw <= 1:
+                        return
+                    avail = mw - max(0, self.winfo_x()) - 12
+                if self._wrap_cap:
+                    avail = min(avail, self._wrap_cap)
+                avail = max(80, int(avail))
+                cur = int(float(self.cget("wraplength") or 0))
+                if abs(cur - avail) > 12:
+                    self.configure(wraplength=avail)
+            except Exception:
+                pass
+
+        def schedule(_event=None):
+            try:
+                if state["job"] is not None:
+                    self.after_cancel(state["job"])
+                state["job"] = self.after(60, apply)
+            except Exception:
+                pass
+
+        try:
+            self.master.bind("<Configure>", schedule, add="+")
+        except Exception:
+            pass
+        try:
+            self.after_idle(apply)
+            self.after(250, apply)
+        except Exception:
+            pass
 
 
 class Frame(_CTkCompat, ctk.CTkFrame):

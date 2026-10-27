@@ -15,8 +15,9 @@ from . import ui, ui as ttk
 from .theme import FONTS
 
 from . import config
-from .common import (APP_TITLE, _module_available, clean_path, clear_log,
-                     make_log_panel, make_tip, run_task)
+from .common import (APP_TITLE, _module_available, add_table_hscroll,
+                     clean_path, clear_log, make_log_panel, make_tip,
+                     run_task, setup_tree_columns)
 from .theme import COLOR
 
 
@@ -747,17 +748,25 @@ def build_compress_tab(parent, app=None):
     tree = ttk.Treeview(tree_frame, columns=cols, show="headings")
     headers = [("name", "图片名", 120, "w"),
                ("path", "路径", 200, "w"),
-               ("size", "图片大小", 84, "e"),
+               ("size", "图片大小", 110, "e"),
                ("qval", "量化质量", 96, "e"),
-               ("newsize", "压缩后大小", 116, "e"),
-               ("saved", "节省", 70, "e")]
+               ("newsize", "压缩后大小", 120, "e"),
+               ("saved", "节省", 80, "e")]
+    # 大小列按「439.53 KB」实际宽度留足，高分屏下还会由
+    # setup_tree_columns 按字体行高比例放大。
+    min_widths = {"size": 100, "newsize": 100, "saved": 70}
     for cid, text, width, anchor in headers:
         tree.heading(cid, text=text)
-        tree.column(cid, width=width, anchor=anchor)
+        # 首次运行允许列拉伸填满窗口；用户拖动后由 setup_tree_columns
+        # 固定列宽并记住，内容超宽时交给底部横向滚动条。
+        tree.column(cid, width=width, minwidth=min_widths.get(cid, 50),
+                    anchor=anchor)
     vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=vsb.set)
     tree.grid(row=0, column=0, sticky="nsew")
     vsb.grid(row=0, column=1, sticky="ns")
+    add_table_hscroll(tree, tree_frame, row=1, column=0)
+    setup_tree_columns(tree, "compress.main")
     tree.tag_configure("done", foreground=COLOR["success"])
     tree.tag_configure("fail", foreground=COLOR["error"])
 

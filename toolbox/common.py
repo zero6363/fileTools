@@ -12,9 +12,9 @@ from tkinter import filedialog, messagebox
 from . import config
 from . import ui
 from . import ui as ttk
-from .theme import COLOR, FONTS
+from .theme import COLOR, FONTS, ui_scale
 
-APP_VERSION = "1.38"
+APP_VERSION = "1.42"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -410,6 +410,213 @@ def make_tip(parent, row, text, colspan=3, autowrap=False, font=None):
 
     parent.bind("<Configure>", _rewrap, add="+")
     return lbl
+
+
+# ============================================================
+# 表格列宽记忆 / 横向滚动条
+# ============================================================
+
+TABLE_CONFIG_SECTION = "tables"
+
+# 完成提示音：默认关闭，用户勾选后记住（两个 Tab 各存一个开关）
+NOTIFY_SECTION = "notify"
+
+
+def load_done_sound(key):
+    """读取某个 Tab 的完成提示音开关，默认 False（不勾选）。"""
+    try:
+        return bool(config.get_section(NOTIFY_SECTION).get(key, False))
+    except Exception:
+        return False
+
+
+def save_done_sound(key, value):
+    """记住某个 Tab 的完成提示音开关。"""
+    try:
+        config.update_section(NOTIFY_SECTION, **{key: bool(value)})
+    except Exception:
+        pass
+
+
+def play_done_sound():
+    """播放 Windows 系统提示音（异步，不阻塞界面）；其它平台静默忽略。"""
+    try:
+        import winsound
+    except Exception:
+        return
+    try:
+        winsound.PlaySound("SystemAsterisk",
+                           winsound.SND_ALIAS | winsound.SND_ASYNC)
+    except Exception:
+        try:
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except Exception:
+            pass
+
+
+def _tree_column_ids(tree):
+    """返回表格所有列（含 Treeview 的 #0 树列），用于列宽记忆。"""
+    try:
+        cols = list(tree["columns"])
+    except Exception:
+        cols = []
+    try:
+        if "tree" in str(tree.cget("show")):
+            cols.insert(0, "#0")
+    except Exception:
+        pass
+    return cols
+
+
+def _tree_widths(tree, cols):
+    out = {}
+    for col in cols:
+        try:
+            w = int(tree.column(col, "width"))
+        except Exception:
+            continue
+        if w >= 20:
+            out[col] = w
+    return out
+
+
+def setup_tree_columns(tree, key):
+    """恢复并记忆表格列宽。
+
+    · 创建表格、设置好默认列宽后调用一次；
+    · 用户拖动列宽后（鼠标释放 / 表格销毁）自动写入 toolbox_config.json 的
+      tables 分区，下次启动自动恢复；
+    · 所有表格共用同一套逻辑，互不影响。
+    """
+    cols = _tree_column_ids(tree)
+    if not cols:
+        return
+    section = config.get_section(TABLE_CONFIG_SECTION)
+    saved = section.get(key)
+    has_saved = isinstance(saved, dict) and bool(saved)
+    try:
+        saved_scale = float(section.get(key + ".scale") or 0)
+    except (TypeError, ValueError):
+        saved_scale = 0.0
+    if not (0.5 <= saved_scale <= 3.0):
+        saved_scale = 0.0
+    # 高分屏下表格字体按 DPI 放大，列宽 / 最小列宽必须同步放大，
+    # 否则日期、大小等文字会被列边界裁掉。
+    scale = ui_scale()
+
+    orig_stretch = {}
+    for col in cols:
+        try:
+            orig_stretch[col] = bool(int(tree.column(col, "stretch")))
+        except Exception:
+            orig_stretch[col] = True
+        try:
+            mw = int(tree.column(col, "minwidth"))
+            tree.column(col, minwidth=max(20, int(round(mw * scale))))
+        except Exception:
+            pass
+
+    if has_saved:
+        # 保存时也记录当时的缩放系数：换到不同 DPI 的屏幕后按比例换算，
+        # 避免同一份配置在 100% / 200% 之间来回切换时越放越大或越缩越小。
+        factor = (scale / saved_scale) if saved_scale else scale
+        for col, width in saved.items():
+            if col not in cols:
+                continue
+            try:
+                width = int(width)
+            except (TypeError, ValueError):
+                continue
+            if width < 20:
+                continue
+            width = int(round(width * factor))
+            try:
+                mw = int(tree.column(col, "minwidth"))
+                tree.column(col, width=max(width, mw))
+            except Exception:
+                pass
+        # 已恢复过用户列宽：所有列固定，窗口缩放不再重新分配
+        for col in cols:
+            try:
+                tree.column(col, stretch=False)
+            except Exception:
+                pass
+    else:
+        for col in cols:
+            try:
+                w = int(tree.column(col, "width"))
+                tree.column(col, width=max(20, int(round(w * scale))))
+            except Exception:
+                pass
+
+    state = {"last": _tree_widths(tree, cols), "dragging": False,
+             "press": None}
+
+    def save_now():
+        widths = _tree_widths(tree, cols)
+        if not widths or widths == state["last"]:
+            return
+        state["last"] = widths
+        try:
+            section = config.get_section(TABLE_CONFIG_SECTION)
+            section[key] = widths
+            section[key + ".scale"] = round(scale, 3)
+            config.set_section(TABLE_CONFIG_SECTION, section)
+        except Exception:
+            pass
+
+    def lock_columns():
+        for col in cols:
+            try:
+                tree.column(col, stretch=False)
+            except Exception:
+                pass
+
+    def on_press(event=None):
+        # 用户按下表头分隔线准备拖动：先取消 stretch，否则 Tk 会在拖动
+        # 过程中按窗口宽度重新分配，把用户拖出来的宽度改掉。
+        if event is not None:
+            try:
+                region = tree.identify_region(event.x, event.y)
+            except Exception:
+                region = ""
+            if region != "separator":
+                return
+        lock_columns()
+        state["dragging"] = True
+        state["press"] = _tree_widths(tree, cols)
+
+    def on_release(event=None):
+        if not state["dragging"]:
+            return
+        state["dragging"] = False
+        widths = _tree_widths(tree, cols)
+        press_widths = state["press"]
+        state["press"] = None
+        if widths == press_widths:
+            # 只是点了一下分隔线、没有真正拖动：恢复原来的拉伸行为
+            if not has_saved:
+                for col, stretch in orig_stretch.items():
+                    try:
+                        tree.column(col, stretch=stretch)
+                    except Exception:
+                        pass
+            return
+        save_now()
+
+    try:
+        tree.bind("<ButtonPress-1>", on_press, add="+")
+        tree.bind("<ButtonRelease-1>", on_release, add="+")
+    except Exception:
+        pass
+
+
+def add_table_hscroll(tree, parent, row, column=0, columnspan=1):
+    """给表格补一条横向滚动条（内容超出表格宽度时可左右拖动）。"""
+    hsb = ttk.Scrollbar(parent, orient=tk.HORIZONTAL, command=tree.xview)
+    tree.configure(xscrollcommand=hsb.set)
+    hsb.grid(row=row, column=column, columnspan=columnspan, sticky="ew")
+    return hsb
 
 
 def _module_available(name):

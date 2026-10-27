@@ -7,7 +7,8 @@ from . import ui, ui as ttk
 
 from .common import (clean_path, clear_log, make_check, make_log_panel,
                      make_num_box, make_path_row, make_spin_row,
-                     make_start_button, make_tip, natural_key, run_task)
+                     make_start_button, make_tip, natural_key, run_task,
+                     setup_tree_columns)
 from .theme import COLOR
 
 
@@ -239,6 +240,7 @@ def build_rename_tab(parent):
     tree_old.grid(row=0, column=0, sticky="nsew")
     v_scroll_old.grid(row=0, column=1, sticky="ns")
     h_scroll_old.grid(row=1, column=0, sticky="ew")
+    setup_tree_columns(tree_old, "rename.addpath.old")
 
     right_frame = ui.Frame(table_frame)
     right_frame.grid(row=0, column=1, sticky="nsew", padx=2)
@@ -254,6 +256,7 @@ def build_rename_tab(parent):
     tree_new.grid(row=0, column=0, sticky="nsew")
     v_scroll_new.grid(row=0, column=1, sticky="ns")
     h_scroll_new.grid(row=1, column=0, sticky="ew")
+    setup_tree_columns(tree_new, "rename.addpath.new")
 
     def sync_y_old(*args):
         tree_new.yview_moveto(args[0])
@@ -473,6 +476,7 @@ def build_seq_rename_tab(parent, app=None):
     tree.grid(row=0, column=0, sticky="nsew")
     v_scroll.grid(row=0, column=1, sticky="ns")
     h_scroll.grid(row=1, column=0, sticky="ew")
+    setup_tree_columns(tree, "rename.seq.preview")
 
     label_preview = ui.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
@@ -681,6 +685,7 @@ def build_trim_tab(parent, app=None):
     tree.grid(row=0, column=0, sticky="nsew")
     v_scroll.grid(row=0, column=1, sticky="ns")
     h_scroll.grid(row=1, column=0, sticky="ew")
+    setup_tree_columns(tree, "rename.trim.preview")
 
     label_preview = ui.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
