@@ -59,6 +59,7 @@ UNIQUE(rel_path) 自带唯一索引，所以文档里的 idx_rel_path 不再重�
 import csv
 import hashlib
 import os
+import pathlib
 import queue
 import sqlite3
 import subprocess
@@ -447,22 +448,51 @@ class DbLock:
 # SQLite 访问层
 # ============================================================
 
+def ro_uri(db_path, immutable=False):
+    """只读连接的 SQLite URI。
+
+    用 Path.as_uri() 生成：反斜杠转正斜杠、中文/空格/% 全部百分号编码，
+    「T:\\摄影\\filehash.db」这种路径才不会被 URI 解析错位。
+
+    没有 -wal 时默认加 `immutable=1`：此时主库就是最新状态，immutable 打开
+    连 -shm / -wal 都不会创建 —— 只读扫描真正做到「磁盘上一个字节都不留」。
+    有 -wal 时不能用 immutable（会漏读没 checkpoint 的数据），改走普通
+    mode=ro；若目录不可写再退化成 immutable，并在日志里说明可能读不到最新数据。
+    """
+    try:
+        uri = pathlib.Path(os.path.abspath(db_path)).as_uri()
+    except ValueError:
+        uri = "file:" + os.path.abspath(db_path).replace("\\", "/")
+    uri = uri.replace("?", "%3f").replace("#", "%23")
+    if not immutable:
+        try:
+            wal = db_path + "-wal"
+            immutable = (not os.path.exists(wal)) or os.path.getsize(wal) == 0
+        except OSError:
+            immutable = False
+    return uri + "?mode=ro" + ("&immutable=1" if immutable else "")
+
+
 class HashDB:
     def __init__(self, path):
         self.path = path
         self.conn = None
         self.readonly = False
+        self.memory = False        # True = 内存库（只读模式没有库文件时用）
 
-    def open(self, readonly=False):
+    def open(self, readonly=False, immutable=False):
         if readonly:
-            uri = "file:" + self.path.replace("?", "%3f").replace("#", "%23") + "?mode=ro"
-            self.conn = sqlite3.connect(uri, uri=True, timeout=15,
-                                        isolation_level=None)
+            self.conn = sqlite3.connect(ro_uri(self.path, immutable), uri=True,
+                                        timeout=15, isolation_level=None)
             self.readonly = True
+            self.memory = False
+            # 这里**故意不设** PRAGMA query_only=ON：它会把连接级 TEMP 表一起禁掉，
+            # 扫描时建 seen 临时表就报「attempt to write a readonly database」。
+            # 主库只读由 URI 的 mode=ro 在 SQLite 层面硬保证（写语句直接失败），
+            # 比 query_only 更彻底，也不会挡临时表。
             # 只读连接专门调优：整表扫描时 mmap 少一次页拷贝、temp_store 放内存，
             # 30 万条的库实测比默认设置快 25%~30%（跨库检索主要就吃这一块）。
-            for pragma in ("PRAGMA query_only=ON",
-                           "PRAGMA mmap_size=%d" % (256 * 1024 * 1024),
+            for pragma in ("PRAGMA mmap_size=%d" % (256 * 1024 * 1024),
                            "PRAGMA cache_size=-16000",
                            "PRAGMA temp_store=MEMORY"):
                 try:
@@ -471,6 +501,7 @@ class HashDB:
                     pass
         else:
             self.conn = sqlite3.connect(self.path, timeout=15, isolation_level=None)
+            self.memory = False
             try:
                 self.conn.execute("PRAGMA journal_mode=WAL")
                 self.conn.execute("PRAGMA synchronous=NORMAL")
@@ -478,6 +509,31 @@ class HashDB:
                 pass
             self.conn.executescript(SCHEMA)
         return self.conn
+
+    def open_memory(self):
+        """内存库：只读模式遇到「还没有 filehash.db」时用。
+
+        预先建好表结构，于是所有文件都算「新增」，缺失数为 0，
+        而整个过程**不会在磁盘上创建任何文件** —— 只读介质 / 无写权限的
+        目录里跑快速预检也不会因为建不了库而中断。
+        """
+        self.conn = sqlite3.connect(":memory:", timeout=15, isolation_level=None)
+        self.readonly = True
+        self.memory = True
+        self.conn.executescript(SCHEMA)
+        return self.conn
+
+    def open_best_readonly(self):
+        """只读打开：先普通只读，再 immutable 快照，都失败才抛异常。
+
+        绝不退化成读写打开 —— 那会改写库（建 WAL / 补表结构），
+        和「只读模式一个字节都不写库」的承诺冲突。
+        """
+        try:
+            return self.open(readonly=True)
+        except sqlite3.Error:
+            self.close()
+            return self.open(readonly=True, immutable=True)
 
     def close(self):
         if self.conn is not None:
@@ -571,22 +627,37 @@ class HashDB:
 
 
 def check_db_file(db_path):
-    """扫描前快速检查库文件：返回 (ok, message)。不存在视为正常（将新建）。"""
+    """扫描前快速检查库文件：返回 (ok, message, kind)。
+
+    kind：
+      "missing"    —— 还没有库，正常（只读模式会按空库比对，不建文件）
+      "ok"         —— 能读、quick_check 通过
+      "corrupt"    —— 能读但结构/页校验不过，需要改名备份
+      "unreadable" —— 连只读都打不开（只读介质 / 权限 / 被独占），
+                      这种情况不能误报成「损坏」去怂恿用户改名。
+
+    检查本身用 mode=ro 打开：读写打开会在只读目录里尝试建 -wal/-shm，
+    反而把「没有写权限」误判成「数据库坏了」。
+    """
     if not os.path.exists(db_path):
-        return True, ""
+        return True, "", "missing"
     try:
-        conn = sqlite3.connect(db_path, timeout=10, isolation_level=None)
-        try:
-            row = conn.execute("PRAGMA quick_check(1)").fetchone()
-        finally:
-            conn.close()
-        if not row or str(row[0]).lower() != "ok":
-            return False, str(row[0]) if row else "未知错误"
-        return True, ""
+        conn = sqlite3.connect(ro_uri(db_path), uri=True, timeout=10,
+                               isolation_level=None)
+    except sqlite3.Error as e:
+        return True, f"无法以只读方式打开（{e}）", "unreadable"
+    try:
+        row = conn.execute("PRAGMA quick_check(1)").fetchone()
     except sqlite3.DatabaseError as e:
-        return False, str(e)
-    except Exception as e:
-        return False, str(e)
+        return False, str(e), "corrupt"
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if not row or str(row[0]).lower() != "ok":
+        return False, str(row[0]) if row else "未知错误", "corrupt"
+    return True, "", "ok"
 
 
 # 统计结果缓存：db 路径 -> (库文件签名, stats 元组)
@@ -642,10 +713,8 @@ def db_counts(db_path, use_cache=False):
     db = HashDB(db_path)
     res = None
     try:
-        try:
-            db.open(readonly=True)
-        except Exception:
-            db.open()
+        # 只读统计，绝不退化成读写打开（那会改库）
+        db.open_best_readonly()
         res = db.stats()
     except Exception:
         return None
@@ -700,7 +769,7 @@ def read_history(db_path, limit=1000):
         return []
     conn = None
     try:
-        conn = sqlite3.connect(db_path, timeout=8)
+        conn = sqlite3.connect(ro_uri(db_path), uri=True, timeout=8)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT id, started_at, finished_at, op, status, total,"
@@ -901,6 +970,8 @@ class Scanner:
                    "pending": []}      # 与 rows 平行的结构化记录（写回库用）
         self.stats = dict(new=0, changed=0, same=0, restored=0, missing=0,
                           errors=0, hashed=0, filled=0, bytes=0, nohash=0)
+        # 本次扫描到过的 rel_path。默认走 TEMP 表；建不了临时表时这里变成 set
+        self._seen_mem = None
 
     @property
     def writable(self):
@@ -964,20 +1035,64 @@ class Scanner:
             self._log(f"枚举完成：{len(files)} 个文件，用时 {time.time() - t0:.1f}s")
 
             # ---------- 阶段 2：打开库 ----------
+            # 只读模式（快速预检 / 完整检查）的三种情况都不许写盘：
+            #   ① 有库 → mode=ro 只读打开；失败再退 immutable 快照；
+            #   ② 没库 → 内存空库（所有文件算新增），绝不创建 filehash.db；
+            #   ③ 连只读都打不开 → 内存空库 + 日志说明，扫描照常出清单。
             db = HashDB(self.db_path)
-            if not self.writable and os.path.isfile(self.db_path):
-                try:
-                    db.open(readonly=True)          # 预检 / 检查只读：连 WAL 头都不碰
-                except Exception as e:
-                    self._log(f"只读打开失败，改为读写打开：{e}")
-                    db.open()
+            if not self.writable:
+                if not os.path.isfile(self.db_path):
+                    db.open_memory()
+                    self._log("该目录还没有 filehash.db —— 按空库比对（不会创建文件）")
+                else:
+                    try:
+                        db.open(readonly=True)      # 只读：连 WAL 头都不碰
+                    except sqlite3.Error as e:
+                        self._log(f"只读打开失败（{e}），改用不可变快照")
+                        db.close()
+                        try:
+                            db.open(readonly=True, immutable=True)
+                            self._log("已用 immutable 快照打开："
+                                      "可能读不到尚未合并的 -wal 数据")
+                        except sqlite3.Error as e2:
+                            db.close()
+                            db.open_memory()
+                            self._log(f"[数据库无法读取] {e2}")
+                            self._log("本次按空库比对：清单里全部算「新增」，"
+                                      "库里的记录不会被写入或修改")
             else:
                 db.open()
 
-            # 本次遍历到的 rel_path 集合（连接级 TEMP 表，不写主库），
-            # 收尾用它算「库里有效但本次没找到」= 缺失
-            db.conn.execute("CREATE TEMP TABLE IF NOT EXISTS seen("
-                            "rel_path TEXT COLLATE NOCASE PRIMARY KEY)")
+            # 老库 / 空库可能连 file_records 表都没有：先探一次，
+            # 别让每个文件都各自抛一次「no such table」把错误数刷满。
+            if not self.writable:
+                try:
+                    db.conn.execute("SELECT 1 FROM file_records LIMIT 1").fetchone()
+                except sqlite3.Error:
+                    self._log("库里还没有 file_records 表 —— 按空库比对（不写库）")
+                    db.close()
+                    db.open_memory()
+
+            # 本次遍历到的 rel_path 集合。优先用连接级 TEMP 表（不写主库）；
+            # 万一连接不允许建临时表（特殊只读介质 / 老版本驱动），
+            # 退化成内存 set —— 「记不下来」不能变成「整个扫描失败」。
+            self._seen_mem = None
+            try:
+                db.conn.execute("CREATE TEMP TABLE IF NOT EXISTS seen("
+                                "rel_path TEXT COLLATE NOCASE PRIMARY KEY)")
+            except sqlite3.Error as e:
+                self._seen_mem = set()
+                self._log(f"临时表不可用（{e}），改用内存比对（结果不受影响）")
+
+            def flush_seen():
+                if not seen_buf:
+                    return
+                if self._seen_mem is None:
+                    db.conn.executemany(
+                        "INSERT OR IGNORE INTO seen(rel_path) VALUES(?)", seen_buf)
+                else:
+                    self._seen_mem.update(item[0] for item in seen_buf)
+                seen_buf.clear()
 
             # ---------- 阶段 3：比对 / 哈希 ----------
             seen_buf = []
@@ -1006,18 +1121,13 @@ class Scanner:
                 # 无论成功/跳过都登记到 seen，避免仅因读失败被误判为「缺失」
                 seen_buf.append((stored,))
                 if len(seen_buf) >= 2000:
-                    db.conn.executemany(
-                        "INSERT OR IGNORE INTO seen(rel_path) VALUES(?)", seen_buf)
-                    seen_buf.clear()
+                    flush_seen()
                 if self.writable and pending >= COMMIT_EVERY:
                     db.conn.execute("COMMIT")
                     db.conn.execute("BEGIN")
                     pending = 0
 
-            if seen_buf:
-                db.conn.executemany(
-                    "INSERT OR IGNORE INTO seen(rel_path) VALUES(?)", seen_buf)
-                seen_buf.clear()
+            flush_seen()
             if self.writable:
                 db.conn.execute("COMMIT")
 
@@ -1055,6 +1165,20 @@ class Scanner:
                 self._log(f"只读模式：{len(self.ui['rows'])} 条差异没有写库，"
                           f"可在表格里勾选后点「写入数据库」")
             return s
+        except sqlite3.OperationalError as e:
+            import traceback
+            self.ui["error"] = traceback.format_exc()
+            text = str(e).lower()
+            if "readonly" in text or "read-only" in text:
+                where = "只读模式" if not self.writable else "建档模式"
+                self._log(f"[数据库写不进去] {e}")
+                self._log(f"当前是{where}：数据库文件或它所在的目录不允许写入"
+                          f"（只读介质 / 写保护开关 / NTFS 权限）。")
+                self._log("本次没有改动数据库；如果只是要核对差异，"
+                          "可以用「快速预检」或「完整检查」再扫一次。")
+            else:
+                self._log(f"[致命错误] {e}")
+            return self.stats
         except Exception as e:
             import traceback
             self.ui["error"] = traceback.format_exc()
@@ -1282,18 +1406,42 @@ class Scanner:
                     (self.prefix, _like_escape(self.prefix) + "/%"))
         return "1=1", ()
 
-    def _mark_missing(self, db):
+    def _missing_rows(self, db, cols):
+        """范围内的「库里有效、本次没扫到」记录。
+
+        seen 正常情况下是 TEMP 表（一条 SQL 搞定）；临时表不可用时退化成
+        内存集合（`self._seen_mem`），只是在 Python 里过滤，结果完全一致。
+        """
         scope_sql, params = self._scope_sql()
-        rows = db.conn.execute(
-            f"SELECT rel_path, sha256, file_size, mtime, last_hash_time "
-            f"FROM file_records WHERE status='active' AND {scope_sql} "
-            f"AND rel_path NOT IN (SELECT rel_path FROM seen)", params).fetchall()
+        sql = (f"SELECT {cols} FROM file_records "
+               f"WHERE status='active' AND {scope_sql}")
+        if self._seen_mem is None:
+            return db.conn.execute(
+                sql + " AND rel_path NOT IN (SELECT rel_path FROM seen)",
+                params).fetchall()
+        return [r for r in db.conn.execute(sql, params).fetchall()
+                if r[0] not in self._seen_mem]
+
+    def _mark_missing(self, db):
+        rows = self._missing_rows(
+            db, "rel_path, sha256, file_size, mtime, last_hash_time")
         if not rows:
             return 0
         db.conn.execute("BEGIN")
-        db.conn.execute(
-            f"UPDATE file_records SET status='deleted' WHERE status='active' "
-            f"AND {scope_sql} AND rel_path NOT IN (SELECT rel_path FROM seen)", params)
+        if self._seen_mem is None:
+            scope_sql, params = self._scope_sql()
+            db.conn.execute(
+                f"UPDATE file_records SET status='deleted' WHERE status='active' "
+                f"AND {scope_sql} AND rel_path NOT IN (SELECT rel_path FROM seen)",
+                params)
+        else:
+            # 内存模式：按 rel_path 分批 UPDATE（避开 SQLite 变量数上限）
+            for i in range(0, len(rows), 800):
+                chunk = [r[0] for r in rows[i:i + 800]]
+                marks = ",".join("?" * len(chunk))
+                db.conn.execute(
+                    f"UPDATE file_records SET status='deleted' "
+                    f"WHERE status='active' AND rel_path IN ({marks})", chunk)
         db.conn.execute("COMMIT")
         for rp, _sha, _size, _mt, _last in rows[:200]:
             self._log(f"[缺失] {rp}")
@@ -1306,11 +1454,7 @@ class Scanner:
 
     def _list_missing(self, db):
         """只读模式：列出缺失清单，一个字节也不往主库写"""
-        scope_sql, params = self._scope_sql()
-        rows = db.conn.execute(
-            f"SELECT rel_path, sha256, file_size, mtime FROM file_records "
-            f"WHERE status='active' AND {scope_sql} "
-            f"AND rel_path NOT IN (SELECT rel_path FROM seen)", params).fetchall()
+        rows = self._missing_rows(db, "rel_path, sha256, file_size, mtime")
         tag = MODE_NAMES.get(self.mode, "只读")
         for rp, _sha, _size, _mt in rows[:200]:
             self._log(f"[{tag}·缺失] {rp}")
@@ -1332,10 +1476,7 @@ def count_no_hash(db_path):
         return 0, 0
     db = HashDB(db_path)
     try:
-        try:
-            db.open(readonly=True)
-        except Exception:
-            db.open()
+        db.open_best_readonly()     # 只读统计，失败不写库
         row = db.conn.execute(
             "SELECT COUNT(*), SUM(file_size) FROM file_records "
             "WHERE status='active' AND (sha256 IS NULL OR sha256='')").fetchone()
@@ -1477,7 +1618,7 @@ def count_scope(db_path, prefix):
     if not os.path.isfile(db_path):
         return -1, 0
     try:
-        conn = sqlite3.connect(db_path, timeout=5)
+        conn = sqlite3.connect(ro_uri(db_path), uri=True, timeout=5)
         try:
             if prefix:
                 row = conn.execute(
@@ -1532,10 +1673,7 @@ class SeedTask:
             self.ui["phase"] = "读取上级库"
             pdb = HashDB(self.parent_db)
             try:
-                try:
-                    pdb.open(readonly=True)
-                except Exception:
-                    pdb.open()
+                pdb.open_best_readonly()      # 只读上级库，绝不写它
                 if self.prefix:
                     rows = pdb.conn.execute(
                         "SELECT rel_path, sha256, file_size, mtime, last_hash_time,"
@@ -1657,10 +1795,7 @@ class VerifyTask:
                     break
                 db = HashDB(dbp)
                 try:
-                    try:
-                        db.open(readonly=True)     # 只读连接，物理上就写不了库
-                    except Exception:
-                        db.open()
+                    db.open_best_readonly()     # 只读连接，物理上就写不了库
                     for rel, abs_path, root in rows:
                         if self.stop.is_set():
                             self.ui["aborted"] = True
@@ -1912,10 +2047,7 @@ def compare_dirs(left, right, log=None, stop=None, on_progress=None,
             raise FileNotFoundError(db_path or "")
         db = HashDB(db_path)
         try:
-            try:
-                db.open(readonly=True)
-            except Exception:
-                db.open()
+            db.open_best_readonly()
             return db.conn.execute(
                 "SELECT rel_path, sha256, file_size, mtime FROM file_records"
                 " WHERE status='active'").fetchall()
@@ -2020,10 +2152,7 @@ def compare_by_hash(left, right, log=None, stop=None, on_progress=None):
             raise FileNotFoundError(db_path or "")
         db = HashDB(db_path)
         try:
-            try:
-                db.open(readonly=True)
-            except Exception:
-                db.open()
+            db.open_best_readonly()
             return db.conn.execute(
                 "SELECT rel_path, sha256, file_size, mtime FROM file_records"
                 " WHERE status='active'").fetchall()
@@ -2345,7 +2474,7 @@ MERGE_UPSERT_TIE_SQL = _merge_upsert("(" + _NEWER_SQL + " OR " + _TIE_SQL + ")")
 def db_row_count(db_path):
     """只读拿一个库的记录条数；打不开返回 -1"""
     try:
-        conn = sqlite3.connect(db_path, timeout=5)
+        conn = sqlite3.connect(ro_uri(db_path), uri=True, timeout=5)
         try:
             return int(conn.execute(
                 "SELECT COUNT(*) FROM file_records").fetchone()[0])
@@ -2404,7 +2533,7 @@ def db_scan_time(db_path):
         return 0.0
     t = 0.0
     try:
-        conn = sqlite3.connect(db_path, timeout=5)
+        conn = sqlite3.connect(ro_uri(db_path), uri=True, timeout=5)
     except sqlite3.Error:
         conn = None
     if conn is not None:
@@ -2660,9 +2789,9 @@ def find_duplicates(dirs, log=None, stop=None, on_progress=None):
         rows = []
         try:
             try:
-                db.open(readonly=True)
+                db.open_best_readonly()
             except Exception:
-                db.open()
+                raise
             rows = db.conn.execute(
                 "SELECT rel_path, sha256, file_size, mtime FROM file_records"
                 " WHERE status='active' AND file_size IS NOT NULL").fetchall()
@@ -3444,12 +3573,9 @@ def build_hash_tab(parent, app=None):
             return None, "数据库还不存在，请先做一次扫描"
         db = HashDB(dbp)
         try:
-            db.open(readonly=True)
-        except Exception:
-            try:
-                db.open()          # WAL 库可能读不了只读，退回读写
-            except Exception as e:
-                return None, f"打开数据库失败：{e}"
+            db.open_best_readonly()     # 只读检索，绝不因为读库而写库
+        except Exception as e:
+            return None, f"打开数据库失败：{e}"
         return db, ""
 
     def managed_dbs():
@@ -3479,9 +3605,9 @@ def build_hash_tab(parent, app=None):
         db = HashDB(db_path)
         try:
             try:
-                db.open(readonly=True)
+                db.open_best_readonly()
             except Exception:
-                db.open()
+                raise
             if not kw:
                 rows = db.list_all(include_deleted=inc)
             elif kind.startswith("按路径"):
@@ -4418,11 +4544,12 @@ def build_hash_tab(parent, app=None):
                 text += f"，未计哈希 {stats['nohash']}"
             lbl_prog.config(text=text + extra)
 
-        # 记录到「已管理目录」配置：统计每次都刷新，最后扫描时间只记完成的
+        # 记录到「已管理目录」配置：统计每次都刷新，最后扫描时间只记完成的。
+        # 只读扫描碰上新目录时不会创建库，就别把一个不存在的库记进管理列表。
         completed = not errored and not aborted
         if completed:
             maybe_beep()
-        if sc is not None and not errored:
+        if sc is not None and not errored and os.path.isfile(sc.db_path):
             try:
                 remember_root(sc.root, sc.db_path,
                               mode=(mode if completed else None),
@@ -4430,16 +4557,21 @@ def build_hash_tab(parent, app=None):
                 refresh_managed()
             except Exception:
                 pass
+        elif sc is not None and not errored:
+            log("还没有数据库文件（只读模式不会创建），本次不记入「已管理目录」")
 
         # 写入数据库的扫描记录（中途停止 / 出错也记，状态区分完成与否）
-        if sc is not None:
+        # 只读模式不写：连 scan_history 也不写，数据库保持一个字节都不变。
+        # 「最后扫描时间」照样记在「已管理目录」配置里（上面 remember_root）。
+        if sc is not None and not sc.writable:
+            log(f"只读模式：本次不写扫描记录（{MODE_NAMES.get(mode, mode)}，"
+                f"数据库保持原样）")
+        elif sc is not None:
             total = int(sc.ui.get("total") or 0)
             processed = int(sc.ui.get("done") or 0)
             if completed:
                 processed = total
             detail = MODE_NAMES.get(mode, mode)
-            if not sc.writable:
-                detail += " · 只读未写库"
             if aborted:
                 detail += " · 中途停止"
             if errored:
@@ -4705,8 +4837,13 @@ def build_hash_tab(parent, app=None):
         db_root, prefix = resolve_db_root(root, False)
         db_path = os.path.join(db_root, DB_NAME)
 
-        ok, msg = check_db_file(db_path)
-        if not ok:
+        ok, msg, kind = check_db_file(db_path)
+        if kind == "unreadable":
+            # 只读介质 / 没有权限 / 被别的程序独占：不是损坏，别怂恿用户改名。
+            # 扫描线程里会再用 immutable 快照 / 内存空库兜底，这里只提示。
+            log(f"[提示] {msg} —— 将尝试按只读快照读取；"
+                f"若仍失败则按空库比对（不写任何文件）")
+        elif not ok:
             if not messagebox.askyesno(
                     "数据库可能损坏",
                     f"{db_path}\n\nSQLite 检查结果：{msg}\n\n"
