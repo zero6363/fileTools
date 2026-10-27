@@ -2943,7 +2943,7 @@ STATUS_TEXT = {"active": "有效", "deleted": "缺失"}
 
 # 表格列：single = 只搜当前目录；multi = 跨库搜索时多一列「所属目录」
 # 第一列是复选框（点一下即勾选，与 Treeview 的 selection 同步）；
-# 路径最宽（唯一可伸缩列），SHA256 只显示前 10 位，未计算时显示「未计算」。
+# 路径最宽（唯一可伸缩列），SHA256 直接显示完整 64 位，未计算时显示「未计算」。
 COLS = [("chk", "选", 32, 30, False),
         ("root", "所属目录", 150, 110, False),
         ("rel", "相对路径", 260, 120, True),
@@ -2951,7 +2951,8 @@ COLS = [("chk", "选", 32, 30, False),
         # 日期列按「2024-11-23 12:34:56」实际宽度留足，避免被列边界裁掉
         ("mtime", "修改时间", 200, 190, False),
         ("last", "上次校验", 200, 190, False),
-        ("sha", "SHA256", 170, 120, False),
+        # SHA256 全 64 位 hex 按 19px 字号 ≈ 630px，留余量取 680（表格有横向滚动）
+        ("sha", "SHA256", 680, 120, False),
         # 状态列会显示「变更 +2.25 KB」这类带大小的文案，按完整宽度留足
         ("status", "状态", 150, 140, False)]
 COLS_SINGLE = ("chk", "rel", "size", "mtime", "last", "sha", "status")
@@ -3159,30 +3160,39 @@ def build_hash_tab(parent, app=None):
     add_table_hscroll(tree, tree_frame, row=2, column=0)
 
     def _widen_time_cols():
-        """「修改时间 / 上次校验」改成显示到秒（186px 起）后，
-        旧配置里记的窄宽度会把时间切成两半 —— 一次性放宽到能放下完整时间，
-        之后仍以用户自己拖的宽度为准。没有记忆宽度时不用动：默认宽度本身就按
-        当前缩放换算，不会截字；这种情况也就不写配置文件。"""
+        """旧配置一次性放宽（之后仍以用户自己拖的宽度为准）：
+        1. 「修改时间 / 上次校验」显示到秒（186px 起）——窄宽度会把时间切成两半；
+        2. SHA256 改为显示完整 64 位（约 630px 起）——旧默认 170px 只放得下前 10 位。
+        没有记忆宽度时不用动：默认宽度本身就按当前缩放换算，不会截字；
+        这种情况也就不写配置文件。"""
         sec = config.get_section("tables")
-        if sec.get("hashscan.timefmt") == 2:
-            return
         widths = sec.get("hashscan.main")
         if not isinstance(widths, dict) or not widths:
             return
         widths = dict(widths)                # get_section 是浅拷贝，别改到缓存
-        widened = False
-        for _k in ("mtime", "last"):
+        changed = False
+        if sec.get("hashscan.timefmt") != 2:
+            for _k in ("mtime", "last"):
+                try:
+                    _w = int(widths.get(_k) or 0)
+                except (TypeError, ValueError):
+                    _w = 0
+                if 0 < _w < 200:
+                    widths[_k] = 200
+                    changed = True
+            sec["hashscan.timefmt"] = 2
+        if sec.get("hashscan.shafmt") != 2:
             try:
-                _w = int(widths.get(_k) or 0)
+                _w = int(widths.get("sha") or 0)
             except (TypeError, ValueError):
                 _w = 0
-            if 0 < _w < 200:
-                widths[_k] = 200
-                widened = True
-        if not widened:
+            if 0 < _w < 680:
+                widths["sha"] = 680
+                changed = True
+            sec["hashscan.shafmt"] = 2
+        if not changed:
             return
         sec["hashscan.main"] = widths
-        sec["hashscan.timefmt"] = 2
         config.set_section("tables", sec)
 
     _widen_time_cols()
@@ -3423,7 +3433,7 @@ def build_hash_tab(parent, app=None):
                                 fmt_size(size_b) if size_b is not None else "—",
                                 fmt_time(mtime),
                                 fmt_time(last),
-                                short_sha(sha, 10) or hashed, text),
+                                sha or hashed, text),
                         tags=(tag,) if tag else ())
 
         # 分类计数 + 高亮当前筛选（计数在上面按数据代数缓存过，这里直接用）
