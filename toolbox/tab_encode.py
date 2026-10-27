@@ -354,6 +354,15 @@ def ffmpeg_version(ffmpeg):
         return ""
 
 
+def short_version(txt):
+    """顶栏只显示 vYYYY-MM-DD 主版本；完整构建号太长会把右边缘顶穿（完整串写日志）。"""
+    m = re.match(r"^(v?\d{4}-\d{2}-\d{2})", txt or "")
+    if m:
+        return m.group(1)
+    txt = (txt or "").strip()
+    return txt[:22] + "…" if len(txt) > 22 else txt
+
+
 def ffmpeg_ready():
     """启动时快速检测：返回 (是否可用, 提示文本)"""
     ff, fp = locate_ffmpeg(load_ffmpeg_hint())
@@ -1418,24 +1427,24 @@ def run_encode(settings, info, plan, src, dst, work_dir, on_progress, stop_event
 # ============================================================
 
 COLS = (
-    ("name", "文件", 200),
-    ("dur", "时长", 80),
-    ("res", "分辨率", 130),
-    ("fps", "帧率", 60),
-    ("codec", "编码", 190),
-    ("sub", "字幕", 80),
-    ("status", "状态", 320),
+    ("name", "文件", 190),
+    ("dur", "时长", 78),
+    ("res", "分辨率", 120),
+    ("fps", "帧率", 56),
+    ("codec", "编码", 176),
+    ("sub", "字幕", 76),
+    ("status", "状态", 300),
 )
 
 # 每列的最小宽度（100% 缩放下的像素，setup_tree_columns 会按 DPI 放大）。
 # 时长 / 分辨率 / 编码 / 字幕都按实际内容留足，避免 4K 下被列边界裁掉。
 COLS_MIN = {
-    "dur": 80,
-    "res": 130,
-    "fps": 60,
-    "codec": 190,
-    "sub": 80,
-    "status": 320,
+    "dur": 70,
+    "res": 110,
+    "fps": 50,
+    "codec": 160,
+    "sub": 70,
+    "status": 260,
 }
 
 
@@ -1551,16 +1560,37 @@ def build_encode_tab(parent, app=None):
             pass
 
     # ---------------- 顶部：FFmpeg 路径（紧凑单行，去掉大段说明） ----------------
-    ff_row = ui.Frame(parent)
-    ff_row.grid(row=0, column=0, columnspan=4, sticky="ew", padx=8, pady=(6, 2))
-    ff_row.grid_columnconfigure(1, weight=1)
-    ui.Label(ff_row, text="FFmpeg：").grid(row=0, column=0, sticky="w", padx=(2, 4))
-    var_ff = tk.StringVar()
-    ent_ff = ttk.Entry(ff_row, textvariable=var_ff)
-    ent_ff.grid(row=0, column=1, sticky="ew", padx=4)
+    # 本页统一规格：控件高度 30、说明文字 15 号、主文字纯黑 / 提示次要灰。
+    # 全部使用 CustomTkinter 组件（Entry / Combobox / CheckBox / RadioButton /
+    # Button / 数字步进），表格与滚动条沿用 ttk（CustomTkinter 无等价件）。
+    CTL_H = 30
+    F_LABEL = FONTS["sm"]
 
-    lbl_ff = ui.Label(ff_row, text="检测中…", foreground=COLOR["text_secondary"])
-    lbl_ff.grid(row=0, column=4, sticky="w", padx=6)
+    def field_label(master, text):
+        return ui.Label(master, text=text, font=F_LABEL, auto_wrap=False,
+                        foreground=COLOR["text"])
+
+    def hint_label(master, text, color=None):
+        return ui.Label(master, text=text, font=F_LABEL, auto_wrap=False,
+                        foreground=color or COLOR["text_muted"])
+
+    def check(master, text, var, pad=(0, 0)):
+        cb = ui.Checkbutton(master, text=text, variable=var, font=F_LABEL,
+                            height=CTL_H, checkbox_width=18, checkbox_height=18)
+        cb.pack(side=tk.LEFT, padx=pad)
+        return cb
+
+    ff_row = ui.Frame(parent)
+    ff_row.grid(row=0, column=0, columnspan=4, sticky="ew", padx=8, pady=(8, 4))
+    ff_row.grid_columnconfigure(1, weight=1)
+    field_label(ff_row, "FFmpeg：").grid(row=0, column=0, sticky="w", padx=(2, 6))
+    var_ff = tk.StringVar()
+    ent_ff = ui.Entry(ff_row, textvariable=var_ff, height=CTL_H, font=F_LABEL)
+    ent_ff.grid(row=0, column=1, sticky="ew", padx=(0, 6))
+
+    lbl_ff = ui.Label(ff_row, text="检测中…", font=F_LABEL, auto_wrap=False,
+                      foreground=COLOR["text_muted"])
+    lbl_ff.grid(row=0, column=4, sticky="w", padx=(8, 8))
 
     def _pick_ff():
         p = filedialog.askopenfilename(
@@ -1571,99 +1601,124 @@ def build_encode_tab(parent, app=None):
         save_ffmpeg_hint(p)
         apply_ffmpeg()
 
-    ui.Button(ff_row, text="浏览…", width=7, command=_pick_ff).grid(row=0, column=2, padx=2)
-    btn_redetect = ui.Button(ff_row, text="重新检测", width=9)
+    ui.Button(ff_row, text="浏览…", width=7, height=CTL_H, font=F_LABEL,
+              command=_pick_ff).grid(row=0, column=2, padx=2)
+    btn_redetect = ui.Button(ff_row, text="重新检测", width=9, height=CTL_H,
+                             font=F_LABEL)
     btn_redetect.grid(row=0, column=3, padx=2)
 
-    # ---------------- 压制设置（模式 + 编码参数 + 选项，紧凑几行） ----------------
-    settings_box = ui.LabelFrame(parent, text="压制设置", padding=(6, 4))
-    settings_box.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 4))
+    # ---------------- 压制设置（卡片：标题行 + 4 行紧凑参数） ----------------
+    card = ui.Frame(parent, fg_color=COLOR["surface"], border_width=1,
+                    border_color=COLOR["border"], corner_radius=8)
+    card.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 6))
+    card.grid_columnconfigure(1, weight=1)
+    PAD = 12
+
+    # 标题行：左「压制设置」，右「编码器状态」（单行，不再折行挤压）
+    ui.Label(card, text="压制设置", font=F_LABEL, auto_wrap=False,
+             foreground=COLOR["text_secondary"]).grid(
+        row=0, column=0, sticky="w", padx=(PAD, 0), pady=(8, 6))
+    lbl_enc = ui.Label(card, text="编码器：检测中…", font=F_LABEL,
+                       auto_wrap=False, foreground=COLOR["text_secondary"])
+    lbl_enc.grid(row=0, column=2, sticky="e", padx=(0, PAD), pady=(8, 6))
 
     # 第 1 行：模式
-    mode_line = ui.Frame(settings_box)
-    mode_line.grid(row=0, column=0, columnspan=6, sticky="w")
+    mode_line = ui.Frame(card)
+    mode_line.grid(row=1, column=0, columnspan=3, sticky="w",
+                   padx=PAD, pady=(0, 6))
     var_mode = tk.StringVar(value="640")
     for i, (val, text) in enumerate((("640", "640p"),
                                      ("hd", "高清"),
                                      ("custom", "自定义"),
                                      (MODE_REMUX, "极速转封装"))):
-        ttk.Radiobutton(mode_line, text=text, value=val, variable=var_mode,
-                        command=lambda: refresh_mode_ui()).pack(side=tk.LEFT, padx=(4, 14))
+        ui.Radiobutton(mode_line, text=text, value=val, variable=var_mode,
+                       font=F_LABEL, height=CTL_H, radiobutton_width=18,
+                       radiobutton_height=18,
+                       command=lambda: refresh_mode_ui()).pack(
+            side=tk.LEFT, padx=(0 if i == 0 else 18, 0))
 
-    # 第 2 行：编码格式 / 质量 / preset / 并发
-    param_line = ui.Frame(settings_box)
-    param_line.grid(row=1, column=0, columnspan=6, sticky="w", pady=(4, 0))
-    ui.Label(param_line, text="编码格式：").pack(side=tk.LEFT, padx=(4, 2))
+    # 第 2 行：编码格式 / 质量 / preset / 并发（同一行、同高、间距统一）
+    param_line = ui.Frame(card)
+    param_line.grid(row=2, column=0, columnspan=3, sticky="w",
+                    padx=PAD, pady=(0, 6))
+    field_label(param_line, "编码格式").pack(side=tk.LEFT, padx=(0, 6))
     var_codec = tk.StringVar(value=CODEC_LABELS[CODEC_AV1])
-    cbo_codec = ttk.Combobox(param_line, textvariable=var_codec, width=12, state="readonly",
-                             values=[CODEC_LABELS[CODEC_AV1], CODEC_LABELS[CODEC_HEVC]])
-    cbo_codec.pack(side=tk.LEFT, padx=(0, 12))
+    cbo_codec = ui.Combobox(param_line, textvariable=var_codec, width=21,
+                            height=CTL_H, font=F_LABEL, state="readonly",
+                            values=[CODEC_LABELS[CODEC_AV1], CODEC_LABELS[CODEC_HEVC]])
+    cbo_codec.pack(side=tk.LEFT, padx=(0, 18))
 
-    ui.Label(param_line, text="质量：").pack(side=tk.LEFT, padx=(0, 2))
-    var_quality = tk.StringVar(value=str(DEFAULT_QUALITY[CODEC_AV1]))
-    sp_quality = ttk.Spinbox(param_line, from_=1, to=51, width=5, textvariable=var_quality)
-    sp_quality.pack(side=tk.LEFT, padx=(0, 12))
+    field_label(param_line, "质量").pack(side=tk.LEFT, padx=(0, 6))
+    box_quality, var_quality = make_num_box(
+        param_line, DEFAULT_QUALITY[CODEC_AV1], 0, 63, width=4, height=CTL_H)
+    box_quality.pack(side=tk.LEFT, padx=(0, 18))
 
-    ui.Label(param_line, text="preset：").pack(side=tk.LEFT, padx=(0, 2))
+    field_label(param_line, "preset").pack(side=tk.LEFT, padx=(0, 6))
     var_preset = tk.StringVar(value="p1")
-    cbo_preset = ttk.Combobox(param_line, textvariable=var_preset, width=10, state="readonly",
-                              values=NVENC_PRESETS)
-    cbo_preset.pack(side=tk.LEFT, padx=(0, 12))
+    cbo_preset = ui.Combobox(param_line, textvariable=var_preset, width=15,
+                             height=CTL_H, font=F_LABEL, state="readonly",
+                             values=NVENC_PRESETS)
+    cbo_preset.pack(side=tk.LEFT, padx=(0, 18))
 
-    ui.Label(param_line, text="并发：").pack(side=tk.LEFT, padx=(0, 2))
-    box_conc, var_conc = make_num_box(param_line, 4, 1, 16, width=3)
+    field_label(param_line, "并发").pack(side=tk.LEFT, padx=(0, 6))
+    box_conc, var_conc = make_num_box(param_line, 4, 1, 16, width=3, height=CTL_H)
     box_conc.pack(side=tk.LEFT)
 
-    # 第 3 行：输出目录 / 硬烧字幕 / 显示 ffmpeg 窗口
-    opt_line = ui.Frame(settings_box)
-    opt_line.grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
-    ui.Label(opt_line, text="输出目录：").pack(side=tk.LEFT, padx=(4, 2))
+    # 第 3 行：输出目录 / 硬烧字幕 / 杜比视界
+    opt_line = ui.Frame(card)
+    opt_line.grid(row=3, column=0, columnspan=3, sticky="w",
+                  padx=PAD, pady=(0, 6))
+    field_label(opt_line, "输出目录").pack(side=tk.LEFT, padx=(0, 6))
     var_outdir = tk.StringVar()
-    ttk.Entry(opt_line, textvariable=var_outdir, width=20).pack(side=tk.LEFT)
-    ui.Button(opt_line, text="粘贴", width=5,
-               command=lambda: paste_path_to(var_outdir)).pack(side=tk.LEFT, padx=(3, 0))
-    ui.Button(opt_line, text="浏览…", width=7,
-               command=lambda: var_outdir.set(filedialog.askdirectory(title="选择输出目录") or
-                                              var_outdir.get())).pack(side=tk.LEFT, padx=3)
-    ui.Label(opt_line, text="留空=源目录", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(0, 10))
+    ui.Entry(opt_line, textvariable=var_outdir, width=22,
+             height=CTL_H, font=F_LABEL).pack(side=tk.LEFT)
+    ui.Button(opt_line, text="粘贴", width=5, height=CTL_H, font=F_LABEL,
+              command=lambda: paste_path_to(var_outdir)).pack(
+        side=tk.LEFT, padx=(6, 0))
+    ui.Button(opt_line, text="浏览…", width=7, height=CTL_H, font=F_LABEL,
+              command=lambda: var_outdir.set(
+                  filedialog.askdirectory(title="选择输出目录") or var_outdir.get())).pack(
+        side=tk.LEFT, padx=6)
+    hint_label(opt_line, "留空=源目录").pack(side=tk.LEFT, padx=(0, 18))
 
     var_burn = tk.BooleanVar(value=True)
-    ttk.Checkbutton(opt_line, text="硬烧字幕", variable=var_burn).pack(side=tk.LEFT, padx=(0, 10))
+    check(opt_line, "硬烧字幕", var_burn, pad=(0, 18))
     var_keepdv = tk.BooleanVar(value=False)
-    ttk.Checkbutton(opt_line, text="杜比视界", variable=var_keepdv).pack(side=tk.LEFT, padx=(0, 10))
+    check(opt_line, "杜比视界", var_keepdv)
 
-    # 第 3 行：归档动作开关（默认全开；关掉就地把文件留在原位）
-    move_line = ui.Frame(settings_box)
-    move_line.grid(row=3, column=0, columnspan=6, sticky="w", pady=(4, 0))
-    ui.Label(move_line, text="完成后：", foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=(4, 2))
+    # 第 4 行：归档动作开关（默认全开；关掉就地把文件留在原位）
+    move_line = ui.Frame(card)
+    move_line.grid(row=4, column=0, columnspan=3, sticky="w",
+                   padx=PAD, pady=(0, 6))
+    hint_label(move_line, "完成后").pack(side=tk.LEFT, padx=(0, 10))
     var_move_ok = tk.BooleanVar(value=True)
-    ttk.Checkbutton(move_line, text="成功 → success/", variable=var_move_ok).pack(side=tk.LEFT, padx=(0, 10))
+    check(move_line, "成功 → success/", var_move_ok, pad=(0, 18))
     var_move_fail = tk.BooleanVar(value=True)
-    ttk.Checkbutton(move_line, text="失败 → error/", variable=var_move_fail).pack(side=tk.LEFT, padx=(0, 10))
+    check(move_line, "失败 → error/", var_move_fail, pad=(0, 18))
     var_move_grow = tk.BooleanVar(value=True)
-    ttk.Checkbutton(move_line, text="变大 → oversize/", variable=var_move_grow).pack(side=tk.LEFT, padx=(0, 10))
+    check(move_line, "变大 → oversize/", var_move_grow, pad=(0, 18))
 
-    # 第 4 行：控制台开关 + 编码器状态
-    status_line = ui.Frame(settings_box)
-    status_line.grid(row=4, column=0, columnspan=6, sticky="w", pady=(4, 0))
+    # 第 5 行：运行期开关（最小窗口宽度下也不会被右边缘裁掉）
+    run_line = ui.Frame(card)
+    run_line.grid(row=5, column=0, columnspan=3, sticky="w",
+                  padx=PAD, pady=(0, 8))
     var_console = tk.BooleanVar(value=False)
-    ttk.Checkbutton(status_line, text="显示 ffmpeg 窗口", variable=var_console).pack(
-        side=tk.LEFT, padx=(4, 16))
+    check(run_line, "显示 ffmpeg 窗口", var_console, pad=(0, 24))
     # 完成提示音：默认不勾选，勾选后记住；整批正常跑完（不是中途停止）
     # 播放一次 Windows 系统提示音。
     var_sound = tk.BooleanVar(value=load_done_sound("encode"))
-    ttk.Checkbutton(status_line, text="完成后提示音", variable=var_sound,
-                    command=lambda: save_done_sound("encode",
-                                                    var_sound.get())).pack(
-        side=tk.LEFT, padx=(0, 16))
-    lbl_enc = ui.Label(status_line, text="编码器：检测中…", foreground=COLOR["success"])
-    lbl_enc.pack(side=tk.LEFT)
+    cb_sound = ui.Checkbutton(run_line, text="完成后提示音", variable=var_sound,
+                              font=F_LABEL, height=CTL_H,
+                              checkbox_width=18, checkbox_height=18,
+                              command=lambda: save_done_sound("encode", var_sound.get()))
+    cb_sound.pack(side=tk.LEFT)
 
-    # ---------------- 文件列表 ----------------
+    # 文件列表 ----------------
     list_bar = ui.Frame(parent)
-    list_bar.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=(4, 2))
-    lbl_count = ui.Label(list_bar, text="共 0 个文件")
-    lbl_count.pack(side=tk.LEFT, padx=4)
+    list_bar.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=(4, 3))
+    lbl_count = ui.Label(list_bar, text="共 0 个文件", font=F_LABEL, auto_wrap=False,
+                         foreground=COLOR["text_secondary"])
+    lbl_count.pack(side=tk.LEFT, padx=(2, 8))
 
     def _add_files():
         paths = filedialog.askopenfilenames(
@@ -1679,12 +1734,16 @@ def build_encode_tab(parent, app=None):
         if d:
             add_paths([d])
 
-    ui.Button(list_bar, text="添加文件", command=_add_files).pack(side=tk.LEFT, padx=3)
-    ui.Button(list_bar, text="添加文件夹", command=_add_folder).pack(side=tk.LEFT, padx=3)
-    ui.Button(list_bar, text="移除选中", command=lambda: remove_selected()).pack(side=tk.LEFT, padx=3)
-    ui.Button(list_bar, text="清空列表", command=lambda: clear_list()).pack(side=tk.LEFT, padx=3)
-    ui.Label(list_bar, text="可拖放视频/文件夹",
-              foreground=COLOR["text_secondary"]).pack(side=tk.LEFT, padx=8)
+    ui.Button(list_bar, text="添加文件", height=CTL_H, font=F_LABEL,
+              command=_add_files).pack(side=tk.LEFT, padx=(0, 6))
+    ui.Button(list_bar, text="添加文件夹", height=CTL_H, font=F_LABEL,
+              command=_add_folder).pack(side=tk.LEFT, padx=(0, 6))
+    ui.Button(list_bar, text="移除选中", height=CTL_H, font=F_LABEL,
+              command=lambda: remove_selected()).pack(side=tk.LEFT, padx=(0, 6))
+    ui.Button(list_bar, text="清空列表", height=CTL_H, font=F_LABEL,
+              command=lambda: clear_list()).pack(side=tk.LEFT, padx=(0, 6))
+    ui.Label(list_bar, text="可拖放视频/文件夹", font=F_LABEL, auto_wrap=False,
+             foreground=COLOR["text_muted"]).pack(side=tk.LEFT, padx=(8, 0))
 
     tree_frame = ui.Frame(parent)
     tree_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=8, pady=2)
@@ -1701,7 +1760,7 @@ def build_encode_tab(parent, app=None):
     tree.grid(row=0, column=0, sticky="nsew")
     vsb.grid(row=0, column=1, sticky="ns")
     add_table_hscroll(tree, tree_frame, row=1, column=0)
-    setup_tree_columns(tree, "encode.main")
+    setup_tree_columns(tree, "encode.main.v2")
 
     # ---------------- 按钮 + 总进度 ----------------
     btn_row = ui.Frame(parent)
@@ -1717,10 +1776,11 @@ def build_encode_tab(parent, app=None):
                                           log("正在停止：已启动的 ffmpeg 会被结束…")))
     btn_stop.pack(side=tk.LEFT, padx=4)
 
-    bar_prog = ttk.Progressbar(btn_row, orient=tk.HORIZONTAL, mode="determinate",
-                               length=300, maximum=1, value=0)
+    bar_prog = ui.ProgressBar(btn_row, mode="determinate", maximum=1, value=0,
+                              width=300)
     bar_prog.pack(side=tk.LEFT, padx=(18, 8))
-    lbl_prog = ui.Label(btn_row, text="未开始", foreground=COLOR["text_secondary"])
+    lbl_prog = ui.Label(btn_row, text="未开始", font=F_LABEL, auto_wrap=False,
+                        foreground=COLOR["text_secondary"])
     lbl_prog.pack(side=tk.LEFT)
 
     # ---------------- 运行日志（可折叠，默认收起，把空间让给文件列表） ----------------
@@ -1731,10 +1791,11 @@ def build_encode_tab(parent, app=None):
     log_head = ui.Frame(log_wrap)
     log_head.grid(row=0, column=0, sticky="ew")
     var_log_open = tk.BooleanVar(value=False)
-    btn_log_toggle = ui.Button(log_head, text="▸ 运行日志", width=11)
+    btn_log_toggle = ui.Button(log_head, text="▸ 运行日志", width=11,
+                               height=CTL_H, font=F_LABEL)
     btn_log_toggle.pack(side=tk.LEFT)
-    ui.Button(log_head, text="清空", width=6,
-               command=lambda: clear_log(text_log)).pack(side=tk.LEFT, padx=6)
+    ui.Button(log_head, text="清空", width=6, height=CTL_H, font=F_LABEL,
+              command=lambda: clear_log(text_log)).pack(side=tk.LEFT, padx=6)
 
     log_body = ui.Frame(log_wrap)
     log_body.grid(row=1, column=0, sticky="nsew", pady=(2, 0))
@@ -1902,8 +1963,7 @@ def build_encode_tab(parent, app=None):
         if ver:
             ver_txt = ver.replace("ffmpeg version ", "v").split(" Copyright")[0]
             ver_txt = ver_txt.split("-full")[0]          # 去掉 -full_build-www… 后缀
-            if len(ver_txt) > 34:
-                ver_txt = ver_txt[:33] + "…"
+            ver_txt = short_version(ver_txt)             # 只留主版本，完整串写日志
         lbl_ff.config(text=("✓ " + ver_txt) if ver_txt else "✓ 已找到 ffmpeg",
                       foreground=COLOR["success"])
         lbl_enc.config(text="编码器：检测中…", foreground=COLOR["text_secondary"])
@@ -1990,26 +2050,27 @@ def build_encode_tab(parent, app=None):
         mode = var_mode.get()
         enc = state["encoders"].get(codec)
         if mode == "custom":
-            sp_quality.config(state="normal")
-            cbo_preset.config(state="readonly")
+            box_quality.set_enabled(True)
+            cbo_preset.configure(state="readonly")
             return
         if mode == MODE_REMUX:
             # 极速转封装不编码：质量 / preset / 编码器都无意义，灰掉且不再改写
-            sp_quality.config(state="disabled")
-            cbo_preset.config(state="disabled")
+            box_quality.set_enabled(False)
+            cbo_preset.configure(state="disabled")
             return
         quality = HD_CRF if mode == "hd" else default_quality(enc, codec)
         var_quality.set(str(quality))
         # 高清模式 = 画质优先，速度预设固定用「最好那一档」（最慢）
         var_preset.set(best_preset(enc) if mode == "hd" else default_preset(enc, codec))
-        sp_quality.config(state="disabled")
-        cbo_preset.config(state="disabled")
+        box_quality.set_enabled(False)
+        cbo_preset.configure(state="disabled")
 
     def on_codec_change(_e=None):
         state["codec_touched"] = True
         refresh_mode_ui()
 
-    cbo_codec.bind("<<ComboboxSelected>>", on_codec_change)
+    # CTkComboBox 不产生 <<ComboboxSelected>> 虚拟事件，只能挂 command 回调
+    cbo_codec.configure(command=on_codec_change)
     btn_redetect.config(command=apply_ffmpeg)
 
     # ============================================================

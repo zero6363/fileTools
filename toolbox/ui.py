@@ -279,9 +279,38 @@ class Entry(_CTkCompat, ctk.CTkEntry):
         kw.setdefault("height", 32)
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
+        # width 按字符宽度换算；需要精确像素时用 width_px（数字输入框等）
+        wpx = kw.pop("width_px", None)
         w = _px(kw.pop("width", None))
-        if w:
+        if wpx is not None:
+            kw["width"] = int(wpx)
+        elif w:
             kw["width"] = w
+        super().__init__(master, **kw)
+
+
+class StepButton(_CTkCompat, ctk.CTkButton):
+    """数量步进按钮（−/＋）：固定小方块，浅底描边。
+
+    普通 ui.Button 会按文字自动定宽（最小 56px），放进数字输入行会把整行
+    撑高、也抢走视觉重量；这里用固定 26px 宽，与官方 CTkButton 的描边/圆角
+    风格保持一致。
+    """
+
+    def __init__(self, master=None, **kw):
+        kw.pop("padx", None)
+        kw.pop("pady", None)
+        kw.pop("cursor", None)
+        kw.setdefault("width", 26)
+        kw.setdefault("height", 28)
+        kw.setdefault("corner_radius", 6)
+        kw.setdefault("border_width", 1)
+        kw.setdefault("border_color", COLOR["border_strong"])
+        kw.setdefault("fg_color", COLOR["surface_alt"])
+        kw.setdefault("hover_color", COLOR["border"])
+        kw.setdefault("text_color", COLOR["text"])
+        kw.setdefault("text_color_disabled", COLOR["text_muted"])
+        kw.setdefault("font", FONTS["xs"])
         super().__init__(master, **kw)
 
 
@@ -308,12 +337,13 @@ class Checkbutton(_CTkCompat, ctk.CTkCheckBox):
         kw["hover_color"] = COLOR["accent_soft"]
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
-        # 按文字自动计算宽度，避免长选项被 CTk 默认的 100px 截断
-        target = _text_px(kw.get("text", ""), kw["font"]) + 48
+        # 按文字自动计算宽度：勾选框 18px + 间距，留 26px 即可；
+        # 旧值 48px 会在多复选框并排时累计出几十像素的空白，把整行顶宽。
+        target = _text_px(kw.get("text", ""), kw["font"]) + 26
         w = _px(kw.pop("width", None))
         if w:
             target = max(target, w)
-        kw["width"] = max(80, min(560, target))
+        kw["width"] = max(60, min(560, target))
         kw.setdefault("height", 28)
         kw.setdefault("checkbox_width", 20)
         kw.setdefault("checkbox_height", 20)
@@ -345,8 +375,8 @@ class Radiobutton(_CTkCompat, ctk.CTkRadioButton):
         kw["border_color"] = COLOR["border_strong"]
         if kw.get("font") is None:
             kw["font"] = FONTS["base"]
-        target = _text_px(kw.get("text", ""), kw["font"]) + 48
-        kw["width"] = max(80, min(620, target))
+        target = _text_px(kw.get("text", ""), kw["font"]) + 26
+        kw["width"] = max(60, min(620, target))
         kw.setdefault("height", 28)
         kw.setdefault("radiobutton_width", 20)
         kw.setdefault("radiobutton_height", 20)
@@ -364,7 +394,6 @@ class Combobox(_CTkCompat, ctk.CTkComboBox):
         kw.pop("exportselection", None)
         kw.pop("justify", None)
         kw.pop("cursor", None)
-        kw.pop("height", None)
         kw.pop("takefocus", None)
 
         kw["text_color"] = fg
@@ -456,6 +485,61 @@ class Textbox(_CTkCompat, ctk.CTkTextbox):
         if w:
             kw["width"] = w
         super().__init__(master, **kw)
+
+
+class ProgressBar(_CTkCompat, ctk.CTkProgressBar):
+    """ttk.Progressbar 的 CTk 替代：保留 maximum / value / mode 与下标读写，
+    存量代码 `bar['value'] = n` / `bar.config(maximum=...)` 不用改写。"""
+
+    def __init__(self, master=None, **kw):
+        maximum = kw.pop("maximum", 1)
+        value = kw.pop("value", 0)
+        mode = kw.pop("mode", "determinate")
+        kw.pop("orient", None)
+        length = kw.pop("length", 200)
+        kw.setdefault("height", 8)
+        kw.setdefault("corner_radius", 999)
+        kw.setdefault("border_width", 0)
+        kw.setdefault("progress_color", COLOR["accent"])
+        kw.setdefault("fg_color", COLOR["surface_alt"])
+        try:
+            kw.setdefault("width", int(length))
+        except (TypeError, ValueError):
+            pass
+        self._maximum = 1.0
+        super().__init__(master, **kw)
+        self._maximum = max(1e-9, float(maximum or 1))
+        if mode == "indeterminate":
+            super().configure(mode="indeterminate")
+        else:
+            super().set(min(1.0, max(0.0, float(value or 0) / self._maximum)))
+
+    def configure(self, cnf=None, **kw):
+        if isinstance(cnf, str):
+            return self.cget(cnf)
+        if cnf:
+            kw.update(cnf)
+        if "maximum" in kw:
+            self._maximum = max(1e-9, float(kw.pop("maximum") or 1))
+        if "value" in kw:
+            v = float(kw.pop("value") or 0)
+            super().set(min(1.0, max(0.0, v / self._maximum)))
+        if "mode" in kw:
+            m = kw.pop("mode")
+            super().configure(mode="determinate" if m == "determinate" else "indeterminate")
+        return super().configure(**kw)
+
+    config = configure
+
+    def __setitem__(self, key, value):
+        self.configure(**{key: value})
+
+    def __getitem__(self, key):
+        if key == "value":
+            return self.get() * self._maximum
+        if key == "maximum":
+            return self._maximum
+        return self.cget(key)
 
 
 class ScrollableFrame(_CTkCompat, ctk.CTkScrollableFrame):
@@ -563,9 +647,9 @@ Scale = ttk.Scale
 CTk = ctk.CTk
 
 __all__ = [
-    "Button", "Label", "Frame", "Entry", "Checkbutton", "Radiobutton",
+    "Button", "StepButton", "Label", "Frame", "Entry", "Checkbutton", "Radiobutton",
     "Combobox", "Textbox", "Listbox", "ScrollableFrame", "Toplevel", "CTk",
-    "Treeview", "Scrollbar", "Style", "Progressbar", "Separator",
+    "ProgressBar", "Treeview", "Scrollbar", "Style", "Progressbar", "Separator",
     "Notebook", "Labelframe", "Menubutton", "Panedwindow", "Sizegrip",
     "init_appearance", "ctk",
 ]

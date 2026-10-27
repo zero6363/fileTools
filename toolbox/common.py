@@ -15,7 +15,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ui_scale
 
-APP_VERSION = "1.45"
+APP_VERSION = "1.46"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -473,24 +473,65 @@ def make_entry_row(parent, row, label, default="", entry_width=30, note=None):
     return var
 
 
-def make_num_box(parent, default, min_, max_, width=6, step=1):
-    """[－] Entry [＋] 数字小组件（方便鼠标点加减），返回 (frame, StringVar)。
-    点击按钮时按 min_/max_ 钳制、按 step 步进；输入非法文本时点按钮回退到 min_。"""
-    frame = ttk.Frame(parent)
+def make_num_box(parent, default, min_, max_, width=6, step=1, height=30):
+    """[−] 输入 [＋] 紧凑数字组件，返回 (frame, StringVar)。
+
+    按钮固定 26×height 的小方块（旧版走通用按钮，被自动定宽成 56px，
+    在一行参数里显得又大又挤）；输入框居中对齐、宽度按字符数换算。
+    frame.set_enabled(False) 可整体禁用（质量等只读场景）。
+    点击按钮按 min_/max_ 钳制、按 step 步进；输入非法文本时点按钮回退到 min_，
+    失焦或回车时把输入框内容收敛到合法范围。
+    """
+    frame = ui.Frame(parent)
     var = tk.StringVar(value=str(default))
     step = max(1, int(step))
 
     def do_step(delta):
         try:
-            v = int(var.get().strip())
+            v = int(str(var.get()).strip())
         except ValueError:
             v = min_
         v = max(min_, min(max_, v + delta))
         var.set(str(v))
 
-    ttk.Button(frame, text="－", width=2, command=lambda: do_step(-step)).pack(side=tk.LEFT)
-    ttk.Entry(frame, textvariable=var, width=width).pack(side=tk.LEFT, padx=2)
-    ttk.Button(frame, text="＋", width=2, command=lambda: do_step(step)).pack(side=tk.LEFT)
+    def commit(_e=None):
+        txt = str(var.get()).strip()
+        if txt in ("", "-", "+"):
+            return
+        try:
+            v = int(txt)
+        except ValueError:
+            var.set(str(min_))
+            return
+        v = max(min_, min(max_, v))
+        if str(v) != txt:
+            var.set(str(v))
+
+    try:
+        chars = max(5, int(width))
+    except (TypeError, ValueError):
+        chars = 6
+    btn_dec = ui.StepButton(frame, text="−", height=height,
+                            command=lambda: do_step(-step))
+    btn_dec.pack(side=tk.LEFT)
+    ent = ui.Entry(frame, textvariable=var, width_px=chars * 9, height=height,
+                   justify="center")
+    ent.pack(side=tk.LEFT, padx=3)
+    btn_inc = ui.StepButton(frame, text="＋", height=height,
+                            command=lambda: do_step(step))
+    btn_inc.pack(side=tk.LEFT)
+    ent.bind("<FocusOut>", commit)
+    ent.bind("<Return>", commit)
+
+    def set_enabled(flag):
+        st = tk.NORMAL if flag else tk.DISABLED
+        for w in (btn_dec, ent, btn_inc):
+            try:
+                w.configure(state=st)
+            except Exception:
+                pass
+
+    frame.set_enabled = set_enabled
     return frame, var
 
 
@@ -774,10 +815,34 @@ def setup_tree_columns(tree, key):
 
 
 def add_table_hscroll(tree, parent, row, column=0, columnspan=1):
-    """给表格补一条横向滚动条（内容超出表格宽度时可左右拖动）。"""
+    """给表格补一条横向滚动条：内容超出表格宽度时才显示，不超出时收起，
+    避免每一页底部都白占一条 17px 的空滚动条。"""
     hsb = ttk.Scrollbar(parent, orient=tk.HORIZONTAL, command=tree.xview)
-    tree.configure(xscrollcommand=hsb.set)
     hsb.grid(row=row, column=column, columnspan=columnspan, sticky="ew")
+
+    def _sync(_e=None):
+        try:
+            first, last = tree.xview()
+            need = not (first <= 0.001 and last >= 0.999)
+            if need and not hsb.winfo_ismapped():
+                hsb.grid()
+            elif not need and hsb.winfo_ismapped():
+                hsb.grid_remove()
+        except Exception:
+            pass
+
+    def _on_xscroll(first, last):
+        hsb.set(first, last)
+        # 在滚动回调里改布局容易抖动，放到空闲时再判断
+        try:
+            tree.after_idle(_sync)
+        except Exception:
+            pass
+
+    tree.configure(xscrollcommand=_on_xscroll)
+    tree.bind("<Configure>", lambda e: tree.after_idle(_sync), add="+")
+    tree.after(150, _sync)
+    tree.after(600, _sync)
     return hsb
 
 
