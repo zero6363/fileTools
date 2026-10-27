@@ -13,6 +13,7 @@
     "yes" / "no"），存量 157 处调用一行都不用改；
   · 主线程之外（工作线程里弹提示）或还没有 Tk 根窗口时，自动退回原生实现。
 """
+import re
 import threading
 import time
 import tkinter as tk
@@ -34,6 +35,20 @@ def _scale():
         return max(1.0, ui_scale())
     except Exception:
         return 1.0
+
+
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
+
+
+def _plain(text):
+    """去掉文案里的 Markdown 粗体标记。
+
+    自绘弹窗不渲染 Markdown，`**完全不读取文件**` 会原样显示成星号；不少
+    提示文案是照着 README 的写法写的，统一在这里剥掉，比逐条改文案省事。
+    """
+    if not text or "**" not in text:
+        return text
+    return _BOLD_RE.sub(r"\1", text)
 
 # kind -> (默认标题, 圆点颜色)
 _KIND = {
@@ -295,6 +310,7 @@ def show(kind, title, message, parent=None, buttons="ok", default=None):
             parent = tk._default_root
         except Exception:
             parent = None
+    message = _plain(message)
     if (parent is None or threading.current_thread() is not threading.main_thread()):
         return _native_fallback(kind, title, message, parent, buttons)
     try:

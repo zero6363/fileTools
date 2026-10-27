@@ -26,6 +26,9 @@
       没有上级库时退化成原来的方向：把各级子库并进本级库。
       重复记录**保留较新的那条**（先比 last_hash_time，再比 mtime，
       都相同再比两个库的最后扫描时间，让「缺失」标记也能传播），
+      但**哈希值不会被空值覆盖**：较新却没算哈希的记录只更新大小 / 修改时间 /
+      状态，保留目标库已有的 sha256 和它那次校验时间（否则下级跑一轮快速预检，
+      上级库辛苦算好的哈希就全被 NULL 冲掉了）。
       合并成功后删除来源库文件。只操作数据库，不读任何普通文件。
   三之二、用上级库生成当前目录的库（反方向）
       「用上级库」从当前目录**逐级往上**找最近的 filehash.db（上级不一定是一级，
@@ -1499,7 +1502,8 @@ class SeedTask:
       · 只取「属于本目录范围」的记录，rel_path 去掉前缀后写入目标库；
       · sha256 / file_size / mtime / last_hash_time / status 原样搬过来，
         **不 stat、不读文件、不判断文件是否还在**；
-      · 目标库已存在时按「取较新」合并（last_hash_time → mtime），与「合并数据库」一致。
+      · 目标库已存在时按「取较新」合并（last_hash_time → mtime），与「合并数据库」一致；
+      · 同样遵循「哈希值不被空值覆盖」：上级记录没算哈希、本级已有哈希时保留本级的。
     """
 
     def __init__(self, parent_root, parent_db, target_root, target_db,
@@ -2270,28 +2274,62 @@ def execute_sync_plan(plan, use_trash, log=None, on_progress=None):
 
 
 
-# 合并时「谁更新」的判定：先比 last_hash_time（上次校验），再比 mtime（文件修改时间）。
-# 两者都相同（典型是「快速建档」的记录，根本没有哈希时间）时，按两个库的
-# 「最后一次扫描完成时间」再比一次：来源库更新就让来源覆盖同值记录 ——
-# 否则来源库新扫出来的「缺失」标记永远传不过来（缺失记录只改 status，
-# last_hash_time / mtime 都还是老值，按前两条比永远算「没更新」）。
+# 合并时「谁更新」的判定：先比 last_hash_time（上次校验），相同再比 mtime（文件
+# 修改时间）；来源根本没有哈希时间（快速预检 / 快速建档过的记录）时只比 mtime。
+# 记录完全没变（mtime + 大小都相同）时，再按两个库的「最后一次扫描完成时间」
+# 比一次：来源库更新就让来源覆盖同值记录 —— 否则来源库新扫出来的「缺失」标记
+# 永远传不过来（缺失记录只改 status，其余字段都还是老值）。
 _NEWER_SQL = (
-    "(COALESCE(excluded.last_hash_time, 0) > COALESCE(file_records.last_hash_time, 0)"
+    "("
+    # 来源算过哈希：先比哈希时间，相同再比文件修改时间
+    "COALESCE(excluded.last_hash_time, 0) > COALESCE(file_records.last_hash_time, 0)"
     " OR (COALESCE(excluded.last_hash_time, 0) = COALESCE(file_records.last_hash_time, 0)"
-    " AND COALESCE(excluded.mtime, 0) > COALESCE(file_records.mtime, 0)))"
+    " AND COALESCE(excluded.mtime, 0) > COALESCE(file_records.mtime, 0))"
+    # 来源没算过哈希（快速预检 / 快速建档会把 sha256 + last_hash_time 清空）：
+    # 没有哈希时间可比，只能看文件修改时间。少了这一条，下级库扫描出来的新
+    # 修改时间 / 新大小永远进不来 —— 因为 0 永远比不过目标库的哈希时间。
+    " OR (COALESCE(excluded.last_hash_time, 0) = 0"
+    " AND COALESCE(excluded.mtime, 0) > COALESCE(file_records.mtime, 0))"
+    ")"
 )
+# 「同一条记录的同一个版本」：文件修改时间和大小都一致。
+# 故意不把 last_hash_time 算进来 —— 一边算过哈希、一边没算，这个字段必然不同，
+# 那不是数据冲突，只是「谁补过哈希」的差别。不认这种情况的话，下级库扫出来的
+# 缺失 / 删除标记就永远传不到上级库（缺失记录只改 status，前两个字段都保持原样）。
+# 只在来源库整体更新时用它扩大覆盖范围。
 _TIE_SQL = (
-    "(COALESCE(excluded.last_hash_time, 0) = COALESCE(file_records.last_hash_time, 0)"
-    " AND COALESCE(excluded.mtime, 0) = COALESCE(file_records.mtime, 0))"
+    "(COALESCE(excluded.mtime, 0) = COALESCE(file_records.mtime, 0)"
+    " AND COALESCE(excluded.file_size, 0) = COALESCE(file_records.file_size, 0))"
 )
+
+
+# 哈希值不被空值覆盖。快速预检 / 快速建档发现文件变了时，会把 sha256 和
+# last_hash_time 一起清空（旧哈希已经不可信，等完整建档补算）。于是下级库
+# 只跑过一轮快速建档，就能把上级库里辛苦算好的哈希全冲成 NULL —— 之后查重、
+# 校验、比对全得重算。所以：来源记录较新但哈希为空时，保留目标库已有的哈希，
+# 只更新大小 / 修改时间 / 状态这些扫描确实看到的字段。
+_KEEP_SHA = ("(COALESCE(excluded.sha256, '') = ''"
+             " AND COALESCE(file_records.sha256, '') <> '')")
 
 
 def _merge_upsert(newer_expr):
-    """按「谁更新」的表达式拼 UPSERT：更新的那份整体覆盖，否则保留原值。"""
+    """按「谁更新」的表达式拼 UPSERT：更新的那份整体覆盖，否则保留原值。
+
+    唯一例外是哈希：新值为空时保留目标库已有的 sha256；`last_hash_time`
+    跟着哈希走（保留了旧哈希，就保留它那次校验的时间），否则会出现
+    「有哈希却没有上次校验时间」，下一次合并又被判成老数据。
+    """
+    special = {
+        "sha256": "COALESCE(NULLIF(excluded.sha256, ''), file_records.sha256)",
+        "last_hash_time": ("CASE WHEN " + _KEEP_SHA +
+                           " THEN file_records.last_hash_time"
+                           " ELSE excluded.last_hash_time END"),
+    }
     sets = []
     for col in ("sha256", "file_size", "mtime", "last_hash_time", "status", "note"):
+        val = special.get(col, "excluded." + col)
         sets.append(" " + col + " = CASE WHEN " + newer_expr +
-                    " THEN excluded." + col + " ELSE file_records." + col + " END")
+                    " THEN " + val + " ELSE file_records." + col + " END")
     return ("INSERT INTO file_records"
             " (rel_path, sha256, file_size, mtime, last_hash_time, status, note)"
             " VALUES (?,?,?,?,?,?,?)"
@@ -2355,33 +2393,47 @@ def find_sub_dbs(root, skip=None):
 def db_scan_time(db_path):
     """库的「最后一次扫描完成时间」，用来判断两个库谁的数据更新。
 
-    优先取扫描记录里最近一条完成时间；没有扫描记录的老库退回归档记录里
-    最新的上次校验时间；都没有就返回 0（谁都不比谁新，按记录逐条比）。
+    依次尝试（前一个拿不到才往下退）：
+      1. scan_history 里最近一条完成时间 —— 最准；
+      2. 记录里最新的 last_hash_time —— 没有扫描记录的老库；
+      3. 库文件（含 -wal）本身的修改时间 —— 整库都是快速建档、连一个哈希时间
+         都没有时，至少还能看出「哪个库最后被写过」。
+    三样都没有就返回 0（谁都不比谁新，完全按记录逐条比）。
     """
     if not os.path.isfile(db_path):
         return 0.0
+    t = 0.0
     try:
         conn = sqlite3.connect(db_path, timeout=5)
     except sqlite3.Error:
-        return 0.0
-    try:
+        conn = None
+    if conn is not None:
         try:
-            row = conn.execute("SELECT MAX(finished_at) FROM scan_history").fetchone()
-            t = float((row and row[0]) or 0)
-        except (sqlite3.Error, TypeError, ValueError):
-            t = 0.0
-        if t:
-            return t
-        try:
-            row = conn.execute("SELECT MAX(last_hash_time) FROM file_records").fetchone()
-            return float((row and row[0]) or 0)
-        except (sqlite3.Error, TypeError, ValueError):
-            return 0.0
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+            try:
+                row = conn.execute(
+                    "SELECT MAX(finished_at) FROM scan_history").fetchone()
+                t = float((row and row[0]) or 0)
+            except (sqlite3.Error, TypeError, ValueError):
+                t = 0.0
+            if not t:
+                try:
+                    row = conn.execute(
+                        "SELECT MAX(last_hash_time) FROM file_records").fetchone()
+                    t = float((row and row[0]) or 0)
+                except (sqlite3.Error, TypeError, ValueError):
+                    t = 0.0
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    if not t:
+        for p in (db_path, db_path + "-wal"):
+            try:
+                t = max(t, os.path.getmtime(p))
+            except OSError:
+                pass
+    return t
 
 
 def plan_merge(root):
@@ -2424,6 +2476,9 @@ class MergeTask:
     规则：
       · 逐条比「谁更新」：上次校验时间 → 文件修改时间 → 所属库的最后扫描时间；
         来源库比目标库新时，同值记录也覆盖（缺失 / 删除标记这才传得过去）；
+      · **哈希值不被空值覆盖**：来源记录较新但没算哈希（快速预检 / 快速建档
+        会把 sha256 清空）时，保留目标库已有的哈希，只更新大小 / 修改时间 / 状态，
+        并保留那个哈希原本的校验时间；
       · 每个来源库合并完立即提交，成功后删除该库文件（-wal / -shm / -journal 一起删）；
       · 只操作数据库文件，不读取、不修改任何普通文件（连大小/时间都不看）。
     """
@@ -2442,7 +2497,7 @@ class MergeTask:
                    "done_flag": False, "aborted": False, "error": None}
         self.stats = dict(dbs=0, rows=0, inserted=0, updated=0,
                           removed=0, errors=0, failed=[], removed_paths=[],
-                          newer_src=0)
+                          newer_src=0, unhashed=0)
 
     def run(self):
         self.log("=" * 60)
@@ -2470,8 +2525,8 @@ class MergeTask:
                     if src_newer:
                         self.stats["newer_src"] += 1
                     try:
-                        n, ins, upd = self._merge_one(db, rel_dir, src_path,
-                                                      src_newer)
+                        n, ins, upd, nohash = self._merge_one(
+                            db, rel_dir, src_path, src_newer)
                     except Exception as e:
                         self.stats["errors"] += 1
                         self.stats["failed"].append(src_path)
@@ -2482,8 +2537,10 @@ class MergeTask:
                     self.stats["rows"] += n
                     self.stats["inserted"] += ins
                     self.stats["updated"] += upd
+                    self.stats["unhashed"] += nohash
                     self.log(f"[已合并] {rel_dir or '.'}：{n} 条"
                              f"（新增 {ins}，更新 {upd}）"
+                             + (f"，其中 {nohash} 条未算哈希" if nohash else "")
                              + ("，来源库更新" if src_newer else ""))
                     if self._remove_db(src_path):
                         self.stats["removed"] += 1
@@ -2495,6 +2552,8 @@ class MergeTask:
             self.log(f"合并完成 —— {s['dbs']} 个库，共 {s['rows']} 条"
                      f"（新增 {s['inserted']}，更新 {s['updated']}），"
                      f"删除来源库 {s['removed']} 个"
+                     + (f"，其中 {s['unhashed']} 条未算哈希"
+                        "（未覆盖目标库已有的哈希）" if s["unhashed"] else "")
                      + (f"，失败 {s['errors']} 个" if s["errors"] else ""))
             return s
         except Exception as e:
@@ -2521,7 +2580,9 @@ class MergeTask:
         data = [(prefix + r[0], r[1], r[2], r[3], r[4], r[5] or "active", r[6])
                 for r in rows]
         if not data:
-            return 0, 0, 0
+            return 0, 0, 0, 0
+        # 其中没算哈希的条数：这些记录不会覆盖目标库已有的哈希（见 _KEEP_SHA）
+        unhashed = sum(1 for d in data if not (d[1] or "").strip())
         sql = MERGE_UPSERT_TIE_SQL if src_newer else MERGE_UPSERT_SQL
         before = db.conn.execute("SELECT COUNT(*) FROM file_records").fetchone()[0]
         try:
@@ -2531,25 +2592,36 @@ class MergeTask:
             self._merge_slow(db, data, src_newer)
         after = db.conn.execute("SELECT COUNT(*) FROM file_records").fetchone()[0]
         inserted = max(0, int(after) - int(before))
-        return len(data), inserted, len(data) - inserted
+        return len(data), inserted, len(data) - inserted, unhashed
 
     @staticmethod
     def _merge_slow(db, data, src_newer=False):
+        """老版本 SQLite 没有 UPSERT 时的逐条退化版本，规则与 _merge_upsert 一致。"""
         for rel, sha, size, mt, lh, st, note in data:
             old = db.conn.execute(
-                "SELECT last_hash_time, mtime FROM file_records WHERE rel_path=?",
-                (rel,)).fetchone()
+                "SELECT last_hash_time, mtime, sha256, file_size FROM file_records"
+                " WHERE rel_path=?", (rel,)).fetchone()
             if old is None:
                 db.conn.execute(
                     "INSERT INTO file_records(rel_path, sha256, file_size, mtime,"
                     " last_hash_time, status, note) VALUES(?,?,?,?,?,?,?)",
                     (rel, sha, size, mt, lh, st, note))
                 continue
-            same = ((lh or 0) == (old[0] or 0) and (mt or 0) == (old[1] or 0))
+            # 「同一个版本」= 修改时间 + 大小都一致（不看哈希时间，见 _TIE_SQL）
+            same = ((mt or 0) == (old[1] or 0) and (size or 0) == (old[3] or 0))
             newer = ((lh or 0) > (old[0] or 0)
                      or ((lh or 0) == (old[0] or 0) and (mt or 0) > (old[1] or 0))
+                     # 来源没算哈希（没有哈希时间）→ 只看文件修改时间
+                     or (not lh and (mt or 0) > (old[1] or 0))
                      or (same and src_newer))
-            if newer:
+            if not newer:
+                continue
+            if not (sha or "").strip() and (old[2] or "").strip():
+                # 新记录没算哈希 → 保留旧哈希和它那次校验时间
+                db.conn.execute(
+                    "UPDATE file_records SET file_size=?, mtime=?, status=?,"
+                    " note=? WHERE rel_path=?", (size, mt, st, note, rel))
+            else:
                 db.conn.execute(
                     "UPDATE file_records SET sha256=?, file_size=?, mtime=?,"
                     " last_hash_time=?, status=?, note=? WHERE rel_path=?",
@@ -3636,6 +3708,8 @@ def build_hash_tab(parent, app=None):
                 "（同路径保留较新的那条）。\n\n" if exists
                 else "当前目录还没有数据库，将新建一个。\n\n")
         msg += ("· 直接沿用上级库的哈希 / 大小 / 修改时间\n"
+                "· 同样按「取较新」合并，且哈希值不会被空值覆盖"
+                "（本级已有哈希就保留）\n"
                 "· **完全不读取、不检查任何文件**，只搬数据库记录\n"
                 "· 生成后可以直接跑「快速预检」，只比大小和时间，几乎不用读盘")
         if not messagebox.askyesno("用上级库生成", msg):
@@ -3773,6 +3847,8 @@ def build_hash_tab(parent, app=None):
                + (f"\n最后一次扫描：{fmt_time(dst_time)}" if dst_time else "")
                + "\n\n· 逐条比「上次校验 → 修改时间 → 库的最后扫描时间」，谁新用谁"
                + "\n· 来源库更新时，连「缺失」标记一起覆盖目标库"
+               + "\n· 哈希值不会被空值覆盖：较新但没算哈希的记录"
+               "只更新大小 / 修改时间 / 状态，保留目标库已有的哈希"
                + "\n· 合并成功后删除来源库（连同 -wal / -shm）"
                + "\n· 只操作数据库，不读取、不修改任何普通文件")
         if not messagebox.askyesno(title, msg):
@@ -4578,6 +4654,8 @@ def build_hash_tab(parent, app=None):
                      f"{s.get('dbs', 0)} 个库，共 {s.get('rows', 0)} 条"
                      f"（新增 {s.get('inserted', 0)}，更新 {s.get('updated', 0)}），"
                      f"已删来源库 {s.get('removed', 0)} 个"
+                     + (f"，{s['unhashed']} 条未算哈希（保留已有哈希）"
+                        if s.get("unhashed") else "")
                      + (f"，失败 {s.get('errors', 0)} 个" if s.get("errors") else ""))
         if mt is not None and not errored:
             try:
@@ -4594,6 +4672,8 @@ def build_hash_tab(parent, app=None):
                 removed=s.get("removed", 0), failed=s.get("errors", 0),
                 detail=(("并进上级库" if upward else "合并子库")
                         + f" {s.get('dbs', 0)} 个 · 共 {s.get('rows', 0)} 条记录"
+                        + (f" · {s['unhashed']} 条未算哈希保留原哈希"
+                           if s.get("unhashed") else "")
                         + (" · 中途停止" if aborted else "")),
                 started_at=mt.started_at)
         # 来源库文件已删 → 顺手把「已管理目录」里对应的条目去掉
