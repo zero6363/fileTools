@@ -57,6 +57,7 @@ import subprocess
 import threading
 import time
 import tkinter as tk
+from collections import deque
 from tkinter import filedialog, messagebox, scrolledtext
 from . import ui, ui as ttk
 from .theme import FONTS
@@ -573,21 +574,72 @@ def check_db_file(db_path):
         return False, str(e)
 
 
-def db_counts(db_path):
-    """只读打开库里取统计；失败返回 None"""
-    if not os.path.isfile(db_path):
+# 统计结果缓存：db 路径 -> (库文件签名, stats 元组)
+# stats() 是整表聚合（无 WHERE，必须逐行回表），100 万条的库单次就要 300ms 以上。
+# 「管理…」列目录时要看每个库的记录数，库没被改过就没必要重算，按签名直接复用。
+_STATS_CACHE = {}
+_STATS_LOCK = threading.Lock()
+
+
+def db_signature(db_path):
+    """库文件指纹：主库 + -wal 的 mtime/size（文件不存在的位置记 0）。
+
+    带上 -wal 是因为 WAL 模式下新数据先写进 wal，主库 mtime 可能还没变。
+    """
+    sig = []
+    for p in (db_path, db_path + "-wal"):
+        try:
+            st = os.stat(p)
+        except OSError:
+            sig.extend((0, 0))
+        else:
+            sig.extend((st.st_mtime_ns, st.st_size))
+    return tuple(sig)
+
+
+def invalidate_stats(db_path=None):
+    """丢掉统计缓存（库被改过之后调用）；不传参数 = 全部清空"""
+    global _STATS_CACHE
+    with _STATS_LOCK:
+        if db_path is None:
+            _STATS_CACHE = {}
+            return
+        key = os.path.normcase(os.path.abspath(db_path))
+        for k in [k for k in _STATS_CACHE if os.path.normcase(k) == key]:
+            _STATS_CACHE.pop(k, None)
+
+
+def db_counts(db_path, use_cache=False):
+    """只读打开库里取统计；失败返回 None。
+
+    use_cache=True 时按库文件签名命中缓存：同一份库文件不重复扫全表。
+    库被改写后签名变化，自然失效，不会读到旧数字。
+    """
+    if not db_path or not os.path.isfile(db_path):
         return None
+    sig = db_signature(db_path) if use_cache else None
+    if use_cache:
+        key = os.path.normcase(os.path.abspath(db_path))
+        with _STATS_LOCK:
+            hit = _STATS_CACHE.get(key)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
     db = HashDB(db_path)
+    res = None
     try:
         try:
             db.open(readonly=True)
         except Exception:
             db.open()
-        return db.stats()
+        res = db.stats()
     except Exception:
         return None
     finally:
         db.close()
+    if use_cache:
+        with _STATS_LOCK:
+            _STATS_CACHE[os.path.normcase(os.path.abspath(db_path))] = (sig, res)
+    return res
 
 
 # ============================================================
@@ -603,6 +655,9 @@ def record_history(db_path, op, status, total=0, processed=0, added=0,
     """
     if not db_path or not os.path.isfile(db_path):
         return False
+    # 每次任务收尾都会写一条记录，说明这个库刚被动过：
+    # 顺手丢掉统计缓存，别让「记录」列显示旧数字（exFAT 之类 2 秒时间粒度也稳）。
+    invalidate_stats(db_path)
     now = time.time()
     started = started_at if started_at else now
     finished = finished_at if finished_at else now
@@ -2808,7 +2863,9 @@ def build_hash_tab(parent, app=None):
         db_path = os.path.join(db_root, DB_NAME)
         var_db.set(db_path)
         if os.path.isfile(db_path):
-            st = db_counts(db_path)
+            # 带签名缓存：同一个库文件重复切目录不用重扫全表；
+            # 库被扫描/写回改过后签名变化，自动重算，不会显示旧数字。
+            st = db_counts(db_path, use_cache=True)
             if st is None:
                 lbl_scope.config(text="库读取失败（可能被占用或文件损坏）")
             else:
@@ -5790,17 +5847,87 @@ def build_hash_tab(parent, app=None):
             except Exception:
                 return None
 
-        def refresh():
-            tv.delete(*tv.get_children())
-            for r in roots_now():
-                st = db_counts(r["db"])
-                gone = st is None
-                count = "库不存在" if gone else f"有效 {st[1]} / 共 {st[0]}"
-                tv.insert("", tk.END, iid=r["path"], values=(
-                    "☐", r["path"], r["db"], count,
+        # 记录列分两步出：先按配置里上次扫描记下的数字把行画出来（不打开数据库），
+        # 真实统计交给后台线程逐库算，主线程轮询回填 —— 大库也不会卡住窗口。
+        stat_state = {"gen": 0}
+
+        def row_values(r, count):
+            return ("☐", r["path"], r["db"], count,
                     fmt_relative_time(r.get("last_scan")),
-                    ROOT_MODE_NAMES.get(r.get("mode", ""), r.get("mode", "") or "—")),
-                    tags=("gone",) if gone else ())
+                    ROOT_MODE_NAMES.get(r.get("mode", ""), r.get("mode", "") or "—"))
+
+        def set_count(path, text, gone=False):
+            try:
+                if tv.exists(path):
+                    tv.set(path, "count", text)
+                    tv.item(path, tags=("gone",) if gone else ())
+            except Exception:
+                pass
+
+        def cached_count(r):
+            """（记录列文案, 是否算「库不存在」）—— 只用配置里的缓存，不碰数据库"""
+            if not os.path.isfile(r["db"]):
+                return "库不存在", True
+            if r.get("files"):
+                return f"有效 {r.get('active', 0)} / 共 {r['files']}", False
+            return "读取中…", False
+
+        def alive():
+            try:
+                return bool(win.winfo_exists())
+            except Exception:
+                return False
+
+        def poll_stats(gen, box):
+            """主线程取后台结果回填；取空队列后 100ms 再来看一眼"""
+            while box:
+                item = box.popleft()
+                if item is None:                     # 本轮结束
+                    return
+                if stat_state["gen"] != gen:         # 已被新一轮刷新取代
+                    return
+                path, db_path, st = item
+                if st is None:
+                    missing = not os.path.isfile(db_path)
+                    set_count(path, "库不存在" if missing else "库读取失败",
+                              gone=missing)
+                else:
+                    set_count(path, f"有效 {st[1]} / 共 {st[0]}")
+            if not alive():
+                return
+            try:
+                win.after(100, lambda: poll_stats(gen, box))
+            except Exception:
+                pass
+
+        def stat_worker(rows, gen, box):
+            """后台线程：逐库取真实统计（命中签名缓存秒回）；只塞队列，不碰界面"""
+            for r in rows:
+                if stat_state["gen"] != gen:
+                    break
+                st = db_counts(r["db"], use_cache=True)
+                if stat_state["gen"] != gen:
+                    break
+                box.append((r["path"], r["db"], st))
+            box.append(None)
+
+        def refresh():
+            stat_state["gen"] += 1
+            gen = stat_state["gen"]
+            tv.delete(*tv.get_children())
+            todo = []
+            for r in roots_now():
+                count, gone = cached_count(r)
+                tv.insert("", tk.END, iid=r["path"], values=row_values(r, count),
+                          tags=("gone",) if gone else ())
+                if not gone:
+                    todo.append(r)
+            if not todo:
+                return
+            box = deque()
+            threading.Thread(target=stat_worker, args=(todo, gen, box),
+                             daemon=True).start()
+            win.after(100, lambda: poll_stats(gen, box))
 
         def add_folder():
             p = filedialog.askdirectory(title="选择要纳入管理的扫描目录",
