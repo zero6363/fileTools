@@ -3185,6 +3185,7 @@ def build_hash_tab(parent, app=None):
 
     _widen_time_cols()
     setup_tree_columns(tree, "hashscan.main")
+    ttk.attach_tree_hover(tree)     # 列宽不够显示成 … 的格子，悬停看全文
 
     # 列表下方：左侧分类筛选（全部 / 新增 / 更新 / 删除 / 已计算 / 未计算），右侧分页
     filter_bar = ui.Frame(tree_frame)
@@ -5087,6 +5088,7 @@ def build_hash_tab(parent, app=None):
         vsb.grid(row=0, column=1, sticky="ns")
         add_table_hscroll(tv, frame, row=1, column=0)
         setup_tree_columns(tv, "hashscan.dup")
+        ttk.attach_tree_hover(tv)   # 重复组 / 相对路径列悬停看全文
         tv.tag_configure("group", background=COLOR["surface_alt"])
         tv.tag_configure("child", foreground=COLOR["text"])
 
@@ -5339,6 +5341,8 @@ def build_hash_tab(parent, app=None):
         add_table_hscroll(rtv, frame, row=1, column=2)
         setup_tree_columns(ltv, "hashscan.mirror.left")
         setup_tree_columns(rtv, "hashscan.mirror.right")
+        for _t in (ltv, mtv, rtv):
+            ttk.attach_tree_hover(_t)   # 相对路径列悬停看全文
 
         trees = (ltv, mtv, rtv)
 
@@ -5967,6 +5971,7 @@ def build_hash_tab(parent, app=None):
         tv.configure(xscrollcommand=hsb.set)
         hsb.grid(row=1, column=0, sticky="ew")
         setup_tree_columns(tv, "hashscan.verify")
+        ttk.attach_tree_hover(tv)
         tv.tag_configure("changed", foreground=COLOR["error"])
         tv.tag_configure("gone", foreground=COLOR["warning"])
         tv.tag_configure("bad", foreground=COLOR["error"])
@@ -6432,6 +6437,7 @@ def build_hash_tab(parent, app=None):
         tv.configure(xscrollcommand=hsb2.set)
         hsb2.grid(row=1, column=0, sticky="ew")
         setup_tree_columns(tv, "hashscan.manager")
+        ttk.attach_tree_hover(tv)
         tv.tag_configure("gone", foreground=COLOR["error"])
 
         bar = ui.Frame(win)
@@ -6700,6 +6706,7 @@ def build_hash_tab(parent, app=None):
             htv.configure(xscrollcommand=hsb.set)
             hsb.grid(row=1, column=0, sticky="ew")
             setup_tree_columns(htv, "hashscan.history")
+            ttk.attach_tree_hover(htv)
             htv.tag_configure("aborted", foreground=COLOR["warning"])
             htv.tag_configure("error", foreground=COLOR["error"])
             htv.tag_configure("partial", foreground=COLOR["warning"])

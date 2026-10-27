@@ -1744,6 +1744,7 @@ def build_encode_tab(parent, app=None):
         tree.heading(key, text=title)
         tree.column(key, width=width, minwidth=COLS_MIN.get(key, 60),
                     stretch=(key in ("name", "status")))
+    ttk.attach_tree_hover(tree)     # 文件名 / 状态列悬停看全文
     vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
     tree.configure(yscrollcommand=vsb.set)
     tree.grid(row=0, column=0, sticky="nsew")

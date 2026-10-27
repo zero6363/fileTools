@@ -768,6 +768,7 @@ def build_compress_tab(parent, app=None):
     vsb.grid(row=0, column=1, sticky="ns")
     add_table_hscroll(tree, tree_frame, row=1, column=0)
     setup_tree_columns(tree, "compress.main")
+    ttk.attach_tree_hover(tree)     # 路径列悬停看全文
     tree.tag_configure("done", foreground=COLOR["success"])
     tree.tag_configure("fail", foreground=COLOR["error"])
 

@@ -1056,6 +1056,184 @@ Notebook = ttk.Notebook
 Progressbar = ProgressBar          # 旧代码 bar_all = ttk.Progressbar(...)
 Scale = Slider                     # 旧代码 ttk.Scale(from_=.., to=..)
 
+# ============================================================
+# Treeview 悬停提示：单元格被列宽截断（显示成 …）时，停留片刻弹出完整内容
+# ============================================================
+class _TreeTip:
+    """挂在单个 Treeview 上的悬停提示。
+
+    - 只在「内容放不下当前列宽、被截断成 …」时才弹，正常浏览不受干扰；
+    - 显示鼠标所指那一格的完整内容（路径列最有用）；
+    - 换格 / 离开 / 按下 / 滚动立即消失，拖选时永不弹出。
+    """
+
+    def __init__(self, tree, delay=550, font=None):
+        self.tree = tree
+        self.delay = delay
+        # theme.ttk_font 给的是 (family, -px) 描述元组，量宽要包成 tkfont.Font
+        self.font = font if hasattr(font, "measure") else tkfont.Font(
+            root=tree, font=font or ttk_font("table"))
+        self._after = None
+        self._tip = None
+        self._at = None            # 当前悬停的 (row, col)
+        self._pressed = False
+        tree.bind("<Motion>", self._motion, add="+")
+        tree.bind("<ButtonPress-1>", self._press, add="+")
+        tree.bind("<ButtonRelease-1>", self._release, add="+")
+        tree.bind("<Leave>", self._hide, add="+")
+        tree.bind("<MouseWheel>", self._hide, add="+")
+        tree.bind("<Button-2>", self._hide, add="+")
+        tree.bind("<Button-3>", self._hide, add="+")
+        tree.bind("<Destroy>", self._on_destroy, add="+")
+
+    # ---- 单元格文本 ----
+    def _resolve(self, col):
+        """displaycolumns 重排 / 省略时，#N 指「第 N 个显示的列」，
+        不一定等于 values 的第 N 项 —— 换算成 (真实列名, values 下标)。"""
+        if col == "#0":
+            return "#0", 0
+        try:
+            n = int(col[1:]) - 1
+        except ValueError:
+            return None, -1
+        cols = list(self.tree["columns"])
+        disp = self.tree["displaycolumns"]
+        if isinstance(disp, str) or not disp or "#all" in disp:
+            order = cols
+        else:
+            order = list(disp)
+        try:
+            key = order[n]
+        except IndexError:
+            return None, -1
+        try:
+            return key, cols.index(key)
+        except ValueError:
+            return key, n
+
+    def _cell(self, row, col):
+        key, idx = self._resolve(col)
+        if key is None:
+            return ""
+        try:
+            if key == "#0":
+                return str(self.tree.item(row, "text") or "")
+            vals = self.tree.item(row, "values")
+        except Exception:
+            return ""
+        return str(vals[idx]) if 0 <= idx < len(vals) else ""
+
+    def _clipped(self, row, col, text):
+        """按列宽粗估是否被截断。ttk 单元格左右各留内边距，
+        再给足余量，避免「其实放得下」也弹。"""
+        key = self._resolve(col)[0] or col
+        try:
+            avail = int(float(self.tree.column(key, "width"))) - 22
+        except Exception:
+            return False
+        if avail <= 0:
+            return True
+        if col == "#0":            # 树列按层级缩进
+            p = self.tree.parent(row)
+            while p:
+                avail -= 20
+                p = self.tree.parent(p)
+        return self.font.measure(text) > avail
+
+    # ---- 事件 ----
+    def _press(self, _e=None):
+        self._pressed = True
+        self._hide()
+
+    def _release(self, _e=None):
+        self._pressed = False
+
+    def _hide(self, _e=None):
+        self._at = None
+        self._hide_now()
+
+    def _hide_now(self):
+        if self._after is not None:
+            try:
+                self.tree.after_cancel(self._after)
+            except Exception:
+                pass
+            self._after = None
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except Exception:
+                pass
+            self._tip = None
+
+    def _on_destroy(self, _e=None):
+        self._pressed = True       # 控件销毁过程中不再弹
+        self._hide_now()
+
+    def _motion(self, event):
+        if self._pressed:
+            self._hide()
+            return
+        try:
+            row = self.tree.identify_row(event.y)
+            col = self.tree.identify_column(event.x)
+        except Exception:
+            return
+        if not row or not col:
+            self._hide()
+            return
+        at = (row, col)
+        if at == self._at:
+            return                 # 还停在同一格
+        self._at = at
+        self._hide_now()
+        try:
+            text = self._cell(row, col)
+        except Exception:
+            return
+        if not text or not self._clipped(row, col, text):
+            return
+        self._after = self.tree.after(
+            self.delay, lambda: self._show(row, col, text))
+
+    # ---- 弹出 ----
+    def _show(self, row, col, text):
+        self._after = None
+        if self._at != (row, col) or self._pressed:
+            return
+        tip = tk.Toplevel(self.tree)
+        try:
+            tip.wm_overrideredirect(True)
+            tip.wm_attributes("-topmost", True)
+        except Exception:
+            pass
+        scr_w = tip.winfo_screenwidth()
+        scr_h = tip.winfo_screenheight()
+        text_w = self.font.measure(text) + 24
+        lbl = tk.Label(
+            tip, text=text, justify="left",
+            font=self.font, padx=8, pady=4,
+            bg=COLOR["surface_bright"], fg=COLOR["text"],
+            highlightthickness=1, highlightbackground="#9E9E9E",
+            wraplength=min(text_w, max(240, int(scr_w * 0.6))))
+        lbl.pack()
+        tip.update_idletasks()
+        w, h = tip.winfo_reqwidth(), tip.winfo_reqheight()
+        # 光标右下方；贴屏幕边时往回挪
+        x = self.tree.winfo_pointerx() + 14
+        y = self.tree.winfo_pointery() + 20
+        x = max(0, min(x, scr_w - w - 6))
+        y = max(0, min(y, scr_h - h - 6))
+        tip.wm_geometry(f"+{x}+{y}")
+        self._tip = tip
+
+
+def attach_tree_hover(tree, delay=550, font=None):
+    """给 Treeview 打开「悬停看全文」：某格被列宽截成 … 时，停留片刻
+    弹出该格完整内容。事件绑定挂在 tree 上，返回的实例交给 GC 即可。"""
+    return _TreeTip(tree, delay=delay, font=font)
+
+
 # 供入口创建根窗口
 CTk = ctk.CTk
 
@@ -1066,4 +1244,5 @@ __all__ = [
     "center_window", "virtual_screen_bounds", "monitor_work_area",
     "monitor_work_areas", "set_geometry_px", "dialog_size",
     "Treeview", "Style", "Separator", "Notebook", "init_appearance", "ctk",
+    "attach_tree_hover",
 ]

@@ -243,6 +243,7 @@ def build_rename_tab(parent):
     v_scroll_old.grid(row=0, column=1, sticky="ns")
     h_scroll_old.grid(row=1, column=0, sticky="ew")
     setup_tree_columns(tree_old, "rename.addpath.old")
+    ttk.attach_tree_hover(tree_old)
 
     right_frame = ui.Frame(table_frame)
     right_frame.grid(row=0, column=1, sticky="nsew", padx=2)
@@ -259,6 +260,7 @@ def build_rename_tab(parent):
     v_scroll_new.grid(row=0, column=1, sticky="ns")
     h_scroll_new.grid(row=1, column=0, sticky="ew")
     setup_tree_columns(tree_new, "rename.addpath.new")
+    ttk.attach_tree_hover(tree_new)
 
     def sync_y_old(*args):
         tree_new.yview_moveto(args[0])
@@ -480,6 +482,7 @@ def build_seq_rename_tab(parent, app=None):
     v_scroll.grid(row=0, column=1, sticky="ns")
     h_scroll.grid(row=1, column=0, sticky="ew")
     setup_tree_columns(tree, "rename.seq.preview")
+    ttk.attach_tree_hover(tree)
 
     label_preview = ui.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
@@ -689,6 +692,7 @@ def build_trim_tab(parent, app=None):
     v_scroll.grid(row=0, column=1, sticky="ns")
     h_scroll.grid(row=1, column=0, sticky="ew")
     setup_tree_columns(tree, "rename.trim.preview")
+    ttk.attach_tree_hover(tree)
 
     label_preview = ui.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
