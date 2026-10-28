@@ -98,7 +98,7 @@ from . import config
 from .common import (add_table_hscroll, clean_path, clear_log, form_label,
                      load_done_sound, make_form, make_logger, make_tip,
                      paste_path_to, play_done_sound, save_done_sound,
-                     setup_tree_columns)
+                     setup_tree_columns, ScrollPage)
 from .theme import COLOR
 
 DB_NAME = "filehash.db"
@@ -3256,9 +3256,21 @@ COLS = [("chk", "选", 32, 30, False),
 COLS_SINGLE = ("chk", "rel", "size", "mtime", "last", "sha", "status")
 COLS_MULTI = ("chk", "root", "rel", "size", "mtime", "last", "sha", "status")
 
+# 表格至少显示多少行：整页可上下滚动，所以这是个「下限」而不是上限 ——
+# 窗口够高时表格行有 weight，会自动占满剩余空间。
+TABLE_MIN_ROWS = 10
+
 
 def build_hash_tab(parent, app=None):
     """⑲ 硬盘哈希扫描：选根目录 → 五种模式（含随机抽查）→ 差异多选写回 → 搜路径/哈希"""
+    # 整页竖向滚动：顶部表单 + 进度 + 搜索栏占掉的高度不会再从表格里扣。
+    # 表格行数固定（下面 Treeview 的 height），窗口够高时它仍会撑满整页。
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(0, weight=1)
+    page = ScrollPage(parent)
+    page.grid(row=0, column=0, sticky="nsew")
+    parent = page.body
+
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(4, weight=1)
 
@@ -3509,7 +3521,8 @@ def build_hash_tab(parent, app=None):
     lbl_hint.pack(side=tk.LEFT, padx=(12, 0))
 
     tree = ttk.Treeview(tree_frame, columns=[c[0] for c in COLS], show="headings",
-                        selectmode="extended", displaycolumns=COLS_SINGLE)
+                        selectmode="extended", displaycolumns=COLS_SINGLE,
+                        height=TABLE_MIN_ROWS)
     for key, title, width, minwidth, stretch in COLS:
         tree.heading(key, text=title,
                      anchor="center" if key == "chk" else "w")
@@ -3661,6 +3674,7 @@ def build_hash_tab(parent, app=None):
             log_body.grid()
             btn_log_toggle.config(text="▾ 运行日志")
             var_log_open.set(True)
+        page.refresh()          # 日志展开后页面更高，滚动区要重新算
 
     btn_log_toggle.config(command=toggle_log)
     log_body.grid_remove()

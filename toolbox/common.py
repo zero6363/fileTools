@@ -16,7 +16,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ttk_font, ui_scale
 
-APP_VERSION = "1.65"
+APP_VERSION = "1.66"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -958,6 +958,161 @@ def add_table_hscroll(tree, parent, row, column=0, columnspan=1):
     tree.after(150, _sync)
     tree.after(600, _sync)
     return hsb
+
+
+def _page_contains(ancestor, widget):
+    """widget 是否在 ancestor 里（walk master 链；CTk 复合控件也适用）"""
+    cur = widget
+    while cur is not None:
+        if cur is ancestor:
+            return True
+        try:
+            cur = cur.master
+        except Exception:
+            return False
+    return False
+
+
+def _self_scrolls(widget):
+    """自己吃滚轮、不该被页面抢走的控件：表格 / 文本框 / 列表。"""
+    try:
+        if isinstance(widget, (ttk.Treeview, tk.Text, tk.Listbox)):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+class ScrollPage(tk.Frame):
+    """整页竖向滚动容器：内容放 `.body`，表格给固定行数，窗口再矮也看得见。
+
+    为什么需要它：⑲ 这类页面顶部有一堆表单 + 进度 + 搜索栏，窗口一矮，
+    带 weight 的表格行就被压成一条缝（表格越小越看不见，越看不见越不敢用）。
+
+    高度策略：
+      · 内容自然高度 ≥ 可视高度 → 内容按自然高度摆放，右侧出滚动条，整页上下滚；
+      · 内容更矮 → 把内容拉到可视高度，带 weight 的行（表格）因此撑满，底部不留白。
+
+    用法：
+        page = ScrollPage(parent)
+        page.pack(fill="both", expand=True)      # 或 page.grid(...)
+        body = page.body                          # 之后所有控件都放进 body
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_rowconfigure(4, weight=1)
+        ...
+        page.refresh()          # 内容高度可能变了（展开日志 / 提示折行）时叫一次
+
+    滚轮：指针在本页内、且不在表格 / 文本框上时滚页面（那些控件自己滚）。
+    """
+
+    def __init__(self, master=None, bg=None, **kw):
+        bg = bg or COLOR["bg"]
+        super().__init__(master, bg=bg, highlightthickness=0, bd=0, **kw)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0,
+                                takefocus=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.bar = ttk.Scrollbar(self, orient=tk.VERTICAL,
+                                 command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.bar.set)
+        self._bar_shown = False
+        self._item_h = -1
+        self._need = -1
+        self._job = None
+        self._watch = None
+
+        self.body = ui.Frame(self.canvas, fg_color=bg, corner_radius=0)
+        self._win = self.canvas.create_window(0, 0, window=self.body,
+                                              anchor="nw")
+        self.canvas.bind("<Configure>", lambda _e: self.schedule(), add="+")
+        self.body.bind("<Configure>", lambda _e: self.schedule(), add="+")
+        self.bind_all("<MouseWheel>", self._on_wheel, add="+")
+        self._tick()
+
+    # ---------------- 滚轮 ----------------
+    def _on_wheel(self, event):
+        try:
+            if not self._bar_shown or not self.winfo_exists():
+                return
+            widget = event.widget
+            if _self_scrolls(widget) or not _page_contains(self, widget):
+                return
+            self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        except Exception:
+            pass
+
+    # ---------------- 布局 ----------------
+    def refresh(self):
+        """内容高度变化后叫一次（展开日志、提示文字折行等）。"""
+        self.schedule()
+
+    def schedule(self):
+        if self._job is not None:
+            return
+        try:
+            self._job = self.after(16, self._layout)
+        except Exception:
+            self._job = None
+
+    def _layout(self):
+        self._job = None
+        try:
+            if not self.canvas.winfo_exists():
+                return
+            cw = self.canvas.winfo_width()
+            ch = self.canvas.winfo_height()
+            if cw <= 1 or ch <= 1:            # 还没 map，等 <Configure>
+                return
+            need = self.body.winfo_reqheight()
+            self._need = need
+            show = need > ch + 1
+            if show != self._bar_shown:
+                self._bar_shown = show
+                if show:
+                    self.bar.grid(row=0, column=1, sticky="ns")
+                else:
+                    self.bar.grid_remove()
+                    self.canvas.yview_moveto(0)
+                # 滚动条占不占宽会改变正文宽度，宽度变了要再对一次
+                self.schedule()
+                return
+            want = max(need, ch)
+            if want != self._item_h:
+                self._item_h = want
+                self.canvas.itemconfigure(self._win, width=cw, height=want)
+            else:
+                self.canvas.itemconfigure(self._win, width=cw)
+            self.canvas.configure(scrollregion=(0, 0, cw, want))
+        except Exception:
+            pass
+
+    def _tick(self):
+        """每 500ms 对一次内容高度。
+
+        文字折行、展开日志这类变化不会触发 <Configure>（容器高度由画布
+        固定），靠这个廉价轮询兜住，免得页面底部被悄悄裁掉。
+        """
+        try:
+            if not self.winfo_exists():
+                self._watch = None
+                return
+            if self.body.winfo_reqheight() != self._need:
+                self.schedule()
+            self._watch = self.after(500, self._tick)
+        except Exception:
+            self._watch = None
+
+    def destroy(self):
+        for job in (self._job, self._watch):
+            if job:
+                try:
+                    self.after_cancel(job)
+                except Exception:
+                    pass
+        self._job = self._watch = None
+        super().destroy()
 
 
 def _module_available(name):
