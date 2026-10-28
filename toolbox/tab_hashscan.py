@@ -1708,16 +1708,22 @@ class Scanner:
         return len(rows)
 
     def _list_missing(self, db):
-        """只读模式：列出缺失清单，一个字节也不往主库写"""
-        rows = self._missing_rows(db, "rel_path, sha256, file_size, mtime")
+        """只读模式：列出缺失清单，一个字节也不往主库写。
+
+        大小 / 修改时间 / 上次校验一律取库里的原值，与可写模式
+        `_mark_missing` 显示的一致。文件已经不在了，这三项是判断
+        「消失的是哪个版本」的唯一线索，不能空着。
+        """
+        rows = self._missing_rows(
+            db, "rel_path, sha256, file_size, mtime, last_hash_time")
         tag = MODE_NAMES.get(self.mode, "只读")
-        for rp, _sha, _size, _mt in rows[:200]:
+        for rp, _sha, _size, _mt, _last in rows[:200]:
             self._log(f"[{tag}·缺失] {rp}")
         if len(rows) > 200:
             self._log(f"[{tag}·缺失] …… 另有 {len(rows) - 200} 条")
-        for rp, sha, _size, _mt in rows:
-            self._add_diff("缺失", self._display_rel(rp), rp, None, None,
-                           old_sha=sha, hash_state="—")
+        for rp, sha, fsize, fmtime, flast in rows:
+            self._add_diff("缺失", self._display_rel(rp), rp, fsize, fmtime,
+                           old_sha=sha, old_last=flast, hash_state="—")
         return len(rows)
 
 
