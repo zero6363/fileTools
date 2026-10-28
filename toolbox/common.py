@@ -16,7 +16,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ttk_font, ui_scale
 
-APP_VERSION = "1.67"
+APP_VERSION = "1.68"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -199,6 +199,166 @@ def run_task(btn, log, work, on_done=None):
 
     btn.config(state=tk.DISABLED)
     threading.Thread(target=worker, daemon=True).start()
+
+
+class BgJob:
+    """把「读文件 / 读库 / 遍历目录」这类慢活挪到后台线程，主线程始终能响应。
+
+    用法：
+        job = BgJob(parent, work, on_item=..., on_done=..., on_error=...)
+        job.start()
+
+    work(job) 在后台线程里跑；里面调 job.report(x) 把中间结果交给主线程，
+    最后 return 的结果作为 on_done(result) 的参数。on_item / on_done /
+    on_error 一律在**主线程**执行，所以回调里可以随便碰 Tk。
+
+    三个设计要点（都是踩过的坑）：
+      · 主线程每 tick 只处理 max_per_tick 条 —— 一次灌 5000 条插表格照样会卡；
+      · 代际号（gen）：同一位置连续启动多个任务时，旧任务的结果自动丢弃，
+        不会在用户已经换了目录之后把旧数据填回去；
+      · cancel() 只是置个标记，work 里要自己看 job.cancelled 决定何时退出。
+    """
+
+    def __init__(self, widget, work, on_item=None, on_done=None, on_error=None,
+                 interval=60, max_per_tick=200, log=None):
+        self.widget = widget
+        self.work = work
+        self.on_item = on_item
+        self.on_done = on_done
+        self.on_error = on_error
+        self.interval = max(10, int(interval))
+        self.max_per_tick = max(1, int(max_per_tick))
+        self.log = log or (lambda *_: None)
+        self.q = queue.Queue()
+        self.cancel_event = threading.Event()
+        self.gen = 0
+        self._thread = None
+        self._done = False
+        self._result = None
+        self._error = None
+        self._after_id = None
+
+    # ---- 前台侧 -------------------------------------------------
+    @property
+    def cancelled(self):
+        return self.cancel_event.is_set()
+
+    def report(self, item):
+        """后台线程专用：把一个中间结果交给主线程（线程安全）"""
+        self.q.put(item)
+
+    def start(self):
+        self.gen = BgJob._next_gen()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        self._schedule()
+        return self.gen
+
+    def cancel(self):
+        self.cancel_event.set()
+
+    def alive(self):
+        return not self.cancel_event.is_set() and not self._done
+
+    _GEN = 0
+    _GEN_LOCK = threading.Lock()
+
+    @classmethod
+    def _next_gen(cls):
+        with cls._GEN_LOCK:
+            cls._GEN += 1
+            return cls._GEN
+
+    # ---- 后台侧 -------------------------------------------------
+    def _run(self):
+        try:
+            self._result = self.work(self)
+        except Exception as e:                       # 异常一律带回主线程
+            self._error = e
+        finally:
+            self._done = True
+
+    # ---- 主线程轮询 ---------------------------------------------
+    def _schedule(self):
+        try:
+            self._after_id = self.widget.after(self.interval, self._poll)
+        except Exception:
+            self._after_id = None
+
+    def _poll(self):
+        self._after_id = None
+        try:
+            if not self.widget.winfo_exists():
+                return
+        except Exception:
+            return
+        if self.cancel_event.is_set():
+            return                       # 已作废：不再往界面里塞东西
+        # 一段时间内最多处理 max_per_tick 条，剩下的下一 tick 继续，
+        # 这样「5000 个文件」也不会把一次事件循环占满。
+        n = 0
+        try:
+            while n < self.max_per_tick:
+                item = self.q.get_nowait()
+                n += 1
+                if self.on_item is not None:
+                    try:
+                        self.on_item(item)
+                    except Exception:
+                        self.log("后台任务回调出错：\n" + traceback.format_exc())
+        except queue.Empty:
+            pass
+        finished = self._done and self.q.empty()
+        if finished:
+            if self._error is not None:
+                if self.on_error is not None:
+                    try:
+                        self.on_error(self._error)
+                    except Exception:
+                        self.log("后台任务出错回调异常：\n" + traceback.format_exc())
+                else:
+                    self.log("后台任务出错：\n"
+                             + "".join(traceback.format_exception(
+                                 type(self._error), self._error,
+                                 self._error.__traceback__)))
+            elif self.on_done is not None:
+                try:
+                    self.on_done(self._result)
+                except Exception:
+                    self.log("后台任务完成回调出错：\n" + traceback.format_exc())
+            return
+        self._schedule()
+
+
+def fill_listbox(listbox, items, on_done=None, chunk=400):
+    """分块填充 Listbox：一次插 400 行，几万项也不会让窗口白屏几十秒。
+
+    分块期间列表要能被再次清空/重填，所以每个 Listbox 自带一个代际号，
+    新的一轮 fill 会让上一轮剩下的分块自动作废。
+    """
+    gen = getattr(listbox, "_fill_gen", 0) + 1
+    listbox._fill_gen = gen
+    listbox.delete(0, tk.END)
+    total = len(items)
+
+    def push(start):
+        if getattr(listbox, "_fill_gen", 0) != gen:
+            return                       # 期间又刷新过一次，这批作废
+        end = min(start + chunk, total)
+        if end > start:
+            try:
+                listbox.insert(tk.END, *items[start:end])
+            except tk.TclError:
+                return
+        if end < total:
+            try:
+                listbox.after(1, lambda: push(end))
+            except tk.TclError:
+                pass
+        elif on_done is not None:
+            on_done()
+
+    push(0)
 
 
 def clear_log(text_widget):

@@ -33,7 +33,7 @@ from . import ui, ui as ttk
 from .theme import FONTS
 
 from . import config
-from .common import (add_table_hscroll, clean_path, clear_log,
+from .common import (BgJob, add_table_hscroll, clean_path, clear_log,
                      get_unique_path, load_done_sound, make_logger,
                      make_num_box, natural_key, paste_path_to,
                      play_done_sound, save_done_sound, setup_tree_columns)
@@ -1830,31 +1830,43 @@ def build_encode_tab(parent, app=None):
         lbl_count.config(text=f"共 {len(state['items'])} 个文件")
 
     def add_paths(paths):
-        files = collect_videos(paths)
-        if not files:
-            log("没有找到支持的视频文件（" + " ".join(VIDEO_EXTS) + "）")
+        paths = [p for p in (paths or []) if p]
+        if not paths:
             return
-        for f in files:
-            if any(it["path"].lower() == f.lower() for it in state["items"].values()):
-                continue
-            state["seq"] += 1
-            iid = f"v{state['seq']}"
-            state["items"][iid] = {
-                "path": f,
-                "info": None,
-                "plan": None,
-                "cells": {"name": os.path.basename(f), "dur": "…", "res": "…",
-                          "fps": "…", "codec": "…", "sub": "…", "status": "读取信息…"},
-            }
-            tree.insert("", tk.END, iid=iid, values=item_cells(state["items"][iid]))
-            queue_probe(iid)
-        refresh_count()
-        log(f"已添加 {len(files)} 个视频，正在后台读取信息…")
-        in_arch = [f for f in files if in_archive_dir(os.path.dirname(f))]
-        if in_arch:
-            log(f"注意：其中 {len(in_arch)} 个文件在 success/ 或 error/ 归档目录里，"
-                f"会就地处理：输出写到同一目录，成功后再归到该目录下的 success/，"
-                f"失败留在 error/（不会再套 error/error）。")
+
+        def apply(files):
+            if not files:
+                log("没有找到支持的视频文件（" + " ".join(VIDEO_EXTS) + "）")
+                return
+            for f in files:
+                if any(it["path"].lower() == f.lower() for it in state["items"].values()):
+                    continue
+                state["seq"] += 1
+                iid = f"v{state['seq']}"
+                state["items"][iid] = {
+                    "path": f,
+                    "info": None,
+                    "plan": None,
+                    "cells": {"name": os.path.basename(f), "dur": "…", "res": "…",
+                              "fps": "…", "codec": "…", "sub": "…", "status": "读取信息…"},
+                }
+                tree.insert("", tk.END, iid=iid, values=item_cells(state["items"][iid]))
+                queue_probe(iid)
+            refresh_count()
+            log(f"已添加 {len(files)} 个视频，正在后台读取信息…")
+            in_arch = [f for f in files if in_archive_dir(os.path.dirname(f))]
+            if in_arch:
+                log(f"注意：其中 {len(in_arch)} 个文件在 success/ 或 error/ 归档目录里，"
+                    f"会就地处理：输出写到同一目录，成功后再归到该目录下的 success/，"
+                    f"失败留在 error/（不会再套 error/error）。")
+
+        # 目录遍历放到后台：拖入一个装满素材的盘要扫几十秒，主线程做就白屏
+        log("正在读取文件夹…")
+        BgJob(parent,
+              work=lambda j: collect_videos(paths),
+              on_done=apply,
+              on_error=lambda exc: log(f"读取文件夹失败：{exc}"),
+              interval=40).start()
 
     def remove_selected():
         for iid in tree.selection():

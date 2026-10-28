@@ -15,9 +15,10 @@ from . import ui, ui as ttk
 from .theme import FONTS
 
 from . import config
-from .common import (APP_TITLE, _module_available, add_table_hscroll,
+from .common import (APP_TITLE, BgJob, _module_available, add_table_hscroll,
                      app_data_roots, clean_path, clear_log, make_log_panel,
-                     make_tip, paste_path_to, run_task, setup_tree_columns)
+                     make_tip, natural_key, paste_path_to, run_task,
+                     setup_tree_columns)
 from .theme import COLOR
 
 
@@ -136,9 +137,21 @@ _STD_LUMA = [
 
 
 def _ijg_table(q):
-    """根据 IJG 算法生成质量 q 对应的亮度量化表"""
+    """根据 IJG 算法生成质量 q 对应的亮度量化表
+
+    结果只有 100 种，缓存起来：以前每估一张图都要重算 100 个表
+    （3000 张 = 30 万次表构造），光这一步就占导入耗时的六成。
+    """
+    cached = _IJG_CACHE.get(q)
+    if cached is not None:
+        return cached
     s = 5000 // q if q < 50 else 200 - 2 * q
-    return [max(1, min(255, (v * s + 50) // 100)) for v in _STD_LUMA]
+    table = [max(1, min(255, (v * s + 50) // 100)) for v in _STD_LUMA]
+    _IJG_CACHE[q] = table
+    return table
+
+
+_IJG_CACHE = {}
 
 
 def estimate_jpeg_quality(path):
@@ -191,12 +204,17 @@ def estimate_jpeg_quality(path):
     if not tables:
         return None
     t = tables[0]  # 取亮度表
-    best_q, best_d = 1, float("inf")
+    best_q, best_d = 1, None
     for q in range(1, 101):
         ref = _ijg_table(q)
-        d = sum((ref[k] - t[k]) ** 2 for k in range(64))
-        if d < best_d:
+        d = 0
+        for a, b in zip(ref, t):
+            diff = a - b
+            d += diff * diff
+        if best_d is None or d < best_d:
             best_d, best_q = d, q
+            if d == 0:                 # 完全吻合，后面不用再比了
+                break
     return best_q
 
 
@@ -212,17 +230,60 @@ def human_size(n):
 
 
 def collect_compress_images(path):
-    """递归收集单个文件或文件夹下所有图片路径"""
-    result = []
+    """递归收集单个文件或文件夹下所有图片路径（同步版；界面导入走 iter_compress_files）"""
+    return list(iter_compress_files(path))
+
+
+def iter_compress_files(path):
+    """逐个产出图片路径（生成器），子目录先按名称自然排序再进。
+
+    做成生成器是为了让后台线程边遍历边交结果：几千张图的目录不必先攒齐
+    一个大列表再交给界面，第一批可以立刻显示出来。
+    """
     if os.path.isfile(path):
         if os.path.splitext(path)[1].lower() in COMPRESS_IMAGE_EXTS:
-            result.append(path)
-    elif os.path.isdir(path):
-        for root, _dirs, files in os.walk(path):
-            for f in files:
-                if os.path.splitext(f)[1].lower() in COMPRESS_IMAGE_EXTS:
-                    result.append(os.path.join(root, f))
-    return result
+            yield path
+        return
+    if not os.path.isdir(path):
+        return
+    stack = [path]
+    while stack:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                entries = list(it)
+        except OSError:
+            continue
+        files, subdirs = [], []
+        for e in entries:
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    subdirs.append(e.path)
+                elif os.path.splitext(e.name)[1].lower() in COMPRESS_IMAGE_EXTS:
+                    files.append(e.path)
+            except OSError:
+                continue
+        for f in sorted(files, key=natural_key):
+            yield f
+        for d in sorted(subdirs, key=natural_key, reverse=True):
+            stack.append(d)
+
+
+_JPEQ_EXTS = (".jpg", ".jpeg", ".jpe", ".jfif")
+
+
+def image_entry(fp):
+    """读一张图加进列表所需的信息：(路径, 字节数, 估算质量)。
+    只读文件头 64KB + stat，**必须在后台线程调用**（几千张卡的就是这里）。"""
+    try:
+        size = os.path.getsize(fp)
+    except OSError:
+        return None
+    q = None
+    if fp.lower().endswith(_JPEQ_EXTS):
+        # 只有 JPEG 才有 DQT 量化表可估；PNG/WebP 去读一遍纯属浪费 IO
+        q = estimate_jpeg_quality(fp)
+    return fp, size, q
 
 
 def _retry_read(func, src, attempts=3, delay=0.3):
@@ -810,25 +871,92 @@ def build_compress_tab(parent, app=None):
         return {tree.set(i, 'path') for i in tree.get_children()}
 
     def add_paths(paths):
-        added = 0
+        """把拖入 / 选择到的路径加进列表。
+
+        展开文件夹、stat、读 JPEG 量化表全是磁盘 IO：几千张图放在主线程做，
+        窗口就整块白掉、点哪都没反应。这里全部交给后台线程，主线程只负责
+        把结果一批批插进表格 —— 导入期间窗口照样能拖动、能点按钮。
+        """
+        paths = [p for p in (paths or []) if p]
+        if not paths:
+            return
+        if state.get("import_job") is not None:
+            # 正在导入：先排队，等当前这批结束自动接着导，不打断也不丢
+            state.setdefault("import_queue", []).extend(paths)
+            set_status(f"正在导入…（另有 {len(state['import_queue'])} 项排队）")
+            return
+
         existing = existing_paths()
+        counter = {"n": 0, "bytes": 0}
+        job = BgJob(
+            parent,
+            work=lambda j: _import_worker(j, paths, existing),
+            on_item=lambda batch: _import_batch(batch, counter),
+            on_done=lambda added: _import_done(added, counter),
+            on_error=lambda exc: _import_failed(exc),
+            interval=50, max_per_tick=4 * 40,      # 每 tick 最多 4 批（160 行）
+        )
+        state["import_job"] = job
+        set_status("正在读取图片信息…")
+        job.start()
+
+    def _import_worker(job, paths, existing):
+        """后台线程：展开目录 → stat + 估算质量 → 每 40 张交一批"""
+        added = 0
+        batch = []
         for p in paths:
+            if job.cancelled:
+                return added
             p = os.path.normpath(p)
-            if p in existing:
-                continue
-            try:
-                size = os.path.getsize(p)
-            except OSError:
-                continue
-            existing.add(p)
-            q = estimate_jpeg_quality(p)
-            qval = str(q) if q is not None else "-"
-            tree.insert('', 'end', values=(os.path.basename(p), p, human_size(size), qval, "-", "-"))
+            for fp in iter_compress_files(p):
+                if job.cancelled:
+                    return added
+                key = os.path.normcase(fp)
+                if key in existing:
+                    continue
+                info = image_entry(fp)
+                if info is None:
+                    continue
+                existing.add(key)
+                batch.append(info)
+                added += 1
+                if len(batch) >= 40:
+                    job.report(batch)
+                    batch = []
+        if batch:
+            job.report(batch)
+        return added
+
+    def _import_batch(batch, counter):
+        """主线程：把一批图片插进表格（不重算全表，边导边看）"""
+        added = 0
+        for fp, size, q in batch:
+            tree.insert('', 'end',
+                        values=(os.path.basename(fp), fp, human_size(size),
+                                str(q) if q is not None else "-", "-", "-"))
+            counter["n"] += 1
+            counter["bytes"] += size
             added += 1
-        update_count()
+        if added:
+            total = len(tree.get_children())
+            set_status(f"正在读取图片信息… 已添加 {total} 项，"
+                       f"合计 {human_size(counter['bytes'])}")
+
+    def _import_done(added, counter):
+        state["import_job"] = None
+        queued = state.get("import_queue") or []
+        state["import_queue"] = []
         if added:
             set_status(f"已添加 {added} 张图片")
-        return added
+        update_count()
+        if queued:
+            add_paths(queued)
+
+    def _import_failed(exc):
+        state["import_job"] = None
+        state["import_queue"] = []
+        update_count()
+        messagebox.showerror("导入出错", f"读取图片时出错：\n{exc}")
 
     def add_files_dialog():
         files = filedialog.askopenfilenames(
@@ -841,12 +969,18 @@ def build_compress_tab(parent, app=None):
     def add_folder_dialog():
         d = filedialog.askdirectory(title="选择文件夹")
         if d:
-            add_paths(collect_compress_images(d))
+            # 目录展开也放后台：几万张图的盘走一遍 os.walk 要好几十秒
+            add_paths([d])
 
     def clear_list():
         if state["compressing"]:
             messagebox.showwarning("提示", "正在压缩, 请等待完成后再操作。")
             return
+        job = state.get("import_job")
+        if job is not None:
+            job.cancel()                 # 停掉还在跑的导入，别再往表里插
+            state["import_job"] = None
+        state["import_queue"] = []
         n = len(tree.get_children())
         tree.delete(*tree.get_children())
         pbar['value'] = 0
@@ -884,6 +1018,9 @@ def build_compress_tab(parent, app=None):
 
     def start_compress():
         if state["compressing"]:
+            return
+        if state.get("import_job") is not None:
+            messagebox.showinfo("提示", "还在读取图片信息，等导入完成再开始压缩。")
             return
         items = tree.get_children()
         if not items:
@@ -986,13 +1123,10 @@ def build_compress_tab(parent, app=None):
         pbar['value'] = pbar['maximum']
 
     def on_drop(paths):
-        """拖放回调：展开文件夹中的图片并加入列表"""
+        """拖放回调：路径原样交给后台展开（这里绝不做目录遍历）"""
         if state["compressing"]:
             return
-        all_paths = []
-        for p in paths:
-            all_paths.extend(collect_compress_images(p))
-        add_paths(all_paths)
+        add_paths(list(paths))
 
     update_count()
     if app is not None:

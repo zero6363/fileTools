@@ -34,9 +34,9 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from . import ui, ui as ttk
 
-from .common import (clean_path, clear_log, form_label, form_note, make_check,
-                     make_form, make_log_panel, make_start_button, make_tip,
-                     natural_key, run_task)
+from .common import (BgJob, clean_path, clear_log, fill_listbox, form_label,
+                     form_note, make_check, make_form, make_log_panel,
+                     make_start_button, make_tip, natural_key, run_task)
 from .theme import COLOR
 
 
@@ -781,17 +781,15 @@ def build_translate_tab(parent, app=None):
 
     # ---- 功能函数 ----
     def refresh_list():
-        listbox.delete(0, tk.END)
-        for f in file_list:
-            listbox.insert(tk.END, f)
         label_count.config(text=f"共 {len(file_list)} 个文件")
+        fill_listbox(listbox, file_list)      # 分块插，几千项也不卡
 
     def _suffix_set():
         raw = var_suffix.get().strip() or DEFAULT_SUFFIXES
         return {"." + s.strip().lstrip(".").lower() for s in raw.split() if s.strip()}
 
-    def add_paths(paths):
-        exts = _suffix_set()
+    def _scan_texts(paths, exts, recursive):
+        """后台线程执行：展开文件夹、按后缀筛选（纯磁盘 IO，不碰 Tk）"""
         found = []
         for p in paths:
             p = clean_path(p)
@@ -799,11 +797,12 @@ def build_translate_tab(parent, app=None):
                 if Path(p).suffix.lower() in exts and not p.lower().endswith(".old"):
                     found.append(os.path.abspath(p))
             elif os.path.isdir(p):
-                if var_rec.get():
+                if recursive:
                     for dirpath, _dirs, names in os.walk(p):
                         for n in names:
                             fp = os.path.join(dirpath, n)
-                            if Path(fp).suffix.lower() in exts and not fp.lower().endswith(".old"):
+                            if Path(fp).suffix.lower() in exts \
+                                    and not fp.lower().endswith(".old"):
                                 found.append(os.path.abspath(fp))
                 else:
                     for n in os.listdir(p):
@@ -811,19 +810,38 @@ def build_translate_tab(parent, app=None):
                         if os.path.isfile(fp) and Path(fp).suffix.lower() in exts \
                                 and not fp.lower().endswith(".old"):
                             found.append(os.path.abspath(fp))
-        existing = set(file_list)
-        added = 0
-        for f in found:
-            if f not in existing:
-                existing.add(f)
-                file_list.append(f)
-                added += 1
-        file_list.sort(key=natural_key)
-        refresh_list()
-        if not added and paths:
-            messagebox.showinfo("提示",
-                                "未找到符合后缀的文本文件。\n"
-                                "可在上方修改后缀，或勾选『添加文件夹时遍历子目录』。")
+        return found
+
+    def add_paths(paths):
+        paths = [p for p in (paths or []) if p]
+        if not paths:
+            return
+        exts = _suffix_set()
+        recursive = bool(var_rec.get())
+
+        def apply(found):
+            existing = set(file_list)
+            added = 0
+            for f in found:
+                if f not in existing:
+                    existing.add(f)
+                    file_list.append(f)
+                    added += 1
+            file_list.sort(key=natural_key)
+            refresh_list()
+            if not added:
+                messagebox.showinfo(
+                    "提示",
+                    "未找到符合后缀的文本文件。\n"
+                    "可在上方修改后缀，或勾选『添加文件夹时遍历子目录』。")
+
+        label_count.config(text="正在读取文件夹…")
+        BgJob(parent,
+              work=lambda j: _scan_texts(paths, exts, recursive),
+              on_done=apply,
+              on_error=lambda exc: messagebox.showerror(
+                  "添加失败", f"读取文件夹时出错：\n{exc}"),
+              interval=40).start()
 
     def on_add_files():
         exts = _suffix_set()

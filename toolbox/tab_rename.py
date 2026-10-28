@@ -5,11 +5,32 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from . import ui, ui as ttk
 
-from .common import (clean_path, clear_log, make_check, make_log_panel,
-                     make_num_box, make_path_row, make_spin_row,
-                     make_start_button, make_tip, natural_key, paste_path_to,
-                     run_task, setup_tree_columns)
+from .common import (BgJob, clean_path, clear_log, fill_listbox, make_check,
+                     make_log_panel, make_num_box, make_path_row,
+                     make_spin_row, make_start_button, make_tip, natural_key,
+                     paste_path_to, run_task, setup_tree_columns)
 from .theme import COLOR
+
+
+def collect_async(parent, paths, collect, on_items, on_busy=None):
+    """后台执行 collect(paths)，完成回主线程 on_items(items)。
+
+    拖入一个几万文件的目录时，os.walk + 自然排序放在主线程要几十秒 —— 窗口
+    全白、任务管理器标「无响应」。这里只把「读目录」挪走，列表仍在主线程更新。
+    """
+    if on_busy is not None:
+        on_busy()
+
+    def done(items):
+        on_items(items or [])
+
+    def failed(exc):
+        messagebox.showerror("添加失败", f"读取文件夹时出错：\n{exc}")
+
+    job = BgJob(parent, work=lambda j: collect(paths),
+                on_done=done, on_error=failed, interval=40)
+    job.start()
+    return job
 
 
 # ⑤ 文件夹重命名 —— 原 重命名.py
@@ -504,10 +525,8 @@ def build_seq_rename_tab(parent, app=None):
         refresh_list()
 
     def refresh_list():
-        listbox.delete(0, tk.END)
-        for f in file_list:
-            listbox.insert(tk.END, f)
         label_count.config(text=f"共 {len(file_list)} 个{unit_name()}")
+        fill_listbox(listbox, file_list)      # 分块插，几千项也不卡
 
     def clear_preview():
         for item in tree.get_children():
@@ -516,22 +535,33 @@ def build_seq_rename_tab(parent, app=None):
         label_preview.config(text="")
 
     def add_paths(paths):
-        if var_dirs_only.get():
-            new_items = collect_dirs(paths)
-        else:
-            new_items = collect_files(paths, var_rec.get())
-        existing = set(file_list)
-        for f in new_items:
-            if f not in existing:
-                existing.add(f)
-                file_list.append(f)
-        file_list.sort(key=natural_key)
-        refresh_list()
-        clear_preview()
-        if not new_items and paths:
-            messagebox.showinfo("提示",
-                                f"未找到可处理的{unit_name()}。\n"
-                                f"仅文件夹模式下，请拖入/添加文件夹（收集其中的子文件夹）。")
+        paths = [p for p in (paths or []) if p]
+        if not paths:
+            return
+        dirs_only = bool(var_dirs_only.get())
+        rec = bool(var_rec.get())
+
+        def collect(ps):
+            return collect_dirs(ps) if dirs_only else collect_files(ps, rec)
+
+        def apply(new_items):
+            existing = set(file_list)
+            for f in new_items:
+                if f not in existing:
+                    existing.add(f)
+                    file_list.append(f)
+            file_list.sort(key=natural_key)
+            refresh_list()
+            clear_preview()
+            if not new_items:
+                messagebox.showinfo(
+                    "提示",
+                    f"未找到可处理的{unit_name()}。\n"
+                    f"仅文件夹模式下，请拖入/添加文件夹（收集其中的子文件夹）。")
+
+        collect_async(parent, paths, collect, apply,
+                      on_busy=lambda: label_count.config(
+                          text=f"正在读取{unit_name()}…"))
 
     def do_preview():
         clear_preview()
@@ -712,10 +742,8 @@ def build_trim_tab(parent, app=None):
         refresh_list()
 
     def refresh_list():
-        listbox.delete(0, tk.END)
-        for f in file_list:
-            listbox.insert(tk.END, f)
         label_count.config(text=f"共 {len(file_list)} 个{unit_name()}")
+        fill_listbox(listbox, file_list)      # 分块插，几千项也不卡
 
     def clear_preview():
         for item in tree.get_children():
@@ -724,22 +752,33 @@ def build_trim_tab(parent, app=None):
         label_preview.config(text="")
 
     def add_paths(paths):
-        if var_dirs_only.get():
-            new_items = collect_dirs(paths)
-        else:
-            new_items = collect_files(paths, var_rec.get())
-        existing = set(file_list)
-        for f in new_items:
-            if f not in existing:
-                existing.add(f)
-                file_list.append(f)
-        file_list.sort(key=natural_key)
-        refresh_list()
-        clear_preview()
-        if not new_items and paths:
-            messagebox.showinfo("提示",
-                                f"未找到可处理的{unit_name()}。\n"
-                                f"仅文件夹模式下，请拖入/添加文件夹（收集其中的子文件夹）。")
+        paths = [p for p in (paths or []) if p]
+        if not paths:
+            return
+        dirs_only = bool(var_dirs_only.get())
+        rec = bool(var_rec.get())
+
+        def collect(ps):
+            return collect_dirs(ps) if dirs_only else collect_files(ps, rec)
+
+        def apply(new_items):
+            existing = set(file_list)
+            for f in new_items:
+                if f not in existing:
+                    existing.add(f)
+                    file_list.append(f)
+            file_list.sort(key=natural_key)
+            refresh_list()
+            clear_preview()
+            if not new_items:
+                messagebox.showinfo(
+                    "提示",
+                    f"未找到可处理的{unit_name()}。\n"
+                    f"仅文件夹模式下，请拖入/添加文件夹（收集其中的子文件夹）。")
+
+        collect_async(parent, paths, collect, apply,
+                      on_busy=lambda: label_count.config(
+                          text=f"正在读取{unit_name()}…"))
 
     def do_preview():
         clear_preview()

@@ -95,10 +95,10 @@ from . import ui, ui as ttk
 from .theme import FONTS
 
 from . import config
-from .common import (add_table_hscroll, clean_path, clear_log, form_label,
-                     load_done_sound, make_form, make_logger, make_tip,
-                     paste_path_to, play_done_sound, save_done_sound,
-                     setup_tree_columns, ScrollPage)
+from .common import (BgJob, add_table_hscroll, clean_path, clear_log,
+                     form_label, load_done_sound, make_form, make_logger,
+                     make_tip, paste_path_to, play_done_sound,
+                     save_done_sound, setup_tree_columns, ScrollPage)
 from .theme import COLOR
 
 DB_NAME = "filehash.db"
@@ -812,11 +812,15 @@ def invalidate_stats(db_path=None):
             _STATS_CACHE.pop(k, None)
 
 
-def db_counts(db_path, use_cache=False):
+def db_counts(db_path, use_cache=False, cache_only=False):
     """只读打开库里取统计；失败返回 None。
 
     use_cache=True 时按库文件签名命中缓存：同一份库文件不重复扫全表。
     库被改写后签名变化，自然失效，不会读到旧数字。
+
+    cache_only=True 时**只查缓存，不打开库**：界面主线程用这个先把已知数字
+    画出来，没命中就交给后台去算 —— 大库的 stats() 是整表聚合，几十万条
+    要几百毫秒，放在主线程里就是一次可见的卡顿。
     """
     if not db_path or not os.path.isfile(db_path):
         return None
@@ -827,6 +831,8 @@ def db_counts(db_path, use_cache=False):
             hit = _STATS_CACHE.get(key)
         if hit is not None and hit[0] == sig:
             return hit[1]
+        if cache_only:
+            return None
     db = HashDB(db_path)
     res = None
     try:
@@ -3697,6 +3703,9 @@ def build_hash_tab(parent, app=None):
         return roots
 
     db_info_job = {"id": None}
+    # 库统计的代际号：每次刷新 +1，在途的后台统计回来自动作废，
+    # 避免「切到 A 又切到 B，A 的统计最后才回来把 B 的数字盖掉」。
+    db_info_gen = {"n": 0}
 
     def schedule_db_info(delay=250):
         """把「刷新当前数据库」压成一次：连续切目录 / 逐字输入只算最后一次。
@@ -3716,14 +3725,36 @@ def build_hash_tab(parent, app=None):
         except Exception:
             db_info_job["id"] = None
 
-    def db_brief(db_path):
-        """库内容一行摘要；读不出来时返回失败文案。"""
-        st = db_counts(db_path, use_cache=True)
+    def db_brief_text(st):
+        """把 stats 元组拼成一行摘要"""
         if st is None:
             return "库读取失败（可能被占用或文件损坏）"
         total, active, deleted, nbytes, nohash = st
         return (f"库内 {total} 条 · 有效 {active} · 缺失 {deleted} · "
                 f"未计哈希 {nohash} · 共 {fmt_size(nbytes)}")
+
+    def db_brief(db_path):
+        """库内容一行摘要（同步整表统计，只给已经在后台线程的地方用）"""
+        return db_brief_text(db_counts(db_path, use_cache=True))
+
+    def fill_db_brief_async(db_path, tag_text):
+        """后台算库统计，回来再写那一行。
+
+        缓存没命中时 stats() 要整表扫；几十万条的库在主线程做就是「点了没反应」。
+        这里数字晚半秒出现，窗口全程能响应。代际号保证切了目录之后旧结果不回来覆盖。
+        """
+        gen = db_info_gen["n"] = db_info_gen["n"] + 1
+        want = norm_key(db_path)
+
+        def done(st):
+            if gen != db_info_gen["n"]:
+                return
+            if norm_key(current_db_path() or "") != want:
+                return
+            lbl_scope.config(text=f"{db_brief_text(st)}  ·  {tag_text}")
+
+        BgJob(parent, work=lambda j: db_counts(db_path, use_cache=True),
+              on_done=done, on_error=lambda exc: None, interval=80).start()
 
     def refresh_db_info():
         """刷新「当前数据库」这一栏：路径 + 登记状态 + 库内容摘要。
@@ -3731,7 +3762,11 @@ def build_hash_tab(parent, app=None):
         扫描实际用的是「扫描根目录自己的 filehash.db」（resolve_db_root 传
         False，和 start() 完全一致），这里显示的必须与之一致，别让人误判
         写到哪个库。
+
+        v1.68：库统计改异步 —— 有缓存就立刻显示，没缓存先写「读取中」再去后台算，
+        切目录 / 拖入目录 / 合并收尾都不会再被一次整表聚合卡住。
         """
+        db_info_gen["n"] += 1          # 作废所有在途的统计
         root = clean_path(var_root.get())
         if not root or not os.path.isdir(root):
             var_db.set("（先选择扫描根目录）")
@@ -3770,7 +3805,12 @@ def build_hash_tab(parent, app=None):
             log(f"当前数据库：{db_path}")
 
         if os.path.isfile(db_path):
-            lbl_scope.config(text=f"{db_brief(db_path)}  ·  {tag_text}")
+            st = db_counts(db_path, use_cache=True, cache_only=True)
+            if st is not None:
+                lbl_scope.config(text=f"{db_brief_text(st)}  ·  {tag_text}")
+            else:
+                lbl_scope.config(text=f"库内统计读取中…  ·  {tag_text}")
+                fill_db_brief_async(db_path, tag_text)
         else:
             lbl_scope.config(text=f"库不存在，扫描时自动新建  ·  {tag_text}")
 
@@ -3813,6 +3853,51 @@ def build_hash_tab(parent, app=None):
         state["page"] = min(max(0, n), page_count() - 1)
         render()
 
+    prep_job = {"gen": 0}
+
+    def prepare_async(rows, pends, base_sig, search_match, row_cat):
+        """后台把大表整理好（过滤 + 分类计数），回主线程再画第一页。
+
+        这一步只是纯 Python 遍历、不碰数据库也不碰 Tk，放后台最安全。
+        代际号 + data_gen 双重校验：期间换了目录 / 又来一次整理，旧结果直接丢。
+        """
+        gen = prep_job["gen"] = prep_job["gen"] + 1
+        lbl_count.config(text=f"正在整理 {len(rows)} 条记录…")
+
+        def work(job):
+            base = [(r, p) for r, p in zip(rows, pends) if search_match(r)]
+            counts = {k: 0 for k in CATS}
+            counts["全部"] = len(base)
+            for r, p in base:
+                c = row_cat(r, p)
+                if c in counts:
+                    counts[c] += 1
+                counts[CAT_HASHED if r[1] else CAT_NOHASH] += 1
+            has_pending = any(p is not None for p in pends)
+            return base, counts, has_pending
+
+        def done(res):
+            if gen != prep_job["gen"]:
+                return
+            state["prep_sig"] = None
+            if state["data_gen"] != base_sig[0]:
+                return                       # 数据已经换过一轮，别拿旧结果覆盖
+            base, counts, has_pending = res
+            state["base"] = base
+            state["base_sig"] = base_sig
+            state["search_hits"] = len(base)
+            state["counts"] = counts
+            state["has_pending"] = has_pending
+            render()
+
+        def failed(exc):
+            state["prep_sig"] = None
+            log(f"整理列表失败：{exc}")
+            lbl_count.config(text="整理列表失败")
+
+        BgJob(parent, work=work, on_done=done, on_error=failed,
+              interval=60).start()
+
     def render():
         """按当前筛选 + 分页重建表格（state["rows"] 保持全量不动）"""
         flt = state["filter"]
@@ -3845,6 +3930,14 @@ def build_hash_tab(parent, app=None):
         # 几百万行时这两步各是一次全量 Python 循环，比画 500 行贵得多。
         base_sig = (state["data_gen"], kw, kind)
         if state.get("base_sig") != base_sig:
+            # 大库（合并 / 查看整库后有几十万行）的首次整理放后台：
+            # 三次全量遍历在主线程能卡住 1~2 秒，正好落在「合并完就点不动」那一下。
+            if len(all_rows) > 20000:
+                if state.get("prep_sig") != base_sig:
+                    state["prep_sig"] = base_sig
+                    prepare_async(list(all_rows), list(all_pend), base_sig,
+                                  search_match, row_cat)
+                return
             base = [(r, p) for r, p in zip(all_rows, all_pend) if search_match(r)]
             state["base"] = base
             state["base_sig"] = base_sig
@@ -3864,7 +3957,9 @@ def build_hash_tab(parent, app=None):
 
         shown_sig = (base_sig, flt)
         if state.get("shown_sig") != shown_sig:
-            shown = [(r, p) for r, p in base if match(r, p)]
+            # 「全部」不用逐行调 match 再建一遍 40 万行的表，直接用 base
+            shown = base if flt == "全部" else [(r, p) for r, p in base
+                                                if match(r, p)]
             state["shown"] = shown
             state["shown_sig"] = shown_sig
         else:
@@ -4185,7 +4280,15 @@ def build_hash_tab(parent, app=None):
                 rows = db.search_path(kw, include_deleted=inc)
             else:
                 rows = db.search_hash(kw)
-            return [tuple(r) for r in rows]
+            # 在后台就把列补齐成 7 元组：主线程拿到 40 万行时不用再逐行判断，
+            # 光这一个列表推导在主线程就要 200ms 左右（合并完那一下的卡顿）。
+            out = []
+            for r in rows:
+                r = tuple(r)
+                if len(r) < 7:
+                    r = r + ("",) * (7 - len(r))
+                out.append(r[:7])
+            return out
         except Exception as e:
             log(f"查询 {db_path} 失败：{e}")
             return []
@@ -4224,16 +4327,34 @@ def build_hash_tab(parent, app=None):
             return
 
         if not multi:
-            db, err = db_conn_readonly()
-            if db is None:
-                messagebox.showwarning("提示", err)
+            # 单库也跟着走后台：库里几十万条时 list_all + 排序 + 建返回列表
+            # 要好几百毫秒，主线程做就是「点搜索，界面停一下」。
+            dbp = current_db_path()
+            if not dbp or not os.path.isfile(dbp):
+                messagebox.showwarning("提示", "数据库还不存在，请先做一次扫描")
                 return
-            db.close()
-            rows = query_one(current_db_path(), kw, kind, inc)
-            fill_tree(rows, multi=False, source="db")
+            gen = state["search_gen"]
             label = "数据库全部记录" if not kw else f"数据库搜索「{kw}」"
-            lbl_count.config(text=f"命中 {len(rows)} 条")
-            log(f"{label}命中 {len(rows)} 条")
+            lbl_count.config(text="正在查询数据库…")
+            btn_search.config(state=tk.DISABLED)
+
+            def done(rows):
+                btn_search.config(state=tk.NORMAL)
+                if gen != state["search_gen"]:
+                    return                          # 期间又搜过一轮，这批作废
+                if state["source"] != "db":
+                    return                          # 已经切回扫描结果视图，别覆盖
+                fill_tree(rows, multi=False, source="db")
+                lbl_count.config(text=f"命中 {len(rows)} 条")
+                log(f"{label}命中 {len(rows)} 条")
+
+            def failed(exc):
+                btn_search.config(state=tk.NORMAL)
+                lbl_count.config(text="查询失败")
+                log(f"查询数据库失败：{exc}")
+
+            BgJob(parent, work=lambda j: query_one(dbp, kw, kind, inc),
+                  on_done=done, on_error=failed, interval=60).start()
             return
 
         targets = managed_dbs()
@@ -4265,7 +4386,8 @@ def build_hash_tab(parent, app=None):
                     if gen != state["search_gen"]:
                         return                  # 已被新的搜索取代
                     part = query_one(dbp, kw, kind, inc)
-                    rows.extend([tuple(r) + (root_path,) for r in part])
+                    # query_one 在后台补过第 7 列（root 占位），跨库要换成真实根目录
+                    rows.extend([tuple(r)[:6] + (root_path,) for r in part])
                     q.put(("progress", i, root_path, len(rows)))
             except Exception as e:
                 q.put(("error", str(e)))
@@ -4330,43 +4452,57 @@ def build_hash_tab(parent, app=None):
         if not os.path.isfile(dbp):
             messagebox.showinfo("提示", "当前目录还没有数据库，先扫描一次再来补哈希")
             return
-        n, nbytes = count_no_hash(dbp)
-        if not n:
-            messagebox.showinfo("提示", "这个库里所有有效记录都已经有哈希了")
-            return
-        if not messagebox.askyesno(
-                "补全哈希",
-                f"有 {n} 条记录还没有哈希（合计 {fmt_size(nbytes)}）。\n\n"
-                f"· 只写 sha256（和校验时间），大小 / 修改时间 / 状态一概不动\n"
-                f"· 文件已经不在了的自动跳过，不会误标缺失\n"
-                f"· 每算完一条立刻入库，中途停止也不丢\n\n"
-                f"现在开始补算？"):
-            return
-        lock = DbLock(dbp)
-        ok, msg = lock.acquire()
-        if not ok:
-            messagebox.showwarning("数据库被占用", msg + f"\n\n{dbp}")
-            return
-        state["lock"] = lock
-        state["task"] = "hash"
-        state["stop"] = threading.Event()
-        fr = HashFiller(db_root, dbp, log, state["stop"])
-        state["scanner"] = fr
-        state["running"] = True
-        btn_start.config(state=tk.DISABLED)
-        btn_stop.config(state=tk.NORMAL)
-        bar_all["value"] = 0
-        bar_cur["value"] = 0
-        lbl_prog.config(text=f"准备补全哈希（{n} 条）…")
+        def start_fill(n):
+            lock = DbLock(dbp)
+            ok, msg = lock.acquire()
+            if not ok:
+                messagebox.showwarning("数据库被占用", msg + f"\n\n{dbp}")
+                return
+            state["lock"] = lock
+            state["task"] = "hash"
+            state["stop"] = threading.Event()
+            fr = HashFiller(db_root, dbp, log, state["stop"])
+            state["scanner"] = fr
+            state["running"] = True
+            btn_start.config(state=tk.DISABLED)
+            btn_stop.config(state=tk.NORMAL)
+            bar_all["value"] = 0
+            bar_cur["value"] = 0
+            lbl_prog.config(text=f"准备补全哈希（{n} 条）…")
 
-        def worker():
-            try:
-                fr.run()
-            finally:
-                fr.ui["done_flag"] = True
+            def worker():
+                try:
+                    fr.run()
+                finally:
+                    fr.ui["done_flag"] = True
 
-        threading.Thread(target=worker, daemon=True).start()
-        parent.after(200, poll_progress)
+            threading.Thread(target=worker, daemon=True).start()
+            parent.after(200, poll_progress)
+
+        def count_done(res):
+            busy_end()
+            n, nbytes = res
+            if not n:
+                messagebox.showinfo("提示", "这个库里所有有效记录都已经有哈希了")
+                return
+            if not messagebox.askyesno(
+                    "补全哈希",
+                    f"有 {n} 条记录还没有哈希（合计 {fmt_size(nbytes)}）。\n\n"
+                    f"· 只写 sha256（和校验时间），大小 / 修改时间 / 状态一概不动\n"
+                    f"· 文件已经不在了的自动跳过，不会误标缺失\n"
+                    f"· 每算完一条立刻入库，中途停止也不丢\n\n"
+                    f"现在开始补算？"):
+                return
+            start_fill(n)
+
+        # 统计「没算哈希的条数」要扫全表（sha256='' 走不到覆盖索引）：
+        # 几十万条的库在主线程做会明显卡一下，交给后台
+        busy_start("正在统计未算哈希的记录…")
+        BgJob(parent, work=lambda j: count_no_hash(dbp),
+              on_done=count_done,
+              on_error=lambda exc: (busy_end(), messagebox.showerror(
+                  "读取数据库失败", f"{dbp}\n\n{exc}")),
+              interval=80).start()
 
     def seed_from_parent():
         """用最靠近的上级库里「属于本目录」的记录，生成本目录的 filehash.db"""
@@ -4408,71 +4544,98 @@ def build_hash_tab(parent, app=None):
             return
         parent_root, parent_db = found
         prefix = scope_prefix(root, parent_root)
-        n, nbytes = count_scope(parent_db, prefix)
-        if n < 0:
-            messagebox.showwarning(
-                "打不开上级库", f"{parent_db}\n\n可能正在被占用或文件损坏。")
-            return
-        if n == 0:
-            messagebox.showinfo(
-                "上级库里没有这个目录的记录",
-                f"上级库：{parent_db}\n范围：{prefix}/\n\n"
-                f"里面没有属于「{root}」的记录。\n"
-                f"可能是上级扫描的时候这个目录还不存在，先补扫一次上级目录。")
-            return
 
-        exists = os.path.isfile(own_db)
-        msg = (f"上级库：{parent_db}（来源：{how}）\n"
-               f"范围：{prefix}/　共 {n} 条（{fmt_size(nbytes)}）\n"
-               f"目标库：{own_db}\n\n")
-        msg += ("当前目录已有数据库，会把上级的记录合并进来"
-                "（同路径保留较新的那条）。\n\n" if exists
-                else "当前目录还没有数据库，将新建一个。\n\n")
-        msg += ("· 直接沿用上级库的哈希 / 大小 / 修改时间\n"
-                "· 同样按「取较新」合并，且哈希值不会被空值覆盖"
-                "（本级已有哈希就保留）\n"
-                "· **完全不读取、不检查任何文件**，只搬数据库记录\n"
-                "· 生成后可以直接跑「快速预检」，只比大小和时间，几乎不用读盘")
-        if not messagebox.askyesno("用上级库生成", msg):
-            return
+        def start_seed(n):
+            state["task"] = "seed"
+            state["stop"] = threading.Event()
+            task = SeedTask(parent_root, parent_db, root, own_db, prefix,
+                            log, state["stop"])
+            state["scanner"] = task
+            state["running"] = True
+            btn_start.config(state=tk.DISABLED)
+            btn_stop.config(state=tk.NORMAL)
+            bar_all["value"] = 0
+            bar_cur["value"] = 0
+            lbl_prog.config(text=f"准备从上级库搬入 {n} 条…")
 
-        lock = DbLock(own_db)
-        ok, lmsg = lock.acquire()
-        if not ok:
-            messagebox.showwarning("数据库被占用", lmsg + f"\n\n{own_db}")
-            return
-        state["lock"] = lock
+            def worker():
+                try:
+                    task.run()
+                finally:
+                    task.ui["done_flag"] = True
 
-        w_ok, w_msg = probe_db_write(own_db)
-        if not w_ok:
-            lock.release()
-            state["lock"] = None
-            messagebox.showerror(
-                "目标库无法写入",
-                f"{own_db}\n\n{w_msg}\n\n"
-                f"这个功能要往目标库里写记录，先处理权限 / 占用再试。")
-            return
+            threading.Thread(target=worker, daemon=True).start()
+            parent.after(200, poll_progress)
 
-        state["task"] = "seed"
-        state["stop"] = threading.Event()
-        task = SeedTask(parent_root, parent_db, root, own_db, prefix,
-                        log, state["stop"])
-        state["scanner"] = task
-        state["running"] = True
-        btn_start.config(state=tk.DISABLED)
-        btn_stop.config(state=tk.NORMAL)
-        bar_all["value"] = 0
-        bar_cur["value"] = 0
-        lbl_prog.config(text=f"准备从上级库搬入 {n} 条…")
+        def count_done(res):
+            busy_end()
+            n, nbytes = res
+            if n < 0:
+                messagebox.showwarning(
+                    "打不开上级库", f"{parent_db}\n\n可能正在被占用或文件损坏。")
+                return
+            if n == 0:
+                messagebox.showinfo(
+                    "上级库里没有这个目录的记录",
+                    f"上级库：{parent_db}\n范围：{prefix}/\n\n"
+                    f"里面没有属于「{root}」的记录。\n"
+                    f"可能是上级扫描的时候这个目录还不存在，先补扫一次上级目录。")
+                return
 
-        def worker():
-            try:
-                task.run()
-            finally:
-                task.ui["done_flag"] = True
+            exists = os.path.isfile(own_db)
+            msg = (f"上级库：{parent_db}（来源：{how}）\n"
+                   f"范围：{prefix}/　共 {n} 条（{fmt_size(nbytes)}）\n"
+                   f"目标库：{own_db}\n\n")
+            msg += ("当前目录已有数据库，会把上级的记录合并进来"
+                    "（同路径保留较新的那条）。\n\n" if exists
+                    else "当前目录还没有数据库，将新建一个。\n\n")
+            msg += ("· 直接沿用上级库的哈希 / 大小 / 修改时间\n"
+                    "· 同样按「取较新」合并，且哈希值不会被空值覆盖"
+                    "（本级已有哈希就保留）\n"
+                    "· **完全不读取、不检查任何文件**，只搬数据库记录\n"
+                    "· 生成后可以直接跑「快速预检」，只比大小和时间，几乎不用读盘")
+            if not messagebox.askyesno("用上级库生成", msg):
+                return
 
-        threading.Thread(target=worker, daemon=True).start()
-        parent.after(200, poll_progress)
+            lock = DbLock(own_db)
+            ok, lmsg = lock.acquire()
+            if not ok:
+                messagebox.showwarning("数据库被占用", lmsg + f"\n\n{own_db}")
+                return
+            state["lock"] = lock
+
+            # 写探测要拿写锁，被别的程序占着会等到超时 —— 放后台，别冻界面
+            busy_start("正在检查目标库能否写入…")
+
+            def probe_done(res2):
+                busy_end()
+                w_ok, w_msg = res2
+                if not w_ok:
+                    lock.release()
+                    state["lock"] = None
+                    messagebox.showerror(
+                        "目标库无法写入",
+                        f"{own_db}\n\n{w_msg}\n\n"
+                        f"这个功能要往目标库里写记录，先处理权限 / 占用再试。")
+                    return
+                start_seed(n)
+
+            def probe_failed(exc):
+                busy_end()
+                lock.release()
+                state["lock"] = None
+                messagebox.showerror("目标库无法写入",
+                                     f"{own_db}\n\n检查写入权限时出错：\n{exc}")
+
+            BgJob(parent, work=lambda j: probe_db_write(own_db),
+                  on_done=probe_done, on_error=probe_failed, interval=80).start()
+
+        busy_start("正在统计上级库里的记录…")
+        BgJob(parent, work=lambda j: count_scope(parent_db, prefix),
+              on_done=count_done,
+              on_error=lambda exc: (busy_end(), messagebox.showerror(
+                  "打不开上级库", f"{parent_db}\n\n{exc}")),
+              interval=80).start()
 
     def finish_seed():
         """用上级库生成 / 合并的收尾：刷新库概况、列表和「已管理目录」"""
@@ -4542,6 +4705,10 @@ def build_hash_tab(parent, app=None):
 
         查找顺序（v1.62）：先只在「已管理目录」里找 —— 只读配置 + isfile，
         一个文件夹都不遍历；管理目录里凑不出可合并的库时，才问要不要遍历文件夹。
+
+        v1.68：查库 + 统计条数 + 读目标库时间全部挪到后台。这些都要开库并
+        扫记录（COUNT / MAX 无索引时是全表），在主线程做就是「点了合并，窗口
+        白一会儿」。现在点下去立刻出现忙碌条，随时能取消。
         """
         if state["running"]:
             messagebox.showinfo("提示", "当前有任务在跑，等它结束再合并")
@@ -4553,97 +4720,136 @@ def build_hash_tab(parent, app=None):
             messagebox.showwarning("提示", "请先选择一个存在的扫描根目录")
             return
         root = os.path.abspath(root)
+        busy_start("正在检查可合并的库…")
 
-        # 第一轮：只查已管理目录，零遍历
-        plan = plan_merge(root)
-        if plan["sources"]:
-            confirm_merge(plan, root)
-            return
+        def work(job):
+            plan = plan_merge(root)
+            counts, dst_time = [], 0.0
+            if plan["sources"]:
+                total = len(plan["sources"])
+                for i, (rel_dir, sp, _kind) in enumerate(plan["sources"], 1):
+                    if job.cancelled:
+                        return None
+                    job.report(f"正在统计 {i}/{total} 个库…　{rel_dir or '.'}")
+                    counts.append(db_row_count(sp))
+                job.report("正在读取目标库信息…")
+                dst_time = db_scan_time(plan["target_db"])
+            return {"plan": plan, "counts": counts, "dst_time": dst_time}
 
-        n_man = len(managed_libs())
-        n_off = sum(1 for r in load_roots() if r.get("disabled"))
-        tip = (f"\n（另有 {n_off} 个已禁用目录不参与，"
-               f"要带上就在「管理…」里启用）" if n_off else "")
-        if not messagebox.askyesno(
-                "已管理目录里没有可合并的库",
-                f"「{root}」自己、它的上级目录、下面各级子目录，"
-                f"都没在「已管理目录」（{n_man} 个）里登记过 {DB_NAME}。{tip}\n\n"
-                f"要遍历「{root}」下的文件夹去找吗？\n"
-                f"· 只找名为 {DB_NAME} 的文件，不读文件内容\n"
-                f"· 目录多的大盘可能要几十秒到几分钟\n"
-                f"· 找到后先列清单让你确认，确认了才合并\n\n"
-                f"选「否」就先分别扫描这些目录，它们会被记进「已管理目录」，"
-                f"下次点一下就能命中，不用再遍历。"):
-            return
-        find_merge_sources(root)
+        def done(res):
+            busy_end()
+            if not res:
+                return
+            plan = res["plan"]
+            if plan["sources"]:
+                confirm_merge(plan, root, res["counts"], res["dst_time"])
+                return
+            n_man = len(managed_libs())
+            n_off = sum(1 for r in load_roots() if r.get("disabled"))
+            tip = (f"\n（另有 {n_off} 个已禁用目录不参与，"
+                   f"要带上就在「管理…」里启用）" if n_off else "")
+            if not messagebox.askyesno(
+                    "已管理目录里没有可合并的库",
+                    f"「{root}」自己、它的上级目录、下面各级子目录，"
+                    f"都没在「已管理目录」（{n_man} 个）里登记过 {DB_NAME}。{tip}\n\n"
+                    f"要遍历「{root}」下的文件夹去找吗？\n"
+                    f"· 只找名为 {DB_NAME} 的文件，不读文件内容\n"
+                    f"· 目录多的大盘可能要几十秒到几分钟\n"
+                    f"· 找到后先列清单让你确认，确认了才合并\n\n"
+                    f"选「否」就先分别扫描这些目录，它们会被记进「已管理目录」，"
+                    f"下次点一下就能命中，不用再遍历。"):
+                return
+            find_merge_sources(root)
+
+        def failed(exc):
+            busy_end()
+            log(f"检查可合并的库失败：{exc}")
+            messagebox.showerror("合并准备失败",
+                                 f"读取「{root}」的库信息时出错：\n{exc}")
+
+        BgJob(parent, work=work,
+              on_item=lambda msg: lbl_prog.config(text=msg),
+              on_done=done, on_error=failed, interval=80).start()
 
     def find_merge_sources(root):
-        """遍历文件夹查找可合并的库（后台线程，只 scandir 目录、不读文件）。"""
-        done = {"flag": False, "plan": None, "error": None, "dirs": 0}
-        state["finding"] = True
-        btn_start.config(state=tk.DISABLED)
-        btn_stop.config(state=tk.DISABLED)
-        lbl_prog.config(text="正在遍历文件夹查找数据库…")
-        bar_all.config(mode="indeterminate")
-        bar_all.start(14)
+        """遍历文件夹查找可合并的库（后台，只 scandir 目录、不读文件内容）。"""
+        busy_start("正在遍历文件夹查找数据库…")
+        seen_dirs = {"n": 0}
 
-        def note(n):
-            done["dirs"] = n            # 后台线程只写这个数，界面在主线程读
+        def work(job):
+            def progress(n):
+                seen_dirs["n"] = n
+                job.report(("dirs", n))
+            plan = plan_merge(root, deep=True, progress=progress)
+            counts, dst_time = [], 0.0
+            if plan.get("sources"):
+                total = len(plan["sources"])
+                for i, (rel_dir, sp, _kind) in enumerate(plan["sources"], 1):
+                    if job.cancelled:
+                        return None
+                    job.report(("msg", f"正在统计 {i}/{total} 个库…　{rel_dir or '.'}"))
+                    counts.append(db_row_count(sp))
+                job.report(("msg", "正在读取目标库信息…"))
+                dst_time = db_scan_time(plan["target_db"])
+            return {"plan": plan, "counts": counts, "dst_time": dst_time,
+                    "dirs": seen_dirs["n"]}
 
-        def worker():
-            try:
-                done["plan"] = plan_merge(root, deep=True, progress=note)
-            except Exception as e:
-                done["error"] = e
-            finally:
-                done["flag"] = True
-
-        threading.Thread(target=worker, daemon=True).start()
-
-        def poll():
-            if not done["flag"]:
+        def on_item(item):
+            kind, val = item
+            if kind == "dirs":
                 lbl_prog.config(
-                    text="正在遍历文件夹查找数据库…"
-                         + (f"　已查 {done['dirs']} 个文件夹" if done["dirs"] else ""))
-                parent.after(150, poll)
+                    text=f"正在遍历文件夹查找数据库…　已查 {val} 个文件夹")
+            else:
+                lbl_prog.config(text=val)
+
+        def done(res):
+            busy_end()
+            if not res:
                 return
-            state["finding"] = False
-            bar_all.stop()
-            bar_all.config(mode="determinate")
-            bar_all["value"] = 0
-            btn_start.config(state=tk.NORMAL)
-            lbl_prog.config(text="未开始")
-            if done["error"]:
-                log(f"遍历查找数据库失败：{done['error']}")
-                messagebox.showerror("遍历失败",
-                                     f"查找 {DB_NAME} 时出错：\n{done['error']}")
-                return
-            plan = done["plan"] or {}
+            plan = res["plan"]
             if not plan.get("sources"):
                 messagebox.showinfo(
                     "没有找到可合并的库",
-                    f"遍历「{root}」下的所有文件夹（已查 {done['dirs']} 个），"
+                    f"遍历「{root}」下的所有文件夹（已查 {res['dirs']} 个），"
                     f"也没有找到可合并的 {DB_NAME}。\n\n"
                     f"先扫描一次要合并的目录（快速建档即可），再来合并。")
                 return
             log(f"遍历找到 {len(plan['sources'])} 个待合并的库")
-            confirm_merge(plan, root)
+            confirm_merge(plan, root, res["counts"], res["dst_time"])
 
-        parent.after(150, poll)
+        def failed(exc):
+            busy_end()
+            log(f"遍历查找数据库失败：{exc}")
+            messagebox.showerror("遍历失败",
+                                 f"查找 {DB_NAME} 时出错：\n{exc}")
 
-    def confirm_merge(plan, root):
-        """把 plan 里的库合并起来（先弹确认清单，确认后才动库）"""
+        BgJob(parent, work=work, on_item=on_item,
+              on_done=done, on_error=failed, interval=100,
+              max_per_tick=20).start()
+
+    def confirm_merge(plan, root, counts=None, dst_time=None):
+        """把 plan 里的库合并起来（先弹确认清单，确认后才动库）。
+
+        counts / dst_time 由后台准备好后传进来 —— 弹窗时要的数据**全部现成**，
+        点「合并」不会再触发任何开库统计（那是原来卡顿的来源之一）。
+        """
         sources = plan["sources"]
+        counts = list(counts or [])
+        dst_time = dst_time or 0
         lines = []
-        for rel_dir, sp, kind in sources[:10]:
-            n = db_row_count(sp)
+        for i, (rel_dir, sp, kind) in enumerate(sources[:10]):
+            n = counts[i] if i < len(counts) else -2
             tag = "本级" if kind == "self" else "子目录"
-            lines.append(f"  · {rel_dir or '.'}（{tag}）"
-                         f"  {'读不出' if n < 0 else str(n) + ' 条'}")
+            if n == -2:
+                cnt = ""
+            elif n < 0:
+                cnt = "  读不出"
+            else:
+                cnt = f"  {n} 条"
+            lines.append(f"  · {rel_dir or '.'}（{tag}）{cnt}")
         if len(sources) > 10:
             lines.append(f"  · …… 另有 {len(sources) - 10} 个")
 
-        dst_time = db_scan_time(plan["target_db"])
         if plan["upward"]:
             title = "合并数据库（并进上级库）"
             head = (f"「{root}」的数据会并进上级库：\n"
@@ -4677,17 +4883,41 @@ def build_hash_tab(parent, app=None):
         state["lock"] = lock
         state["task"] = "merge"
 
-        # 合并是纯写操作：目标库写不进去，跑完只会得到一堆失败
-        w_ok, w_msg = probe_db_write(dbp)
-        if not w_ok:
+        # 合并是纯写操作：目标库写不进去，跑完只会得到一堆失败。
+        # 探测要拿写锁（库被别的程序占着会一直等到超时），所以也放后台，
+        # 期间界面照常能响应、能点停止。
+        busy_start("正在检查目标库能否写入…")
+
+        def probe_work(job):
+            return probe_db_write(dbp)
+
+        def probe_done(res):
+            busy_end()
+            w_ok, w_msg = res
+            if not w_ok:
+                lock.release()
+                state["lock"] = None
+                state["task"] = ""
+                messagebox.showerror(
+                    "目标库无法写入",
+                    f"{dbp}\n\n{w_msg}\n\n"
+                    f"合并要往这个库里写记录，先处理权限 / 占用再试。")
+                return
+            start_merge(plan, sources, dbp)
+
+        def probe_failed(exc):
+            busy_end()
             lock.release()
             state["lock"] = None
-            messagebox.showerror(
-                "目标库无法写入",
-                f"{dbp}\n\n{w_msg}\n\n"
-                f"合并要往这个库里写记录，先处理权限 / 占用再试。")
-            return
+            state["task"] = ""
+            messagebox.showerror("目标库无法写入",
+                                 f"{dbp}\n\n检查写入权限时出错：\n{exc}")
 
+        BgJob(parent, work=probe_work, on_done=probe_done,
+              on_error=probe_failed, interval=80).start()
+
+    def start_merge(plan, sources, dbp):
+        """探测通过后真正开跑（MergeTask 本身就在后台线程）"""
         state["stop"] = threading.Event()
         mt = MergeTask(plan["target_root"], dbp, sources,
                        upward=plan["upward"], log=log, stop_event=state["stop"])
@@ -4707,6 +4937,26 @@ def build_hash_tab(parent, app=None):
 
         threading.Thread(target=worker, daemon=True).start()
         parent.after(200, poll_progress)
+
+    def busy_start(text):
+        """准备工作期间的忙碌状态（合并前查库 / 统计 / 写探测都用它）"""
+        state["finding"] = True
+        btn_start.config(state=tk.DISABLED)
+        btn_stop.config(state=tk.DISABLED)
+        lbl_prog.config(text=text)
+        bar_all.config(mode="indeterminate")
+        bar_all.start(14)
+
+    def busy_end():
+        state["finding"] = False
+        bar_all.stop()
+        bar_all.config(mode="determinate")
+        bar_all["value"] = 0
+        try:
+            btn_start.config(state=tk.NORMAL)
+        except Exception:
+            pass
+        lbl_prog.config(text="未开始")
 
     def view_db():
         """把当前数据库里的记录直接渲染到列表（相当于空条件查全部）"""
@@ -5570,58 +5820,69 @@ def build_hash_tab(parent, app=None):
         db_root, prefix = resolve_db_root(root, False)
         db_path = os.path.join(db_root, DB_NAME)
 
-        # quick_check 在大库上要扫全部页，先给个状态免得看起来像没反应
-        lbl_prog.config(text="检查数据库…")
-        try:
-            parent.update_idletasks()
-        except Exception:
-            pass
+        # quick_check 在大库上要扫全部页，先给个状态免得看起来像没反应。
+        # v1.68：整段「校验库 → 取锁 → 写探测」都放后台 —— 库被别的程序占着时
+        # 探测会一直等到超时（8 秒），主线程做就是整整 8 秒的「无响应」。
+        busy_start("检查数据库…")
+        flags = {"readonly": False}
 
-        ok, msg, kind = check_db_file(db_path)
-        force_readonly = False
-        if kind == "unreadable":
-            # 只读介质 / 没有权限 / 被别的程序独占：不是损坏，别怂恿用户改名。
-            # 但库都读不出来，扫出来全是「新增」—— 先问清楚，别让人白等一晚上。
-            log(f"[提示] {msg}")
-            if not messagebox.askyesno(
-                    "数据库打不开",
-                    f"{db_path}\n\n{msg}\n\n"
-                    f"读不到库里的记录，这次扫描会把所有文件都当成「新增」，"
-                    f"结果仅供参考，也不会写入任何文件。\n\n"
-                    f"是先去处理权限 / 关掉占用它的程序，\n"
-                    f"还是就这样按「只看差异」继续？"):
+        def check_done(res):
+            busy_end()
+            ok, msg, kind = res
+            if kind == "unreadable":
+                # 只读介质 / 没有权限 / 被别的程序独占：不是损坏，别怂恿用户改名。
+                # 但库都读不出来，扫出来全是「新增」—— 先问清楚，别让人白等一晚上。
+                log(f"[提示] {msg}")
+                if not messagebox.askyesno(
+                        "数据库打不开",
+                        f"{db_path}\n\n{msg}\n\n"
+                        f"读不到库里的记录，这次扫描会把所有文件都当成「新增」，"
+                        f"结果仅供参考，也不会写入任何文件。\n\n"
+                        f"是先去处理权限 / 关掉占用它的程序，\n"
+                        f"还是就这样按「只看差异」继续？"):
+                    return
+                if mode in WRITABLE_MODES:
+                    # 库连读都读不了，写更无从谈起：直接降级，不再问第二遍
+                    flags["readonly"] = True
+                    log("库不可读，已改为只读扫描（不写数据库）")
+            elif not ok:
+                if not messagebox.askyesno(
+                        "数据库可能损坏",
+                        f"{db_path}\n\nSQLite 检查结果：{msg}\n\n"
+                        f"是否把它改名备份为 filehash.db.broken-时间戳 并新建空库继续？\n"
+                        f"（只改名不删除）"):
+                    return
+                try:
+                    backup = db_path + ".broken-" + time.strftime("%Y%m%d-%H%M%S")
+                    os.rename(db_path, backup)
+                    log(f"已备份损坏库 → {backup}")
+                except Exception as e:
+                    messagebox.showerror("无法备份", f"改名失败：{e}")
+                    return
+            take_lock_and_probe()
+
+        def take_lock_and_probe():
+            lock = DbLock(db_path)
+            ok2, msg2 = lock.acquire()
+            if not ok2:
+                messagebox.showwarning("数据库被占用", msg2 + f"\n\n{db_path}")
                 return
-            if mode in WRITABLE_MODES:
-                # 库连读都读不了，写更无从谈起：直接降级，不再问第二遍
-                force_readonly = True
-                log("库不可读，已改为只读扫描（不写数据库）")
-        elif not ok:
-            if not messagebox.askyesno(
-                    "数据库可能损坏",
-                    f"{db_path}\n\nSQLite 检查结果：{msg}\n\n"
-                    f"是否把它改名备份为 filehash.db.broken-时间戳 并新建空库继续？\n"
-                    f"（只改名不删除）"):
-                return
-            try:
-                backup = db_path + ".broken-" + time.strftime("%Y%m%d-%H%M%S")
-                os.rename(db_path, backup)
-                log(f"已备份损坏库 → {backup}")
-            except Exception as e:
-                messagebox.showerror("无法备份", f"改名失败：{e}")
+            state["lock"] = lock
+
+            # 写档模式：开扫前先真写一次验证（写进去再回滚），别等几万个文件
+            # 扫完才发现存不下。探测失败可以让用户选「降级只读」或直接取消。
+            if mode not in WRITABLE_MODES or flags["readonly"]:
+                launch()
                 return
 
-        lock = DbLock(db_path)
-        ok2, msg2 = lock.acquire()
-        if not ok2:
-            messagebox.showwarning("数据库被占用", msg2 + f"\n\n{db_path}")
-            return
-        state["lock"] = lock
+            busy_start("检查目标库能否写入…")
 
-        # 写档模式：开扫前先真写一次验证（写进去再回滚），别等几万个文件
-        # 扫完才发现存不下。探测失败可以让用户选「降级只读」或直接取消。
-        if mode in WRITABLE_MODES and not force_readonly:
-            w_ok, w_msg = probe_db_write(db_path)
-            if not w_ok:
+            def probe_done(res2):
+                busy_end()
+                w_ok, w_msg = res2
+                if w_ok:
+                    launch()
+                    return
                 log(f"[警告] 数据库不可写：{w_msg}")
                 if not messagebox.askyesno(
                         "数据库无法写入",
@@ -5634,30 +5895,50 @@ def build_hash_tab(parent, app=None):
                     lock.release()
                     state["lock"] = None
                     return
-                force_readonly = True
+                flags["readonly"] = True
                 log("已改为只读扫描：结果只显示在列表里，不写数据库")
+                launch()
 
-        state["stop"] = threading.Event()
-        # 不写 scan_log.txt（日志只在界面里看）；子库固定自动并入
-        sc = Scanner(root, db_path, prefix, mode, log, "", state["stop"],
-                     readonly=force_readonly, sample_pct=sample_pct)
-        state["scanner"] = sc
-        state["task"] = "scan"
-        state["running"] = True
-        btn_start.config(state=tk.DISABLED)
-        btn_stop.config(state=tk.NORMAL)
-        bar_all["value"] = 0
-        bar_cur["value"] = 0
-        lbl_prog.config(text="准备中…")
+            def probe_failed(exc):
+                busy_end()
+                lock.release()
+                state["lock"] = None
+                messagebox.showerror("数据库无法写入",
+                                     f"{db_path}\n\n检查写入权限时出错：\n{exc}")
 
-        def worker():
-            try:
-                sc.run()
-            finally:
-                sc.ui["done_flag"] = True
+            BgJob(parent, work=lambda j: probe_db_write(db_path),
+                  on_done=probe_done, on_error=probe_failed, interval=80).start()
 
-        threading.Thread(target=worker, daemon=True).start()
-        parent.after(200, poll_progress)
+        def launch():
+            state["stop"] = threading.Event()
+            # 不写 scan_log.txt（日志只在界面里看）；子库固定自动并入
+            sc = Scanner(root, db_path, prefix, mode, log, "", state["stop"],
+                         readonly=flags["readonly"], sample_pct=sample_pct)
+            state["scanner"] = sc
+            state["task"] = "scan"
+            state["running"] = True
+            btn_start.config(state=tk.DISABLED)
+            btn_stop.config(state=tk.NORMAL)
+            bar_all["value"] = 0
+            bar_cur["value"] = 0
+            lbl_prog.config(text="准备中…")
+
+            def worker():
+                try:
+                    sc.run()
+                finally:
+                    sc.ui["done_flag"] = True
+
+            threading.Thread(target=worker, daemon=True).start()
+            parent.after(200, poll_progress)
+
+        def check_failed(exc):
+            busy_end()
+            log(f"检查数据库失败：{exc}")
+            messagebox.showerror("检查数据库失败", f"{db_path}\n\n{exc}")
+
+        BgJob(parent, work=lambda j: check_db_file(db_path),
+              on_done=check_done, on_error=check_failed, interval=80).start()
 
     # ============================================================
     # 重复文件检查（管理弹窗里多选目录后打开）
