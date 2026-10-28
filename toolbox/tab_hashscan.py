@@ -20,6 +20,12 @@
   二、扫描目录管理
       程序目录的 toolbox_config.json（hashscan 分区）记录扫描过的根目录（时间 / 模式 / 记录数），
       界面可增删管理；搜索范围可选「当前目录」或「全部已管理目录」（跨库检索）。
+      **「当前数据库」一栏（v1.64）**：扫描根一变就立刻重算，显示的永远是扫描会真正
+      写入的那个库（扫描根自己的 filehash.db，与 start() 的 resolve_db_root 一致）；
+      下面一行摘要再标出「已登记 / 未登记 / 已禁用」，以及「本目录还没有库、上层已有库」
+      时提示用「合并数据库」共用 —— 避免切了目录还以为在写原来那个库。
+      刷新靠 variable 写跟踪 + 下拉 command（CTkComboBox 选下拉不发
+      <<ComboboxSelected>>，只挂那个事件等于没挂）。
   二之二、重复文件检查
       「管理…」里 Ctrl/Shift 多选若干已管理目录 → 「检查重复」：
       先按磁盘当前大小粗筛，只对同尺寸的候选比对 SHA256（库里的哈希在大小 + 修改时间
@@ -3204,7 +3210,10 @@ def build_hash_tab(parent, app=None):
     # 扫描根（下拉可选已管理目录，也可以直接输入/浏览）
     _form_label(0, "扫描根目录：")
     var_root = tk.StringVar()
-    cmb_root = ttk.Combobox(form, textvariable=var_root, width=46, values=[])
+    # command 是 CTkComboBox 选中下拉项时唯一会触发的回调
+    # （它不发 <<ComboboxSelected>>，光靠那个绑定等于没挂）
+    cmb_root = ttk.Combobox(form, textvariable=var_root, width=46, values=[],
+                            command=lambda _v: schedule_db_info(0))
     cmb_root.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=2)
 
     def choose_root():
@@ -3496,7 +3505,42 @@ def build_hash_tab(parent, app=None):
         cmb_root.config(values=[r["path"] for r in roots])
         return roots
 
+    db_info_job = {"id": None}
+
+    def schedule_db_info(delay=250):
+        """把「刷新当前数据库」压成一次：连续切目录 / 逐字输入只算最后一次。
+
+        下拉选择不会发 <<ComboboxSelected>>（CTkComboBox 只写 variable 再调
+        command），所以主触发是 variable 的写跟踪；防抖只是避免手打路径时
+        每敲一个字都去开一次库统计。
+        """
+        try:
+            if db_info_job["id"] is not None:
+                parent.after_cancel(db_info_job["id"])
+        except Exception:
+            pass
+        db_info_job["id"] = None
+        try:
+            db_info_job["id"] = parent.after(max(0, int(delay)), refresh_db_info)
+        except Exception:
+            db_info_job["id"] = None
+
+    def db_brief(db_path):
+        """库内容一行摘要；读不出来时返回失败文案。"""
+        st = db_counts(db_path, use_cache=True)
+        if st is None:
+            return "库读取失败（可能被占用或文件损坏）"
+        total, active, deleted, nbytes, nohash = st
+        return (f"库内 {total} 条 · 有效 {active} · 缺失 {deleted} · "
+                f"未计哈希 {nohash} · 共 {fmt_size(nbytes)}")
+
     def refresh_db_info():
+        """刷新「当前数据库」这一栏：路径 + 登记状态 + 库内容摘要。
+
+        扫描实际用的是「扫描根目录自己的 filehash.db」（resolve_db_root 传
+        False，和 start() 完全一致），这里显示的必须与之一致，别让人误判
+        写到哪个库。
+        """
         root = clean_path(var_root.get())
         if not root or not os.path.isdir(root):
             var_db.set("（先选择扫描根目录）")
@@ -3505,22 +3549,46 @@ def build_hash_tab(parent, app=None):
         db_root, prefix = resolve_db_root(root, False)
         db_path = os.path.join(db_root, DB_NAME)
         var_db.set(db_path)
-        if os.path.isfile(db_path):
-            # 带签名缓存：同一个库文件重复切目录不用重扫全表；
-            # 库被扫描/写回改过后签名变化，自动重算，不会显示旧数字。
-            st = db_counts(db_path, use_cache=True)
-            if st is None:
-                lbl_scope.config(text="库读取失败（可能被占用或文件损坏）")
-            else:
-                total, active, deleted, nbytes, nohash = st
-                lbl_scope.config(
-                    text=f"库内 {total} 条 · 有效 {active} · 缺失 {deleted} · "
-                         f"未计哈希 {nohash} · 共 {fmt_size(nbytes)}")
-        else:
-            lbl_scope.config(text="库不存在，扫描时自动新建")
+
+        roots = load_roots()
+        reg = next((r for r in roots
+                    if norm_key(os.path.abspath(r["path"]))
+                    == norm_key(os.path.abspath(db_root))), None)
+        tags = []
         if prefix:
-            log(f"提示：本级没有库，将沿用上层 {db_root} 的库，"
-                f"相对路径前会加「{prefix}/」")
+            tags.append(f"沿用上层库，相对路径加 {prefix}/")
+        tags.append("已登记" if reg else "未登记（扫描结束后自动登记）")
+        if reg and reg.get("disabled"):
+            tags.append("已禁用：跨库检索 / 合并不带它，单独扫描照常可用")
+        # 本目录还没有库、但上层已经有一个：说清楚扫完会新建一份本地的，
+        # 想共用就用「合并数据库」并上去。这是最容易搞错「到底用了哪个库」的地方。
+        if not os.path.isfile(db_path):
+            up = find_parent_db_in_managed(db_root)
+            if up is None:
+                try:
+                    up = find_parent_db(db_root)
+                except Exception:
+                    up = None
+            if up:
+                tags.append(f"上层已有 {up[0]} 的库，"
+                            f"想让两边共用请用「合并数据库」")
+        tag_text = "  ·  ".join(tags)
+        # 只在真的换了库时写日志：手打路径 / 反复切回来不用刷屏
+        if db_info_job.get("last") != norm_key(db_path):
+            db_info_job["last"] = norm_key(db_path)
+            log(f"当前数据库：{db_path}")
+
+        if os.path.isfile(db_path):
+            lbl_scope.config(text=f"{db_brief(db_path)}  ·  {tag_text}")
+        else:
+            lbl_scope.config(text=f"库不存在，扫描时自动新建  ·  {tag_text}")
+
+    # 主触发：只要「扫描根目录」这个变量变了就刷新（下拉选择 / 手打 / 粘贴 /
+    # 程序赋值都走这条路）。压 250ms，避免逐字输入反复开库统计。
+    try:
+        var_root.trace_add("write", lambda *_a: schedule_db_info(250))
+    except Exception:
+        pass
 
     # ============================================================
     # 表格渲染 / 检索
@@ -6946,6 +7014,7 @@ def build_hash_tab(parent, app=None):
                 return
             refresh()
             refresh_managed()
+            schedule_db_info(0)      # 登记 / 禁用状态变了，主页那条摘要也要跟上
             parts = []
             if n_off:
                 parts.append(f"已禁用 {n_off} 个")
@@ -6964,6 +7033,7 @@ def build_hash_tab(parent, app=None):
             save_roots(roots)
             refresh()
             refresh_managed()
+            schedule_db_info(0)      # 登记 / 禁用状态变了，主页那条摘要也要跟上
             log(f"已加入管理：{p}")
 
         def remove_selected():
@@ -6980,6 +7050,7 @@ def build_hash_tab(parent, app=None):
             save_roots(keep)
             refresh()
             refresh_managed()
+            schedule_db_info(0)      # 登记 / 禁用状态变了，主页那条摘要也要跟上
             log(f"已从管理列表移除 {len(sel)} 个目录")
 
         def scan_this():
@@ -7229,9 +7300,11 @@ def build_hash_tab(parent, app=None):
     cmb_page_size.bind("<<ComboboxSelected>>", change_page_size)
     cmb_page_size.bind("<Return>", change_page_size)
     cmb_page_size.bind("<FocusOut>", change_page_size)
-    cmb_root.bind("<<ComboboxSelected>>", lambda _e: refresh_db_info())
-    cmb_root.bind("<Return>", lambda _e: refresh_db_info())
-    cmb_root.bind("<FocusOut>", lambda _e: refresh_db_info())
+    # 扫描根：下拉选择靠 command + variable 跟踪（CTkComboBox 不发
+    # <<ComboboxSelected>>，那条绑定纯属摆设，已去掉）；这里只保留
+    # 「回车 / 失焦」立即刷新，选了就马上算，不用等防抖。
+    cmb_root.bind("<Return>", lambda _e: schedule_db_info(0))
+    cmb_root.bind("<FocusOut>", lambda _e: schedule_db_info(0))
     ent_kw.bind("<Return>", lambda _e: do_search())
 
     # 拖入文件夹 = 设为扫描根
