@@ -12,6 +12,11 @@
   一之二、差异写回
       「快速预检」「完整检查」扫完的差异清单可多选（Ctrl/Shift 或「全选」），
       右键或用表格上方的「写入数据库」只把选中的行写回库；底部可按 全部 / 新增 / 更新 / 删除 筛选。
+      状态列把**真正变了的项**逐条写出来（v1.63）：
+          「变更 大小 +2.25 MB · 时间 +1 天 · 哈希 a1b2c3d4→e5f6a7b8」
+      没变的项不占位（体积没变就不出现 +0 B）。快速模式不算哈希，只有大小和时间；
+      完整模式里「大小 / 时间都没动、只有内容被换掉」会显示成「变更 哈希 旧→新」。
+      「恢复」行同样带变化说明；「新增 / 缺失 / 补哈希」仍是纯状态文字。
   二、扫描目录管理
       程序目录的 toolbox_config.json（hashscan 分区）记录扫描过的根目录（时间 / 模式 / 记录数），
       界面可增删管理；搜索范围可选「当前目录」或「全部已管理目录」（跨库检索）。
@@ -256,6 +261,29 @@ def fmt_delta(d):
     """带符号的体积差：+8 B / -2.35 MB"""
     sign = "+" if d >= 0 else "-"
     return sign + fmt_size(abs(d))
+
+
+def fmt_time_delta(seconds):
+    """带符号的时间差短写：+8 秒 / -3 分钟 / +2 小时 / -1 天 / +2 年。
+
+    状态列里「时间 +1 天」表示磁盘上的修改时间比库里记的晚 1 天。
+    只用单个单位（秒/分/时/天/年），不显示「1 天 4 小时」这种长文案。
+    """
+    try:
+        v = float(seconds)
+    except (TypeError, ValueError):
+        return "—"
+    sign = "+" if v >= 0 else "-"
+    v = abs(v)
+    if v < 60:
+        return f"{sign}{max(1, int(round(v)))} 秒"
+    if v < 3600:
+        return f"{sign}{int(v // 60)} 分钟"
+    if v < 86400:
+        return f"{sign}{int(v // 3600)} 小时"
+    if v < 86400 * 365:
+        return f"{sign}{int(v // 86400)} 天"
+    return f"{sign}{int(v // (86400 * 365))} 年"
 
 
 def fmt_time(ts):
@@ -1363,11 +1391,12 @@ class Scanner:
                         (digest, size, mtime, last, rid))
                     self._add_written("变更", rel, stored, size, mtime,
                                       digest=digest, last=last,
-                                      old_size=old_size)
+                                      old_size=old_size, old_mtime=old_mtime,
+                                      old_sha=old_sha)
                     return 1
                 self._add_diff("变更", rel, stored, size, mtime, digest=digest,
                                old_sha=old_sha, old_size=old_size,
-                               old_last=old_last)
+                               old_last=old_last, old_mtime=old_mtime)
                 return 0
 
             # 不算哈希的模式（快速预检 / 快速建档）：仍用 size+mtime 判断
@@ -1381,11 +1410,12 @@ class Scanner:
                     "UPDATE file_records SET sha256=NULL, file_size=?, mtime=?,"
                     " last_hash_time=NULL WHERE id=?", (size, mtime, rid))
                 self._add_written("变更", rel, stored, size, mtime,
-                                  digest=None, last=None, old_size=old_size)
+                                  digest=None, last=None, old_size=old_size,
+                                  old_mtime=old_mtime, old_sha=old_sha)
                 return 1
             self._add_diff("变更", rel, stored, size, mtime, digest=None,
                            old_sha=old_sha, old_size=old_size,
-                           old_last=old_last)
+                           old_last=old_last, old_mtime=old_mtime)
             return 0
 
         # ---- 分支 C：库里标 deleted，磁盘上又出现 → 恢复有效 ----
@@ -1423,10 +1453,12 @@ class Scanner:
                     (size, mtime, rid))
             self._add_written("恢复", rel, stored, size, mtime,
                               digest=digest, last=last,
-                              old_size=old_size)
+                              old_size=old_size, old_mtime=old_mtime,
+                              old_sha=old_sha)
             return 1
         self._add_diff("恢复", rel, stored, size, mtime, digest=digest,
-                       old_sha=old_sha, old_size=old_size, old_last=old_last)
+                       old_sha=old_sha, old_size=old_size, old_last=old_last,
+                       old_mtime=old_mtime)
         return 0
 
     # ---- 内部工具 ----
@@ -1448,21 +1480,42 @@ class Scanner:
             self._log("已停止（当前文件哈希中断，未写入该记录）")
         return digest
 
-    def _diff_detail(self, kind, size, old_size=None):
-        detail = kind
-        if kind == "变更" and old_size is not None and size is not None:
-            try:
-                detail = "变更 " + fmt_delta(size - old_size)
-            except (TypeError, ValueError):
-                pass
-        return detail
+    def _diff_detail(self, kind, size=None, mtime=None, old_size=None,
+                     old_mtime=None, digest=None, old_sha=None):
+        """状态列文案：状态 + 真正变了的项（大小 / 时间 / 哈希）。
+
+        没变的项直接不写（列宽有限，写「大小没变」纯占地方）；
+        不涉及哈希的模式（快速预检 / 快速建档）没有新哈希，
+        自然只说大小和时间 —— 这时 sha 列显示的是库里的旧值，别当新值看。
+        """
+        if kind not in ("变更", "恢复"):
+            return kind
+        parts = []
+        try:
+            if (size is not None and old_size is not None
+                    and int(size) != int(old_size)):
+                parts.append("大小 " + fmt_delta(int(size) - int(old_size)))
+        except (TypeError, ValueError):
+            pass
+        try:
+            if (mtime is not None and old_mtime is not None
+                    and abs(float(mtime) - float(old_mtime)) >= 1e-6):
+                parts.append("时间 " + fmt_time_delta(
+                    float(mtime) - float(old_mtime)))
+        except (TypeError, ValueError, OverflowError):
+            pass
+        if digest and old_sha and str(digest) != str(old_sha):
+            parts.append(f"哈希 {str(old_sha)[:8]}→{str(digest)[:8]}")
+        return kind + (" " + " · ".join(parts) if parts else "")
 
     def _add_diff(self, kind, rel, stored, size, mtime, digest=None,
-                  old_sha=None, old_size=None, old_last=None, hash_state=None):
+                  old_sha=None, old_size=None, old_last=None,
+                  old_mtime=None, hash_state=None):
         """只读模式：差异清单加一条（表格行 + 写回库用的结构化记录）。
         digest 是本次算出的新哈希（不算哈希的模式为 None）；
         old_sha 是库里的旧哈希，变更行也显示出来，但写回时绝不会用它。"""
-        detail = self._diff_detail(kind, size, old_size)
+        detail = self._diff_detail(kind, size, mtime, old_size, old_mtime,
+                                   digest, old_sha)
         if hash_state is None:
             hash_state = ("已计算" if digest
                           else ("旧哈希" if old_sha else "未计算"))
@@ -1483,12 +1536,13 @@ class Scanner:
         })
 
     def _add_written(self, kind, rel, stored, size, mtime, digest=None,
-                     last=None, old_size=None):
+                     last=None, old_size=None, old_mtime=None, old_sha=None):
         """可写模式：本次已经写进数据库的修改，作为结果行显示。
         没有 pending，因此不会被「写入数据库」当成待写回的差异。"""
         self.ui["rows"].append(
             (rel, digest or "", size, mtime, last,
-             self._diff_detail(kind, size, old_size), self.root))
+             self._diff_detail(kind, size, mtime, old_size, old_mtime,
+                               digest, old_sha), self.root))
         self.ui["pending"].append(None)
 
     def _scope_sql(self):
@@ -3092,8 +3146,10 @@ COLS = [("chk", "选", 32, 30, False),
         ("last", "上次校验", 200, 190, False),
         # SHA256 全 64 位 hex 按 19px 字号 ≈ 630px，留余量取 680（表格有横向滚动）
         ("sha", "SHA256", 680, 120, False),
-        # 状态列会显示「变更 +2.25 KB」这类带大小的文案，按完整宽度留足
-        ("status", "状态", 150, 140, False)]
+        # 状态列要写清「到底哪里变了」：
+        # 「变更 大小 +102.35 MB · 时间 +12 天 · 哈希 a1b2c3d4→e5f6a7b8」按 19px
+        # 字号实测 575px，留余量取 600；没变的项不写，只有变化项才占宽度
+        ("status", "状态", 600, 150, False)]
 COLS_SINGLE = ("chk", "rel", "size", "mtime", "last", "sha", "status")
 COLS_MULTI = ("chk", "root", "rel", "size", "mtime", "last", "sha", "status")
 
@@ -3304,7 +3360,9 @@ def build_hash_tab(parent, app=None):
     def _widen_time_cols():
         """旧配置一次性放宽（之后仍以用户自己拖的宽度为准）：
         1. 「修改时间 / 上次校验」显示到秒（186px 起）——窄宽度会把时间切成两半；
-        2. SHA256 改为显示完整 64 位（约 630px 起）——旧默认 170px 只放得下前 10 位。
+        2. SHA256 改为显示完整 64 位（约 630px 起）——旧默认 170px 只放得下前 10 位；
+        3. 状态列改为写全「大小 / 时间 / 哈希」三种变化（约 600px 起）——
+           原来的 150px 只够放「变更 +2.25 KB」。
         没有记忆宽度时不用动：默认宽度本身就按当前缩放换算，不会截字；
         这种情况也就不写配置文件。"""
         sec = config.get_section("tables")
@@ -3332,6 +3390,15 @@ def build_hash_tab(parent, app=None):
                 widths["sha"] = 680
                 changed = True
             sec["hashscan.shafmt"] = 2
+        if sec.get("hashscan.changefmt") != 2:
+            try:
+                _w = int(widths.get("status") or 0)
+            except (TypeError, ValueError):
+                _w = 0
+            if 0 < _w < 480:
+                widths["status"] = 600
+                changed = True
+            sec["hashscan.changefmt"] = 2
         if not changed:
             return
         sec["hashscan.main"] = widths
