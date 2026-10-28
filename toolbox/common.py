@@ -16,7 +16,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ttk_font, ui_scale
 
-APP_VERSION = "1.66"
+APP_VERSION = "1.67"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -622,23 +622,48 @@ def make_log_panel(parent, row, colspan=3, title="运行日志", height=12):
 
 def make_tip(parent, row, text, colspan=3, autowrap=False, font=None):
     """提示文字：按容器宽度自动换行，避免长提示在窄窗口被裁掉；
-    配合 colspan=1 使用可避免跨列提示把表单列宽撑开。"""
+    配合 colspan=1 使用可避免跨列提示把表单列宽撑开。
+
+    `auto_wrap=False` 很关键：ui.Label 自带的自动折行会按父容器宽度
+    自行改 wraplength，和这里的 <Configure> 逻辑抢同一个属性，
+    两个公式算出的值不同，文字就会在 1 行 / 2 行之间来回跳（上下抖）。
+    """
     lbl = ttk.Label(parent, text=text, foreground=COLOR["text_secondary"],
-                    font=font or FONTS["base"],
+                    font=font or FONTS["base"], auto_wrap=False,
                     wraplength=820, justify="left", anchor="w")
     lbl.grid(row=row, column=0, columnspan=colspan,
              sticky="we" if autowrap else "w", padx=8, pady=(0, 6))
 
+    seen = {"w": -1}
+
+    def _apply(width):
+        """按给定宽度定折行。
+
+        event.width 是**真实像素**，而 wraplength 走设计像素（CTk 会再乘
+        缩放），高 DPI 下要先除回去，否则永远差一截、文字还是被裁。
+        宽度没实质变化（<24px）就不动。
+        """
+        if width <= 80:
+            return
+        design = int(round(width / max(1.0, ui_scale())))
+        if design == seen["w"]:
+            return
+        seen["w"] = design
+        w = max(240, design - 16)
+        if abs(int(float(lbl.cget("wraplength") or 0)) - w) > 24:
+            lbl.configure(wraplength=w)
+
     def _rewrap(event):
+        """只按**宽度**重算折行（高度变化也发 <Configure>，那种一律忽略）。"""
         try:
-            if event.width > 80:
-                w = max(240, event.width - 32)
-                if abs(int(lbl.cget("wraplength")) - w) > 12:
-                    lbl.configure(wraplength=w)
+            _apply(event.width)
         except Exception:
             pass
 
     parent.bind("<Configure>", _rewrap, add="+")
+    # 容器宽度可能在 bind 之前就定好了（那样 <Configure> 再也不会来），
+    # 排一次延迟测量，否则折行宽度永远停在初始的 820
+    lbl.after(200, lambda: _apply(parent.winfo_width()))
     return lbl
 
 
@@ -990,8 +1015,9 @@ class ScrollPage(tk.Frame):
     带 weight 的表格行就被压成一条缝（表格越小越看不见，越看不见越不敢用）。
 
     高度策略：
-      · 内容自然高度 ≥ 可视高度 → 内容按自然高度摆放，右侧出滚动条，整页上下滚；
+      · 内容自然高度 ≥ 可视高度 → 内容按自然高度摆放，整页上下滚；
       · 内容更矮 → 把内容拉到可视高度，带 weight 的行（表格）因此撑满，底部不留白。
+      滚动条常驻右侧（内容矮时滑块满格），只做视觉提示，不参与宽度计算。
 
     用法：
         page = ScrollPage(parent)
@@ -1003,6 +1029,17 @@ class ScrollPage(tk.Frame):
         page.refresh()          # 内容高度可能变了（展开日志 / 提示折行）时叫一次
 
     滚轮：指针在本页内、且不在表格 / 文本框上时滚页面（那些控件自己滚）。
+
+    三个抗抖动设计（v1.67，之前实测会「上下抽搐 + 顶部说明文字抖」）：
+      · body 用**原生 tk.Frame**。CTk 的 Frame 会把「当前实际高度」反算进
+        winfo_reqheight()，于是「把它拉高 20px → 它报的请求高度也高 20px →
+        再拉高一次」，need 在 906 / 926 之间反复横跳，scrollregion 每 500ms
+        变一次，页面就小幅上下抽。原生 Frame 的请求高度只由子控件决定。
+      · 滚动条**常驻**，不做显示 / 隐藏切换。移除会让 canvas 变宽十几像素，
+        正文跟着重排、提示文字多折一行，`<Configure>` 又反过来触发布局 ——
+        宽度一变就是一台自我驱动的振荡器。常驻后正文宽度是常量。
+      · 内容比可视区高时**不写死高度**，用 canvas 的 height=0（窗口自然
+        请求高度），免得把 body 压矮又让子控件把矮高度当请求高度报回来。
     """
 
     def __init__(self, master=None, bg=None, **kw):
@@ -1012,34 +1049,47 @@ class ScrollPage(tk.Frame):
         self.grid_columnconfigure(0, weight=1)
 
         self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0,
-                                takefocus=0)
+                                takefocus=0,
+                                yscrollincrement=max(20, int(round(48 * ui_scale()))))
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.bar = ttk.Scrollbar(self, orient=tk.VERTICAL,
                                  command=self.canvas.yview)
+        self.bar.grid(row=0, column=1, sticky="ns")      # 常驻：宽度恒定
         self.canvas.configure(yscrollcommand=self.bar.set)
-        self._bar_shown = False
-        self._item_h = -1
+        self._scrollable = False        # 内容是否超出可视区（决定滚轮是否响应）
+        self._key = None
         self._need = -1
+        self._pending = None
         self._job = None
         self._watch = None
 
-        self.body = ui.Frame(self.canvas, fg_color=bg, corner_radius=0)
+        # 原生 tk.Frame：请求高度只反映子控件，不会被「刚被拉高」带偏
+        self.body = tk.Frame(self.canvas, bg=bg, highlightthickness=0, bd=0)
         self._win = self.canvas.create_window(0, 0, window=self.body,
                                               anchor="nw")
         self.canvas.bind("<Configure>", lambda _e: self.schedule(), add="+")
-        self.body.bind("<Configure>", lambda _e: self.schedule(), add="+")
+        # 注意：**不要**给 body 绑 <Configure>。body 的尺寸是这里设的，
+        # 它回过来的 Configure 只是自己动作的回声；拿它当输入就会形成
+        # 「设高度 → 收到 Configure → 再设高度」的自激循环。
         self.bind_all("<MouseWheel>", self._on_wheel, add="+")
+        self.after_idle(self.schedule)
         self._tick()
 
     # ---------------- 滚轮 ----------------
     def _on_wheel(self, event):
+        """页面自己滚，并吃掉事件，别让外层再滚一次（那是「抽搐」的来源之一）。"""
         try:
-            if not self._bar_shown or not self.winfo_exists():
+            if not self._scrollable or not self.winfo_exists() \
+                    or not self.winfo_ismapped():
                 return
             widget = event.widget
             if _self_scrolls(widget) or not _page_contains(self, widget):
                 return
-            self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+            # 一格滚轮（delta=120）滚 yscrollincrement 个像素；
+            # 触控板那种小 delta 也至少动 1 格，不然手感发黏
+            step = -1 if event.delta > 0 else 1
+            self.canvas.yview_scroll(step, "units")
+            return "break"
         except Exception:
             pass
 
@@ -1066,41 +1116,59 @@ class ScrollPage(tk.Frame):
             if cw <= 1 or ch <= 1:            # 还没 map，等 <Configure>
                 return
             need = self.body.winfo_reqheight()
-            self._need = need
-            show = need > ch + 1
-            if show != self._bar_shown:
-                self._bar_shown = show
-                if show:
-                    self.bar.grid(row=0, column=1, sticky="ns")
-                else:
-                    self.bar.grid_remove()
-                    self.canvas.yview_moveto(0)
-                # 滚动条占不占宽会改变正文宽度，宽度变了要再对一次
-                self.schedule()
+            if need <= 1:                     # 还没测量出来，别急着定高度
                 return
-            want = max(need, ch)
-            if want != self._item_h:
-                self._item_h = want
-                self.canvas.itemconfigure(self._win, width=cw, height=want)
-            else:
-                self.canvas.itemconfigure(self._win, width=cw)
-            self.canvas.configure(scrollregion=(0, 0, cw, want))
+            # 滞回：出滚动条要超出 2px，撤的时候要真的回到可视高度内，
+            # 中间留 2px 死区，免得在临界高度上来回翻。
+            # （滚动条槽位已固定宽度，正文不会因它出现而重新折行，
+            #   这里的死区只是给外部内容变化留余量。）
+            # 内容能不能滚：只影响滚轮是否响应 + 滚动条要不要灰掉，
+            # **不再改变布局宽度**（滚动条常驻），所以这里可以放心随高度变。
+            scrollable = need > ch + 2
+            if scrollable != self._scrollable:
+                self._scrollable = scrollable
+                if not scrollable:
+                    self.canvas.yview_moveto(0)
+            # 内容矮 → 拉到可视高度，让带 weight 的行（表格）撑满；
+            # 内容高 → **height=0 交给 canvas 用窗口自身的请求高度**，
+            # 绝不写死一个像素值。写死成 max(need, ch) 会把 body 压得比
+            # 内容矮，被压的 CTk 表格容器又会把这个矮高度当成自己的请求
+            # 高度报回来，need 就在 906 / 926 之间来回跳 —— 页面上下抽搐的
+            # 真凶。（height=0 在 Tk 里表示「用窗口的请求尺寸」）
+            tall = need > ch
+            want = need if tall else ch
+            key = (cw, want, tall)
+            if key != self._key:
+                self._key = key
+                if tall:
+                    self.canvas.itemconfigure(self._win, width=cw, height=0)
+                else:
+                    self.canvas.itemconfigure(self._win, width=cw, height=want)
+                self.canvas.configure(scrollregion=(0, 0, cw, want))
+            self._need = need
         except Exception:
             pass
 
     def _tick(self):
-        """每 500ms 对一次内容高度。
+        """低频兜底：内容高度确实变了（展开日志、提示多折一行）时补一次布局。
 
-        文字折行、展开日志这类变化不会触发 <Configure>（容器高度由画布
-        固定），靠这个廉价轮询兜住，免得页面底部被悄悄裁掉。
+        只在**连续两次读到同一个新值**时才认，噪声（1~2px 抖动、
+        中间态）一律丢掉 —— 这个轮询是安全网，不是主驱动。
         """
         try:
             if not self.winfo_exists():
                 self._watch = None
                 return
-            if self.body.winfo_reqheight() != self._need:
-                self.schedule()
-            self._watch = self.after(500, self._tick)
+            need = self.body.winfo_reqheight()
+            if abs(need - self._need) >= 8:
+                if self._pending == need:
+                    self._pending = None
+                    self.schedule()
+                else:
+                    self._pending = need
+            else:
+                self._pending = None
+            self._watch = self.after(1000, self._tick)
         except Exception:
             self._watch = None
 
