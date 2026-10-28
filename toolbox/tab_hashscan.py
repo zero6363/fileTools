@@ -24,6 +24,11 @@
       上级库（rel_path 加各自相对上级的目录前缀），本级库用完即删 ——
       D:/code 扫出来的数据会回到 D:/filehash.db 里统一管理，不留第二份库；
       没有上级库时退化成原来的方向：把各级子库并进本级库。
+      **查找顺序（v1.62）**：优先只在「已管理目录」（配置 hashscan.roots）里找
+      上级库和子库 —— 只读配置 + 判库文件是否存在，一个文件夹都不遍历；
+      管理目录里凑不出可合并的库时才弹窗问要不要遍历文件夹，
+      同意后在后台线程递归找（只 scandir 目录、认文件名、不读文件内容），
+      界面实时显示已查文件夹数，找到后先列清单确认再合并。
       重复记录**保留较新的那条**（先比 last_hash_time，再比 mtime，
       都相同再比两个库的最后扫描时间，让「缺失」标记也能传播），
       但**哈希值不会被空值覆盖**：较新却没算哈希的记录只更新大小 / 修改时间 /
@@ -31,8 +36,9 @@
       上级库辛苦算好的哈希就全被 NULL 冲掉了）。
       合并成功后删除来源库文件。只操作数据库，不读任何普通文件。
   三之二、用上级库生成当前目录的库（反方向）
-      「用上级库」从当前目录**逐级往上**找最近的 filehash.db（上级不一定是一级，
-      一直找到盘符根），把属于本目录范围的记录搬过来、rel_path 去掉前缀，
+      「用上级库」同样先查「已管理目录」里的上级库；没有再问是否往上逐级找
+      （每级只判一次 filehash.db 在不在，不遍历文件夹内容，几乎不耗硬盘），
+      找到后把属于本目录范围的记录搬过来、rel_path 去掉前缀，
       生成 / 合并出当前目录自己的库。同样只搬数据库记录，不 stat、不读文件；
       往上到根都没有库时给出提示。
   三之三、右键校验哈希（只读）
@@ -1692,6 +1698,88 @@ def find_parent_db(path):
             return cur, dbp
 
 
+# ------------------------------------------------------------
+# 「已管理目录」优先：先查配置里登记过的目录，一个文件夹都不用遍历
+# ------------------------------------------------------------
+
+def norm_key(path):
+    """路径比较用的键：绝对化 + Windows 大小写不敏感"""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def is_under(path, parent):
+    """path 是否在 parent 之下（含两者相同）。
+
+    比较时补上分隔符，避免「D:/code2」被当成「D:/code」的子目录。
+    """
+    p = norm_key(path).rstrip("\\/")
+    c = norm_key(parent).rstrip("\\/")
+    return p == c or p.startswith(c + os.sep)
+
+
+def managed_libs():
+    """「已管理目录」里登记的库：[(库所在目录, 库文件路径)]。
+
+    只读配置文件，**不遍历任何文件夹**；被禁用（disabled）的目录不参与 ——
+    禁用的语义就是「暂时别用它」，合并会删来源库，更要尊重这个标记。
+    """
+    out, seen = [], set()
+    for it in load_roots():
+        if it.get("disabled"):
+            continue
+        dbp = os.path.abspath(it.get("db") or os.path.join(it["path"], DB_NAME))
+        key = norm_key(dbp)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((os.path.dirname(dbp), dbp))
+    return out
+
+
+def find_parent_db_in_managed(root):
+    """只在「已管理目录」里找上级库，取最近的一级。
+
+    条件：库所在目录是 root 的上级、库文件真实存在。不遍历任何文件夹
+    （只 isfile 几个已知路径）。返回 (上级根目录, 库文件路径) 或 None。
+    """
+    root = os.path.abspath(root)
+    best = None
+    for lib_dir, dbp in managed_libs():
+        if norm_key(lib_dir) == norm_key(root):
+            continue                       # 自己不算自己的上级
+        if not is_under(root, lib_dir):
+            continue                       # 库目录不是本目录的上级
+        if not os.path.isfile(dbp):
+            continue
+        if best is None or len(os.path.abspath(lib_dir)) > len(best[0]):
+            best = (os.path.abspath(lib_dir), dbp)
+    return best
+
+
+def find_sub_dbs_in_managed(root, skip=None):
+    """只在「已管理目录」里找子库，返回 [(rel_dir, db_path)]，格式同 find_sub_dbs。
+
+    rel_dir 是「库所在目录」相对 root 的路径（库不一定叫 root/filehash.db，
+    配置里可能指向别处，所以按库文件所在目录算）。
+    """
+    root = os.path.abspath(root)
+    skip_key = norm_key(skip) if skip else ""
+    out, seen = [], set()
+    for lib_dir, dbp in managed_libs():
+        if norm_key(lib_dir) == norm_key(root):
+            continue                       # 本级库由 own_db 单独处理
+        if not is_under(lib_dir, root):
+            continue                       # 库目录不在本目录之下
+        key = norm_key(dbp)
+        if key == skip_key or key in seen or not os.path.isfile(dbp):
+            continue
+        seen.add(key)
+        rel = os.path.relpath(os.path.abspath(lib_dir), root).replace(os.sep, "/")
+        out.append(("" if rel == "." else rel, dbp))
+    out.sort(key=lambda x: (x[0].count("/"), x[0].lower()))
+    return out
+
+
 def scope_prefix(target, parent_root):
     """target 相对 parent_root 的路径前缀（/ 分隔、不带首尾斜杠）；同级返回 """""
     rel = os.path.relpath(os.path.abspath(target),
@@ -2570,15 +2658,26 @@ def db_row_count(db_path):
         return -1
 
 
-def find_sub_dbs(root, skip=None):
+def find_sub_dbs(root, skip=None, progress=None):
     """列出 root 之下各级子目录里的 filehash.db（只看文件名，不读普通文件）。
-    返回 [(rel_dir, abs_path)]，rel_dir 用 / 分隔、按层级由浅到深排序。"""
+    返回 [(rel_dir, abs_path)]，rel_dir 用 / 分隔、按层级由浅到深排序。
+
+    progress：每查完 400 个文件夹回调一次（参数是已查目录数），
+    给后台线程报进度用 —— 回调里不要碰 Tk。
+    """
     root = os.path.abspath(root)
     skip_key = os.path.normcase(os.path.abspath(skip)) if skip else ""
     out = []
     stack = [long_path(root)]
+    n_dirs = 0
     while stack:
         cur = stack.pop()
+        n_dirs += 1
+        if progress is not None and n_dirs % 400 == 0:
+            try:
+                progress(n_dirs)
+            except Exception:
+                pass
         try:
             with os.scandir(cur) as it:
                 entries = list(it)
@@ -2651,38 +2750,78 @@ def db_scan_time(db_path):
     return t
 
 
-def plan_merge(root):
+def plan_merge(root, deep=False, progress=None):
     """决定「合并数据库」的目标库与来源库。
 
-    规则（v1.52 起）：
-      · 先往上找最近的上级库（一级一级往上看，直到盘符根）——
-        找到就把「本级库 + 各级子库」都并进那个上级库，rel_path 加本目录前缀，
-        本级库用完即删。这样 D:/code 扫出来的数据会回到 D:/filehash.db 里统一管理，
-        不会在 D:/code 里另起一份各说各话的库。
+    规则（v1.52 起，v1.62 加了「已管理目录优先」）：
+      · 先往上找最近的上级库，找到就把「本级库 + 各级子库」都并进那个上级库，
+        rel_path 加本目录前缀，本级库用完即删。这样 D:/code 扫出来的数据会回到
+        D:/filehash.db 里统一管理，不会在 D:/code 里另起一份各说各话的库。
       · 没有上级库时维持原样：把各级子库并进本级库。
+      · **查找顺序（v1.62）**：deep=False 时只查「已管理目录」里登记过的库，
+        一次文件夹遍历都不做；deep=True 才回退到遍历文件夹（向上逐级 + 向下递归），
+        以便找出没登记过的库。
 
-    返回 dict(target_root, target_db, sources=[(rel_dir, db_path, kind)], upward)，
-    kind：self = 本级库 / sub = 子目录库，两者合并完都会被删除。
+    返回 dict(target_root, target_db, sources=[(rel_dir, db_path, kind)],
+    upward, deep)，kind：self = 本级库 / sub = 子目录库，两者合并完都会被删除。
     """
     root = os.path.abspath(root)
     own_db = os.path.join(root, DB_NAME)
-    found = find_parent_db(root)
+    off = disabled_roots()
+    found = find_parent_db_in_managed(root)
+    if not found and deep:
+        cand = find_parent_db(root)
+        # 被禁用的目录不当合并目标：禁用就是「暂时别用它」，别默默往里写
+        if cand and not db_in_disabled(cand[1], off):
+            found = cand
     if found:
         target_root, target_db = found
         base = scope_prefix(root, target_root)          # 本级相对上级的前缀
         sources = []
         if os.path.isfile(own_db):
             sources.append((base, own_db, "self"))
-        for rel_dir, sub_path in find_sub_dbs(root, skip=own_db):
+        for rel_dir, sub_path in _sub_db_sources(root, own_db, deep, progress, off):
             prefix = "/".join(x for x in (base, rel_dir) if x)
             sources.append((prefix, sub_path, "sub"))
         if sources:
             return dict(target_root=target_root, target_db=target_db,
-                        sources=sources, upward=True)
-    subs = find_sub_dbs(root, skip=own_db)
+                        sources=sources, upward=True, deep=deep)
+    subs = _sub_db_sources(root, own_db, deep, progress, off)
     return dict(target_root=root, target_db=own_db,
                 sources=[(rel_dir, p, "sub") for rel_dir, p in subs],
-                upward=False)
+                upward=False, deep=deep)
+
+
+def disabled_roots():
+    """被禁用（disabled）的目录列表 —— 不参与合并，也不当合并目标"""
+    return [it["path"] for it in load_roots()
+            if it.get("disabled") and it.get("path")]
+
+
+def db_in_disabled(db_path, disabled=None):
+    """db_path 是否位于某个已禁用目录之下"""
+    off = disabled if disabled is not None else disabled_roots()
+    return any(is_under(db_path, d) for d in off)
+
+
+def _sub_db_sources(root, own_db, deep=False, progress=None, disabled=None):
+    """要合并进来的子库：已管理目录里的 + （deep 时）遍历文件夹找到的，去重后浅→深。"""
+    subs = find_sub_dbs_in_managed(root, skip=own_db)
+    if not deep:
+        return subs
+    known = {norm_key(p) for _, p in subs}
+    if own_db:
+        known.add(norm_key(own_db))
+    for rel_dir, p in find_sub_dbs(root, skip=own_db, progress=progress):
+        key = norm_key(p)
+        if key in known:
+            continue
+        if db_in_disabled(p, disabled):        # 遍历会碰到禁用目录下的库，跳过
+            continue
+        known.add(key)
+        subs.append((rel_dir, p))
+    subs.sort(key=lambda x: (x[0].count("/"), x[0].lower()))
+    return subs
 
 
 class MergeTask:
@@ -2987,6 +3126,7 @@ def build_hash_tab(parent, app=None):
         "page_size": DEFAULT_PAGE_SIZE,   # 每页条数，0 = 不分页
         "scanner": None,
         "task": "",           # 当前后台任务："scan" 扫描 / "hash" 补全哈希
+        "finding": False,     # 正在遍历文件夹找待合并的库（合并前的查找阶段）
         "lock": None,
         "anim": False,
         "multi": False,      # 当前表格是否为跨库结果（多显示「所属目录」列）
@@ -3914,7 +4054,26 @@ def build_hash_tab(parent, app=None):
         root = os.path.abspath(root)
         own_db = os.path.join(root, DB_NAME)
 
-        found = find_parent_db(root)
+        # 先查「已管理目录」—— 只比对配置 + isfile，不遍历任何文件夹；
+        # 里面没有上级库时才问是否往上逐级找（每级只 stat 一个文件名，成本很低，
+        # 但按「先看管理目录、没有再问」的约定仍然让用户自己决定）。
+        found = find_parent_db_in_managed(root)
+        how = "已管理目录"
+        if not found:
+            n_man = len(managed_libs())
+            if not messagebox.askyesno(
+                    "已管理目录里没有上级库",
+                    f"「{root}」往上没有登记过 {DB_NAME}。\n"
+                    f"（当前已管理 {n_man} 个目录，都没匹配上）\n\n"
+                    f"要往上逐级查一下吗？\n"
+                    f"· 只检查每一级目录里有没有 {DB_NAME}，"
+                    f"不遍历文件夹、不读文件内容\n"
+                    f"· 最多查到盘符根，十几级，几乎不占硬盘\n\n"
+                    f"选「否」就先扫描一次上级目录（快速建档即可），"
+                    f"它会被记进「已管理目录」，下次直接命中。"):
+                return
+            found = find_parent_db(root)
+            how = "逐级查找"
         if not found:
             messagebox.showinfo(
                 "没有找到上级数据库",
@@ -3937,7 +4096,7 @@ def build_hash_tab(parent, app=None):
             return
 
         exists = os.path.isfile(own_db)
-        msg = (f"上级库：{parent_db}\n"
+        msg = (f"上级库：{parent_db}（来源：{how}）\n"
                f"范围：{prefix}/　共 {n} 条（{fmt_size(nbytes)}）\n"
                f"目标库：{own_db}\n\n")
         msg += ("当前目录已有数据库，会把上级的记录合并进来"
@@ -4053,23 +4212,102 @@ def build_hash_tab(parent, app=None):
         state["scanner"] = None
 
     def merge_dbs():
-        """合并数据库：有上级库就并上去（本级 + 子库 → 上级库），否则子库并本级。"""
+        """合并数据库：有上级库就并上去（本级 + 子库 → 上级库），否则子库并本级。
+
+        查找顺序（v1.62）：先只在「已管理目录」里找 —— 只读配置 + isfile，
+        一个文件夹都不遍历；管理目录里凑不出可合并的库时，才问要不要遍历文件夹。
+        """
         if state["running"]:
             messagebox.showinfo("提示", "当前有任务在跑，等它结束再合并")
+            return
+        if state["finding"]:
             return
         root = clean_path(var_root.get())
         if not root or not os.path.isdir(root):
             messagebox.showwarning("提示", "请先选择一个存在的扫描根目录")
             return
+        root = os.path.abspath(root)
+
+        # 第一轮：只查已管理目录，零遍历
         plan = plan_merge(root)
-        sources = plan["sources"]
-        if not sources:
-            messagebox.showinfo(
-                "提示",
-                f"「{root}」自己没有 {DB_NAME}，各级子文件夹里也没有找到，"
-                f"没有需要合并的库。")
+        if plan["sources"]:
+            confirm_merge(plan, root)
             return
 
+        n_man = len(managed_libs())
+        n_off = sum(1 for r in load_roots() if r.get("disabled"))
+        tip = (f"\n（另有 {n_off} 个已禁用目录不参与，"
+               f"要带上就在「管理…」里启用）" if n_off else "")
+        if not messagebox.askyesno(
+                "已管理目录里没有可合并的库",
+                f"「{root}」自己、它的上级目录、下面各级子目录，"
+                f"都没在「已管理目录」（{n_man} 个）里登记过 {DB_NAME}。{tip}\n\n"
+                f"要遍历「{root}」下的文件夹去找吗？\n"
+                f"· 只找名为 {DB_NAME} 的文件，不读文件内容\n"
+                f"· 目录多的大盘可能要几十秒到几分钟\n"
+                f"· 找到后先列清单让你确认，确认了才合并\n\n"
+                f"选「否」就先分别扫描这些目录，它们会被记进「已管理目录」，"
+                f"下次点一下就能命中，不用再遍历。"):
+            return
+        find_merge_sources(root)
+
+    def find_merge_sources(root):
+        """遍历文件夹查找可合并的库（后台线程，只 scandir 目录、不读文件）。"""
+        done = {"flag": False, "plan": None, "error": None, "dirs": 0}
+        state["finding"] = True
+        btn_start.config(state=tk.DISABLED)
+        btn_stop.config(state=tk.DISABLED)
+        lbl_prog.config(text="正在遍历文件夹查找数据库…")
+        bar_all.config(mode="indeterminate")
+        bar_all.start(14)
+
+        def note(n):
+            done["dirs"] = n            # 后台线程只写这个数，界面在主线程读
+
+        def worker():
+            try:
+                done["plan"] = plan_merge(root, deep=True, progress=note)
+            except Exception as e:
+                done["error"] = e
+            finally:
+                done["flag"] = True
+
+        threading.Thread(target=worker, daemon=True).start()
+
+        def poll():
+            if not done["flag"]:
+                lbl_prog.config(
+                    text="正在遍历文件夹查找数据库…"
+                         + (f"　已查 {done['dirs']} 个文件夹" if done["dirs"] else ""))
+                parent.after(150, poll)
+                return
+            state["finding"] = False
+            bar_all.stop()
+            bar_all.config(mode="determinate")
+            bar_all["value"] = 0
+            btn_start.config(state=tk.NORMAL)
+            lbl_prog.config(text="未开始")
+            if done["error"]:
+                log(f"遍历查找数据库失败：{done['error']}")
+                messagebox.showerror("遍历失败",
+                                     f"查找 {DB_NAME} 时出错：\n{done['error']}")
+                return
+            plan = done["plan"] or {}
+            if not plan.get("sources"):
+                messagebox.showinfo(
+                    "没有找到可合并的库",
+                    f"遍历「{root}」下的所有文件夹（已查 {done['dirs']} 个），"
+                    f"也没有找到可合并的 {DB_NAME}。\n\n"
+                    f"先扫描一次要合并的目录（快速建档即可），再来合并。")
+                return
+            log(f"遍历找到 {len(plan['sources'])} 个待合并的库")
+            confirm_merge(plan, root)
+
+        parent.after(150, poll)
+
+    def confirm_merge(plan, root):
+        """把 plan 里的库合并起来（先弹确认清单，确认后才动库）"""
+        sources = plan["sources"]
         lines = []
         for rel_dir, sp, kind in sources[:10]:
             n = db_row_count(sp)
@@ -4089,8 +4327,11 @@ def build_hash_tab(parent, app=None):
             title = "合并数据库"
             head = (f"把「{plan['target_root']}」下的 {len(sources)} 个子库"
                     f"合并进来？\n\n")
+        src_note = ("来源：遍历文件夹查找（含未登记的库）" if plan.get("deep")
+                    else "来源：已管理目录（没有遍历文件夹）")
         msg = (head + "\n".join(lines)
                + f"\n\n目标库：{plan['target_db']}"
+               + f"\n{src_note}"
                + (f"\n最后一次扫描：{fmt_time(dst_time)}" if dst_time else "")
                + "\n\n· 逐条比「上次校验 → 修改时间 → 库的最后扫描时间」，谁新用谁"
                + "\n· 来源库更新时，连「缺失」标记一起覆盖目标库"
