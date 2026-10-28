@@ -3,12 +3,17 @@
 ================================================================
 按《冷数据哈希扫描工具（GUI版）开发文档》实现，并在其后追加了四项能力：
 
-  一、四种模式（是否改库 × 是否算哈希 两两组合，界面按此顺序排）
+  一、四种模式（是否改库 × 是否算哈希 两两组合，界面按此顺序排）+ 一个抽查变体
       快速预检   —— 只读，不算哈希：只比对大小 + 修改时间，不读文件、不写库，只出差异清单
       快速建档   —— 改库，不算哈希：只记路径 / 大小 / 修改时间，几秒到几十秒建好全盘索引，
                     记录里 sha256 为空（界面标「未计算哈希」），之后跑完整建档会补上
       完整检查   —— 只读，算哈希：算出新哈希做核对，但一个字节都不写库
       完整建档   —— 改库，算哈希：读文件算 SHA256，并标记缺失
+      随机完整检查 —— 只读，算哈希：和完整检查完全一样，只是**按体积随机抽一部分文件**
+                    读盘（v1.65）。界面上填百分比（默认 20），100 GB 的目录平均读 20 GB；
+                    每个文件独立以该概率入选，目录越大越接近目标，不追求精确。
+                    枚举和缺失判断仍是全量（不读内容，只 scandir），所以「缺失」照样准，
+                    省下来的只是算哈希的读盘时间；差异清单 / 写回 / 筛选与完整检查一致。
   一之二、差异写回
       「快速预检」「完整检查」扫完的差异清单可多选（Ctrl/Shift 或「全选」），
       右键或用表格上方的「写入数据库」只把选中的行写回库；底部可按 全部 / 新增 / 更新 / 删除 筛选。
@@ -78,6 +83,7 @@ import hashlib
 import os
 import pathlib
 import queue
+import random
 import sqlite3
 import subprocess
 import threading
@@ -100,14 +106,16 @@ LOG_NAME = "scan_log.txt"
 CHUNK = 1024 * 1024          # 哈希读取块大小 1MB
 COMMIT_EVERY = 400           # 每处理多少个文件提交一次事务
 
-# 四种模式 = 是否改库 × 是否算哈希
+# 四种模式 = 是否改库 × 是否算哈希；「随机完整检查」是完整检查的抽查变体
 MODE_QUICK = "quick"        # 快速建档：改库，不算哈希
 MODE_PRECHECK = "precheck"  # 快速预检：只读，不算哈希
 MODE_FULL = "full"          # 完整建档：改库，算哈希
 MODE_VERIFY = "verify"      # 完整检查：只读，算哈希
-MODE_ORDER = (MODE_PRECHECK, MODE_QUICK, MODE_VERIFY, MODE_FULL)
+MODE_SAMPLE = "sample"      # 随机完整检查：只读，算哈希，只抽查一部分文件
+MODE_ORDER = (MODE_PRECHECK, MODE_QUICK, MODE_VERIFY, MODE_FULL, MODE_SAMPLE)
 MODE_NAMES = {MODE_QUICK: "快速建档", MODE_PRECHECK: "快速预检",
-              MODE_FULL: "完整建档", MODE_VERIFY: "完整检查"}
+              MODE_FULL: "完整建档", MODE_VERIFY: "完整检查",
+              MODE_SAMPLE: "随机完整检查"}
 # 「已管理目录」里记录的模式名（多一个「继承上级」，不是扫描模式）
 ROOT_MODE_NAMES = dict(MODE_NAMES, seed="继承上级")
 MODE_LABELS = {
@@ -115,10 +123,14 @@ MODE_LABELS = {
     MODE_PRECHECK: "快速预检 · 只读",
     MODE_FULL: "完整建档 · 改库校验",
     MODE_VERIFY: "完整检查 · 只读校验",
+    MODE_SAMPLE: "随机完整检查 · 只读抽查",
 }
 # 哪些模式会写库 / 哪些会算哈希
 WRITABLE_MODES = (MODE_QUICK, MODE_FULL)
-HASHING_MODES = (MODE_FULL, MODE_VERIFY)
+HASHING_MODES = (MODE_FULL, MODE_VERIFY, MODE_SAMPLE)
+
+# 随机完整检查的默认抽检比例（按体积，%）
+DEFAULT_SAMPLE_PCT = 20
 
 # 差异清单的分类（底部筛选按钮）
 CAT_NEW, CAT_UPD, CAT_DEL = "新增", "更新", "删除"
@@ -406,8 +418,10 @@ def load_roots():
 
 
 def save_roots(roots):
+    # 用 update_section 只改 roots 这一项：整段替换会把分区里的其它偏好
+    # （sample_pct 之类）一起抹掉 —— 每扫完一次目录就丢一次设置。
     try:
-        return config.set_section("hashscan", {"roots": roots})
+        return config.update_section("hashscan", roots=roots)
     except Exception:
         return False
 
@@ -1057,17 +1071,20 @@ class Scanner:
     """一次扫描任务。所有 UI 更新交给主线程轮询 ui 字典完成，避免跨线程操作 Tk。"""
 
     def __init__(self, root, db_path, prefix, mode, log, logfile=None,
-                 stop_event=None, readonly=False):
+                 stop_event=None, readonly=False, sample_pct=DEFAULT_SAMPLE_PCT):
         self.root = os.path.abspath(root)
         self.db_path = db_path
         self.prefix = prefix
-        self.mode = mode                 # full / quick / precheck
+        self.mode = mode                 # full / quick / precheck / verify / sample
         self.log = log
         self.logfile = logfile
         self.stop = stop_event or threading.Event()
         self.started_at = time.time()
         # 写档模式但开扫前探测到库写不进去时，整场退化成只读（差异只在列表里看）
         self.readonly = readonly
+        # 随机完整检查的抽检比例（按体积，%）：每个文件独立以这个概率入选
+        self.sample_pct = sample_pct
+        self.sample_info = {}            # 抽样统计（文件数 / 字节数），日志与界面用
         self.ui = {"phase": "准备", "done": 0, "total": 0,
                    "cur_name": "", "cur_done": 0, "cur_total": 0,
                    "done_flag": False, "aborted": False, "error": None,
@@ -1085,7 +1102,7 @@ class Scanner:
 
     @property
     def hashing(self):
-        """会读文件算哈希的模式：完整建档 / 完整检查"""
+        """会读文件算哈希的模式：完整建档 / 完整检查 / 随机完整检查"""
         return self.mode in HASHING_MODES
 
     # ---- 日志 ----
@@ -1107,6 +1124,61 @@ class Scanner:
         if self.prefix and stored.startswith(self.prefix + "/"):
             return stored[len(self.prefix) + 1:]
         return stored
+
+    def _sample_files(self, files):
+        """随机完整检查：按体积比例抽一部分文件，返回抽查子集。
+
+        做法是每个文件独立以「比例%」的概率入选（伯努利抽样）：期望抽查体积
+        正好是总量的那个百分比 —— 100 GB 的目录抽 20% 平均读 20 GB。
+        文件越多越接近目标，不追求精确；实际抽到多少会写进日志和统计。
+        只有「读文件算哈希」这一步按比例省了 I/O，枚举和缺失判断仍然是全量。
+        """
+        total_files = len(files)
+        total_bytes = sum(int(s or 0) for _r, s, _m in files)
+        try:
+            pct = float(self.sample_pct)
+        except (TypeError, ValueError):
+            pct = float(DEFAULT_SAMPLE_PCT)
+        pct = min(100.0, max(0.0, pct))
+        info = dict(pct=pct, total_files=total_files, total_bytes=total_bytes,
+                    files=0, bytes=0, target_bytes=int(total_bytes * pct / 100.0))
+        picked = []
+        if files and pct > 0:
+            if pct >= 100:
+                picked = list(files)
+            else:
+                p = pct / 100.0
+                rnd = random.random
+                picked = [f for f in files if rnd() < p]
+                if not picked:      # 小目录 / 运气太差：至少抽一个，别白跑一趟
+                    picked = [files[random.randrange(total_files)]]
+        info["files"] = len(picked)
+        info["bytes"] = sum(int(s or 0) for _r, s, _m in picked)
+        self.sample_info = info
+        return picked
+
+    def _log_sample(self):
+        """把抽样结果写进日志：抽了多少个 / 多少 GB / 实际占多少"""
+        info = self.sample_info or {}
+        if not info:
+            return
+        total_bytes = info.get("total_bytes") or 0
+        real = (info.get("bytes", 0) / total_bytes * 100.0) if total_bytes else 0.0
+        self._log(
+            f"抽样：按体积抽 {info.get('pct', 0):g}% —— 全量 "
+            f"{info.get('total_files', 0)} 个 / {fmt_size(total_bytes)}，"
+            f"本次抽查 {info.get('files', 0)} 个 / "
+            f"{fmt_size(info.get('bytes', 0))}（{real:.1f}%，"
+            f"目标约 {fmt_size(info.get('target_bytes', 0))}）")
+        if info.get("files", 0) < 200:
+            self._log("提示：抽查样本不足 200 个文件，实际比例与目标可能差得比较多；"
+                      "想更准就调大比例或改用「完整检查」")
+        s = self.stats
+        s["sample_pct"] = info.get("pct", 0)
+        s["sample_files"] = info.get("files", 0)
+        s["sample_bytes"] = info.get("bytes", 0)
+        s["sample_total_files"] = info.get("total_files", 0)
+        s["sample_total_bytes"] = total_bytes
 
     def run(self):
         """返回 stats 字典（结束后 ui["done_flag"]=True）"""
@@ -1139,6 +1211,15 @@ class Scanner:
                 self._log(f"已手动停止（已枚举 {len(files)} 个文件，未做缺失标记）")
                 return self.stats
             self._log(f"枚举完成：{len(files)} 个文件，用时 {time.time() - t0:.1f}s")
+
+            # 随机完整检查：枚举是全量的（否则判不出缺失），只把「算哈希」这一步
+            # 抽掉一部分 —— 硬盘上真正要多读的就是这百分之几十。
+            all_files = files
+            if self.mode == MODE_SAMPLE:
+                self.ui["phase"] = "随机抽样"
+                files = self._sample_files(all_files)
+                self.ui["total"] = len(files)
+                self._log_sample()
 
             # ---------- 阶段 2：打开库 ----------
             # 只读模式（快速预检 / 完整检查）的三种情况都不许写盘：
@@ -1190,15 +1271,31 @@ class Scanner:
                 self._seen_mem = set()
                 self._log(f"临时表不可用（{e}），改用内存比对（结果不受影响）")
 
-            def flush_seen():
-                if not seen_buf:
+            def _flush_buf(buf):
+                """把一格 rel_path 批量写进 seen（TEMP 表或内存 set），然后清空"""
+                if not buf:
                     return
                 if self._seen_mem is None:
                     db.conn.executemany(
-                        "INSERT OR IGNORE INTO seen(rel_path) VALUES(?)", seen_buf)
+                        "INSERT OR IGNORE INTO seen(rel_path) VALUES(?)", buf)
                 else:
-                    self._seen_mem.update(item[0] for item in seen_buf)
-                seen_buf.clear()
+                    self._seen_mem.update(item[0] for item in buf)
+                buf.clear()
+
+            def flush_seen():
+                _flush_buf(seen_buf)
+
+            # 随机完整检查：没抽到的文件同样算「本次遍历到了」，否则缺失检查
+            # 会把它们整片判成「缺失」。这里先把全量 rel_path 登记进 seen
+            # （只写连接级 TEMP 表，主库一个字节都不动）。
+            if self.mode == MODE_SAMPLE and all_files:
+                self.ui["phase"] = "登记已遍历文件"
+                buf = []
+                for rel, _s, _m in all_files:
+                    buf.append((self._stored_rel(rel),))
+                    if len(buf) >= 4000:
+                        _flush_buf(buf)
+                _flush_buf(buf)
 
             # ---------- 阶段 3：比对 / 哈希 ----------
             seen_buf = []
@@ -3161,13 +3258,14 @@ COLS_MULTI = ("chk", "root", "rel", "size", "mtime", "last", "sha", "status")
 
 
 def build_hash_tab(parent, app=None):
-    """⑲ 硬盘哈希扫描：选根目录 → 四模式扫描 → 差异多选写回 → 搜路径/哈希"""
+    """⑲ 硬盘哈希扫描：选根目录 → 五种模式（含随机抽查）→ 差异多选写回 → 搜路径/哈希"""
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(4, weight=1)
 
     make_tip(parent, 0,
-             "冷数据建档与校验：数据库 filehash.db 建在扫描根目录。快速模式只建索引，完整模式计算 SHA256；"
-             "差异可多选写回。「管理…」支持多选目录、查重与镜像比对。",
+             "冷数据建档与校验：数据库 filehash.db 建在扫描根目录。快速模式只建索引，完整模式计算 SHA256，"
+             "「随机完整检查」按体积抽查一部分（默认 20%）；差异可多选写回。"
+             "「管理…」支持多选目录、查重与镜像比对。",
              colspan=1, autowrap=True, font=FONTS["sm"])
 
     state = {
@@ -3262,6 +3360,64 @@ def build_hash_tab(parent, app=None):
         ttk.Radiobutton(frame_mode, text=MODE_LABELS[_key], value=_key,
                         variable=var_mode).grid(
             row=_i // 2, column=_i % 2, sticky="w", padx=(0, 18), pady=0)
+
+    # 抽检比例：只对「随机完整检查」有效，按体积算 —— 目录 100 GB 填 20 就约读 20 GB。
+    # 记在配置里（hashscan.sample_pct），下次打开还是上次填的数。
+    def load_sample_pct():
+        try:
+            v = int(round(float(config.get_section("hashscan").get(
+                "sample_pct", DEFAULT_SAMPLE_PCT))))
+        except (TypeError, ValueError):
+            return DEFAULT_SAMPLE_PCT
+        return min(100, max(1, v))
+
+    var_pct = tk.StringVar(value=str(load_sample_pct()))
+
+    def read_sample_pct():
+        """读「抽检」输入框：返回 (比例, 错误文案)。空 / 非数字 / 超范围都算错。"""
+        raw = str(var_pct.get() or "").strip().rstrip("%").strip()
+        try:
+            v = float(raw)
+        except ValueError:
+            return None, f"「{raw}」不是数字"
+        if not 1 <= v <= 100:
+            return None, f"填的是 {v:g}%，只能填 1–100"
+        return int(round(v)), ""
+
+    box_pct = ui.Frame(frame_mode)
+    box_pct.grid(row=2, column=1, sticky="w", padx=(0, 4))
+    # 这两个短标签必须关掉自动换行：hug-content 容器里 widths 算出来偏窄，
+    # 「%（按体积）」会被折成两行（v1.60 踩过的坑）
+    lbl_pct = ui.Label(box_pct, text="抽检", foreground=COLOR["text_secondary"],
+                       font=FONTS["sm"], auto_wrap=False)
+    lbl_pct.pack(side=tk.LEFT, padx=(0, 4))
+    ent_pct = ui.Entry(box_pct, textvariable=var_pct, width_px=54)
+    ent_pct.pack(side=tk.LEFT)
+    lbl_pct_tail = ui.Label(box_pct, text="%（按体积）",
+                            foreground=COLOR["text_secondary"], font=FONTS["sm"],
+                            auto_wrap=False)
+    lbl_pct_tail.pack(side=tk.LEFT, padx=(4, 0))
+
+    def sync_pct_state(*_a):
+        """只有选了「随机完整检查」才让填比例，其它模式灰掉，省得以为它生效"""
+        on = var_mode.get() == MODE_SAMPLE
+        try:
+            ent_pct.configure(state="normal" if on else "disabled")
+        except Exception:
+            pass
+        try:
+            lbl_pct.configure(text_color=COLOR["text"] if on
+                              else COLOR["text_muted"])
+            lbl_pct_tail.configure(text_color=COLOR["text"] if on
+                                   else COLOR["text_muted"])
+        except Exception:
+            pass
+
+    try:
+        var_mode.trace_add("write", sync_pct_state)
+    except Exception:
+        pass
+    sync_pct_state()
 
     # 完成提示音：默认不勾选，勾选后记住；扫描 / 补哈希 / 校验 / 合并等
     # 正常结束时播放一次 Windows 系统提示音（中途停止或出错不响）。
@@ -3413,7 +3569,28 @@ def build_hash_tab(parent, app=None):
         sec["hashscan.main"] = widths
         config.set_section("tables", sec)
 
+    def _widen_manager_cols():
+        """管理窗「模式」列要放下「随机完整检查」（实测 114px）：
+        旧配置里记过的窄宽度一次性放宽到 128，之后仍以自己拖的为准。"""
+        sec = config.get_section("tables")
+        mgr = sec.get("hashscan.manager")
+        if not isinstance(mgr, dict) or not mgr:
+            return
+        if sec.get("hashscan.modefmt") == 2:
+            return
+        mgr = dict(mgr)
+        try:
+            w = int(mgr.get("mode") or 0)
+        except (TypeError, ValueError):
+            w = 0
+        sec["hashscan.modefmt"] = 2
+        if 0 < w < 120:
+            mgr["mode"] = 128
+            sec["hashscan.manager"] = mgr
+        config.set_section("tables", sec)
+
     _widen_time_cols()
+    _widen_manager_cols()
     setup_tree_columns(tree, "hashscan.main")
     ttk.attach_tree_hover(tree)     # 列宽不够显示成 … 的格子，悬停看全文
 
@@ -5055,6 +5232,12 @@ def build_hash_tab(parent, app=None):
                 text += "（未计算哈希）"
             elif stats.get("nohash"):
                 text += f"，未计哈希 {stats['nohash']}"
+            if mode == MODE_SAMPLE and stats.get("sample_files") is not None:
+                text += (f"　·　抽 {stats.get('sample_pct', 0):g}%："
+                         f"{stats.get('sample_files', 0)}/"
+                         f"{stats.get('sample_total_files', 0)} 个文件，"
+                         f"{fmt_size(stats.get('sample_bytes', 0))}/"
+                         f"{fmt_size(stats.get('sample_total_bytes', 0))}")
             lbl_prog.config(text=text + extra)
 
         # 记录到「已管理目录」配置：统计每次都刷新，最后扫描时间只记完成的。
@@ -5124,6 +5307,10 @@ def build_hash_tab(parent, app=None):
                       source="scan")
             if not sc.writable:
                 head = "已停止" if aborted else MODE_NAMES.get(mode, "")
+                if mode == MODE_SAMPLE and not aborted:
+                    head += (f"（抽 {stats.get('sample_pct', 0):g}%，"
+                             f"{stats.get('sample_files', 0)}/"
+                             f"{stats.get('sample_total_files', 0)} 个文件）")
                 lbl_count.config(text=f"{head}差异 {len(pairs)} 条（未写库）")
             elif errored:
                 lbl_count.config(
@@ -5347,6 +5534,25 @@ def build_hash_tab(parent, app=None):
             return
         root = os.path.abspath(root)
         mode = var_mode.get()
+        # 抽检比例只对「随机完整检查」生效：填错了当场拦下，别等跑完才发现没抽
+        sample_pct = DEFAULT_SAMPLE_PCT
+        if mode == MODE_SAMPLE:
+            pct_value, pct_err = read_sample_pct()
+            if pct_value is None:
+                messagebox.showwarning(
+                    "抽检比例填错了",
+                    f"{pct_err}。\n\n"
+                    f"这里按**体积**填 1–100 的百分比：\n"
+                    f"· 填 20 = 抽查约 20% 的字节（100 GB 的目录约读 20 GB）\n"
+                    f"· 填 100 = 和「完整检查」一样全查")
+                return
+            sample_pct = pct_value
+            if str(var_pct.get()) != str(sample_pct):
+                var_pct.set(str(sample_pct))
+            try:
+                config.update_section("hashscan", sample_pct=sample_pct)
+            except Exception:
+                pass
         db_root, prefix = resolve_db_root(root, False)
         db_path = os.path.join(db_root, DB_NAME)
 
@@ -5420,7 +5626,7 @@ def build_hash_tab(parent, app=None):
         state["stop"] = threading.Event()
         # 不写 scan_log.txt（日志只在界面里看）；子库固定自动并入
         sc = Scanner(root, db_path, prefix, mode, log, "", state["stop"],
-                     readonly=force_readonly)
+                     readonly=force_readonly, sample_pct=sample_pct)
         state["scanner"] = sc
         state["task"] = "scan"
         state["running"] = True
@@ -6815,11 +7021,12 @@ def build_hash_tab(parent, app=None):
 
         cols = [("chk", "选", 40, False), ("path", "扫描目录", 300, True),
                 ("db", "数据库", 150, True), ("count", "记录", 190, False),
-                ("time", "最后扫描", 295, False), ("mode", "模式", 95, False),
+                ("time", "最后扫描", 295, False), ("mode", "模式", 128, False),
                 ("state", "状态", 58, False)]
         # 记录数会显示「有效 6000 / 共 6000」，最后扫描会显示
-        # 「今天（2026-10-27 08:43:48）」，最小宽度按完整文案留足。
-        min_widths = {"chk": 36, "count": 175, "time": 270, "mode": 88,
+        # 「今天（2026-10-27 08:43:48）」，最小宽度按完整文案留足；
+        # 模式列要放下「随机完整检查」（114px）和「继承上级」。
+        min_widths = {"chk": 36, "count": 175, "time": 270, "mode": 120,
                       "state": 54}
         frame = ui.Frame(win)
         frame.grid(row=1, column=0, sticky="nsew", padx=10)
@@ -7335,6 +7542,8 @@ def build_hash_tab(parent, app=None):
     return {
         "var_root": var_root,
         "var_mode": var_mode,
+        "var_pct": var_pct,
+        "sample_pct": lambda: read_sample_pct(),
         "var_kw": var_kw,
         "var_kind": var_kind,
         "var_scope": var_scope,
