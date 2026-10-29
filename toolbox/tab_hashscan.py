@@ -2513,7 +2513,7 @@ class RehashTask:
 
 
 # ============================================================
-# 检查不重复（两个镜像目录按相对路径比对）
+# 检查不重复（两个镜像目录按相对路径比对，纯数据库对比，不读硬盘文件）
 # ============================================================
 
 MIRROR_SAME = "内容一致"
@@ -2525,38 +2525,25 @@ MIRROR_RIGHT = "只在右边"
 MIRROR_UNKNOWN = "无法比较"
 
 
-def _mirror_hash(root, rel, sha, rec_size, rec_mtime, stop=None, tick=None):
-    """取一条记录在磁盘上的当前哈希：库里的可信（大小 + 时间都对得上）就直接用，
-    否则现读现算；文件不在就退回库里的哈希（可能为 None）。
-    返回 (digest, size_now, exists, mtime_now)。"""
-    abs_path = os.path.join(root, *rel.split("/"))
-    try:
-        st = os.stat(long_path(abs_path))
-    except OSError:
-        return sha or None, None, False, None
-    digest = sha
-    if (not digest or rec_mtime is None or int(rec_size or -1) != int(st.st_size)
-            or abs(st.st_mtime - rec_mtime) > 1e-6):
-        try:
-            digest = sha256_file(abs_path, stop, tick)
-        except OSError:
-            return sha or None, st.st_size, True, st.st_mtime
-    return digest, st.st_size, True, st.st_mtime
-
-
 def compare_dirs(left, right, log=None, stop=None, on_progress=None,
                  include_same=False):
-    """按「相对路径」把两个目录的库对齐比对（镜像盘校验）。
+    """按「相对路径」把两个目录的库对齐比对（镜像比对）—— 纯数据库对比。
+
+    只读两边的 file_records（v1.74 起），不 stat、不读任何硬盘文件：
+    · 两边都有：库里哈希都算过就直接比哈希；任一侧没算哈希（快速建档的记录）
+      就比大小 + 修改时间 —— 都一样算「内容一致」，不一样按修改时间分方向。
+    · 只在一边：列出（镜像缺文件）。
+    「同步」不受影响：它只看比对结果的类别和修改时间，真正复制 / 删除 / 改时间
+    仍发生在执行同步那一刻（execute_sync_plan）。
 
     left / right = (root, db_path)。
     返回 (rows, stats)：
       rows  = [(类别, rel, 左哈希, 右哈希, 左大小, 右大小, 左修改时间, 右修改时间, 右rel)]，
               rel = 左路径（只在右边时 = 右路径），右rel = 右侧实际路径（普通模式 = rel）；
-              类别 ∈ 内容不同 / 左右侧有更新 / 只在左边 / 只在右边 / 无法比较；
+              类别 ∈ 内容不同 / 左右侧有更新 / 只在左边 / 只在右边 / 内容一致；
               include_same=True 时「内容一致」的行也进 rows（MIRROR_SAME）
       stats = dict(common, same, diff, update_left, update_right,
                    only_left, only_right, unknown, bytes)
-    哈希在「库里的大小 + 修改时间都对得上」时直接复用，否则现读现算。
     """
     def load(db_path):
         if not db_path or not os.path.isfile(db_path):
@@ -2584,9 +2571,6 @@ def compare_dirs(left, right, log=None, stop=None, on_progress=None,
     stats["common"] = len(common)
     total = len(common) or 1
 
-    def tick(n):
-        stats["bytes"] += n
-
     for i, key in enumerate(common, 1):
         if stop is not None and stop.is_set():
             break
@@ -2594,61 +2578,52 @@ def compare_dirs(left, right, log=None, stop=None, on_progress=None,
         rrel, rsha, rsize, rmt = rmap[key]
         if on_progress:
             on_progress(i, total, lrel)
-        ldig, lsize_now, _lex, lmt_now = _mirror_hash(
-            lroot, lrel, lsha, lsize, lmt, stop, tick)
-        rdig, rsize_now, _rex, rmt_now = _mirror_hash(
-            rroot, rrel, rsha, rsize, rmt, stop, tick)
-        if ldig is None or rdig is None:
-            stats["unknown"] += 1
-            rows.append((MIRROR_UNKNOWN, lrel, ldig, rdig,
-                         lsize_now if lsize_now is not None else lsize,
-                         rsize_now if rsize_now is not None else rsize,
-                         lmt_now, rmt_now, rrel))
-        elif ldig == rdig:
+        if lsha and rsha:
+            same = str(lsha).lower() == str(rsha).lower()
+        else:
+            # 任一侧没算哈希：按库里的大小 + 修改时间判等
+            same = (int(lsize or -1) == int(rsize or -1)
+                    and lmt is not None and rmt is not None
+                    and abs(lmt - rmt) <= 1e-6)
+        if same:
             stats["same"] += 1
             if include_same:
-                rows.append((MIRROR_SAME, lrel, ldig, rdig,
-                             lsize_now if lsize_now is not None else lsize,
-                             rsize_now if rsize_now is not None else rsize,
-                             lmt_now, rmt_now, rrel))
+                rows.append((MIRROR_SAME, lrel, lsha or "", rsha or "",
+                             lsize, rsize, lmt, rmt, rrel))
+            continue
+        stats["diff"] += 1
+        # 内容不同时按修改时间拆分方向：左侧较新 = 要用左更新右；反之亦然
+        if lmt is not None and rmt is not None and lmt > rmt:
+            stats["update_left"] += 1
+            kind = MIRROR_UPD_L
+        elif lmt is not None and rmt is not None and rmt > lmt:
+            stats["update_right"] += 1
+            kind = MIRROR_UPD_R
         else:
-            stats["diff"] += 1
-            # 内容不同时按修改时间拆分方向：左侧较新 = 要用左更新右；反之亦然
-            if lmt_now is not None and rmt_now is not None and lmt_now > rmt_now:
-                stats["update_left"] += 1
-                kind = MIRROR_UPD_L
-            elif lmt_now is not None and rmt_now is not None \
-                    and rmt_now > lmt_now:
-                stats["update_right"] += 1
-                kind = MIRROR_UPD_R
-            else:
-                kind = MIRROR_DIFF
-            rows.append((kind, lrel, ldig, rdig,
-                         lsize_now if lsize_now is not None else lsize,
-                         rsize_now if rsize_now is not None else rsize,
-                         lmt_now, rmt_now, rrel))
+            kind = MIRROR_DIFF
+        rows.append((kind, lrel, lsha or "", rsha or "", lsize, rsize,
+                     lmt, rmt, rrel))
 
     for key, (rel, sha, size, mt) in lmap.items():
         if key in rmap:
             continue
         stats["only_left"] += 1
-        rows.append((MIRROR_LEFT, rel, sha, "", size, None, mt, None, ""))
+        rows.append((MIRROR_LEFT, rel, sha or "", "", size, None, mt, None, ""))
     for key, (rel, sha, size, mt) in rmap.items():
         if key in lmap:
             continue
         stats["only_right"] += 1
-        rows.append((MIRROR_RIGHT, rel, "", sha, None, size, None, mt, rel))
+        rows.append((MIRROR_RIGHT, rel, "", sha or "", None, size, None, mt, rel))
 
     order = {MIRROR_DIFF: 0, MIRROR_UPD_L: 1, MIRROR_UPD_R: 2,
-             MIRROR_LEFT: 3, MIRROR_RIGHT: 4, MIRROR_UNKNOWN: 5,
-             MIRROR_SAME: 6}
+             MIRROR_LEFT: 3, MIRROR_RIGHT: 4, MIRROR_SAME: 6}
     rows.sort(key=lambda r: (order.get(r[0], 9), str(r[1]).lower()))
     if log:
         s = stats
-        log(f"镜像比对完成 —— 共同 {s['common']} 个文件，一致 {s['same']}，"
-            f"内容不同 {s['diff']}（左侧有更新 {s['update_left']}，"
-            f"右侧有更新 {s['update_right']}），只在左边 {s['only_left']}，"
-            f"只在右边 {s['only_right']}，无法比较 {s['unknown']}")
+        log(f"镜像比对完成（纯数据库对比，不读盘）—— 共同 {s['common']} 个文件，"
+            f"一致 {s['same']}，内容不同 {s['diff']}（左侧有更新 "
+            f"{s['update_left']}，右侧有更新 {s['update_right']}），"
+            f"只在左边 {s['only_left']}，只在右边 {s['only_right']}")
     return rows, stats
 
 
@@ -6026,23 +6001,10 @@ def build_hash_tab(parent, app=None):
 
     def start():
         root = clean_path(var_root.get())
-        if not root:
-            messagebox.showwarning("提示", "请先选择一个扫描根目录（盘符或文件夹）")
+        if not root or not os.path.isdir(root):
+            messagebox.showwarning("提示", "请先选择一个存在的扫描根目录（盘符或文件夹）")
             return
         root = os.path.abspath(root)
-        if not os.path.isdir(root):
-            # 目录不存在（常见于：库并进上级后把文件夹删了，管理列表里还留着
-            # 这条路径）：不再拦下，自动建一个空目录继续扫 —— 空目录扫完就是
-            # 一份空库，以后文件放回来再扫即正常建档（v1.73）。
-            try:
-                os.makedirs(root)
-            except OSError as e:
-                messagebox.showwarning(
-                    "提示",
-                    f"扫描根目录不存在，自动创建也失败了：\n{root}\n\n{e}\n\n"
-                    f"请检查路径是否正确、盘符 / 网络位置是否可用。")
-                return
-            log(f"目录不存在，已自动创建空目录：{root}")
         mode = var_mode.get()
         # 抽检比例只对「随机完整检查」生效：填错了当场拦下，别等跑完才发现没抽
         sample_pct = DEFAULT_SAMPLE_PCT
@@ -6719,8 +6681,7 @@ def build_hash_tab(parent, app=None):
                        f"右侧有更新 {st.get('update_right', 0)} · "
                        f"方向不明 {n_amb} · "
                        f"只在左边 {st.get('only_left', 0)} · "
-                       f"只在右边 {st.get('only_right', 0)} · "
-                       f"无法比较 {st.get('unknown', 0)}")
+                       f"只在右边 {st.get('only_right', 0)}（读库对比）")
             if state_flt["k"] != "全部":
                 txt += f" · 当前显示「{state_flt['k']}」{len(rows)} 条"
             if len(rows) > MAXM:
