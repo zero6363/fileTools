@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -27,6 +28,39 @@ from .theme import COLOR
 # ============================================================
 
 COMPRESS_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tif', '.tiff'}
+
+# 处理结果分类（底部筛选按钮的顺序，"全部"固定在最前）
+RESULT_CATS = ("压缩成功", "变大", "通过", "动图", "只读", "失败", "未处理")
+FILTER_KEYS = ("全部",) + RESULT_CATS
+
+
+def skip_category(msg):
+    """把「跳过·xxx」原因映射到底部筛选分类。
+
+    · 动图 / 只读：各自单独一类；
+    · 体积更大 → 变大；
+    · 其余（质量已达标 / 体积未变小）→ 通过：原图本就是最优，保留原图。
+    """
+    if "动图" in msg:
+        return "动图"
+    if "只读" in msg:
+        return "只读"
+    if "更大" in msg:
+        return "变大"
+    return "通过"
+
+
+def skip_label(msg):
+    """跳过原因 → 「节省」列的短文案。"""
+    if "动图" in msg:
+        return "跳过·动图"
+    if "只读" in msg:
+        return "跳过·只读"
+    if "更大" in msg:
+        return "变大"
+    if "质量" in msg:
+        return "通过·质量达标"
+    return "通过·未变小"
 
 
 def _tool_base_dir():
@@ -330,10 +364,19 @@ def _is_readonly(path):
 
 
 def _is_animated(src):
-    """判断是否为动图（多帧）。压缩会摊平成单帧从而丢失动画，故动图不压缩、直接跳过。"""
+    """判断是否为动图（多帧）。压缩会摊平成单帧从而丢失动画，故动图不压缩、直接跳过。
+
+    JPEG 系没有动画，必须显式排除：手机双摄 / 景深照片是普通 JPG 里
+    塞了一段 MPF 多画面数据（主图 + 景深图 / 预览图），Pillow 会把它
+    识别成 MPO 格式、is_animated=True —— 以前就是因此把这类 JPG 误判
+    成动图跳过的。多画面只压主画面即可，不算动图。
+    """
     from PIL import Image
     try:
         with _retry_read(lambda: Image.open(src), src) as im:
+            fmt = (im.format or "").upper()
+            if fmt in ("JPEG", "MPO"):
+                return False
             if getattr(im, 'is_animated', False):
                 return True
             try:
@@ -417,8 +460,10 @@ def _compress_other(src, options, target, orig_size, existing_q, src_is_jpeg):
         # 压缩后体积 >= 压缩前 -> 不替换，保留原图（适用于所有保存方式）
         if new_size >= orig_size:
             os.remove(tmp)
-            clogger.info("跳过(压缩后未变小): %s", src)
-            return src, None, "跳过·压缩后体积未变小", None
+            msg = ("跳过·压缩后体积未变小" if new_size == orig_size
+                   else "跳过·压缩后体积更大")
+            clogger.info("跳过(压缩后未变小): %s (%d -> %d)", src, orig_size, new_size)
+            return src, None, msg, None
         if os.path.abspath(tmp) != os.path.abspath(target) and os.path.exists(target):
             os.remove(target)
         os.replace(tmp, target)
@@ -447,7 +492,9 @@ def _compress_inner(src, options):
     is_jpeg_target = out_ext.lower() in ('.jpg', '.jpeg')
     src_ext = os.path.splitext(src)[1].lower()
     real_fmt = _real_format(src)          # 以真实内容为据，避免 .jpg 实为其它格式导致 jpegtran 崩溃
-    src_is_jpeg = (real_fmt == 'JPEG')
+    # MPO(多画面 JPEG)本质仍是 JPEG 流：按 JPEG 处理（估质量、走 jpegtran
+    # 优化），而不是当成非 JPEG 再转一圈 PPM
+    src_is_jpeg = real_fmt in ('JPEG', 'MPO')
     existing_q = estimate_jpeg_quality(src) if src_is_jpeg else None
     target_q = options['quality'] if options['enable_compress'] else 100
     encoder = options.get('encoder', 0)  # 0=mozjpeg(默认) / 1=libjpeg-turbo
@@ -798,7 +845,14 @@ def build_compress_tab(parent, app=None):
 
     options = load_compress_config()
     setup_logging(options.get('enable_log', False))
-    state = {"compressing": False}
+    state = {
+        "compressing": False,
+        "order": [],       # 全部行的 iid（含被筛选隐藏的行），即列表真实顺序
+        "cats": {},        # iid -> 结果分类（None = 未处理）
+        "attached": set(), # 当前挂在表格上的 iid（被筛选隐藏的行已 detach）
+        "filter": "全部",
+        "cat_counts": {k: 0 for k in RESULT_CATS},
+    }
 
     # ---- 文件树 ----
     tree_frame = ui.Frame(parent)
@@ -813,10 +867,10 @@ def build_compress_tab(parent, app=None):
                ("size", "图片大小", 110, "e"),
                ("qval", "量化质量", 96, "e"),
                ("newsize", "压缩后大小", 120, "e"),
-               ("saved", "节省", 80, "e")]
+               ("saved", "节省", 110, "e")]
     # 大小列按「439.53 KB」实际宽度留足，高分屏下还会由
     # setup_tree_columns 按字体行高比例放大。
-    min_widths = {"size": 100, "newsize": 100, "saved": 70}
+    min_widths = {"size": 100, "newsize": 100, "saved": 100}
     for cid, text, width, anchor in headers:
         tree.heading(cid, text=text)
         # 首次运行允许列拉伸填满窗口；用户拖动后由 setup_tree_columns
@@ -832,6 +886,68 @@ def build_compress_tab(parent, app=None):
     ttk.attach_tree_hover(tree)     # 路径列悬停看全文
     tree.tag_configure("done", foreground=COLOR["success"])
     tree.tag_configure("fail", foreground=COLOR["error"])
+    tree.tag_configure("warn", foreground=COLOR["warning"])
+    tree.tag_configure("pass", foreground=COLOR["text_muted"])
+
+    # ---- 右键菜单：打开图片所在文件夹 / 打开图片 / 复制路径 ----
+    def _selected_paths():
+        return [tree.set(i, 'path') for i in tree.selection()
+                if tree.set(i, 'path')]
+
+    def open_selected_folder():
+        """在资源管理器中打开图片所在文件夹并选中该图（同 ⑲ 哈希扫描页）"""
+        paths = _selected_paths()
+        if not paths:
+            return
+        p = paths[0]
+        try:
+            if os.path.isfile(p):
+                subprocess.Popen(f'explorer /select,"{os.path.normpath(p)}"',
+                                 creationflags=CREATE_NO_WINDOW)
+            elif os.path.isdir(p):
+                os.startfile(p)
+            else:
+                os.startfile(os.path.dirname(p) or ".")
+        except Exception:
+            try:
+                os.startfile(os.path.dirname(p))
+            except Exception:
+                pass
+
+    def open_selected_image():
+        paths = _selected_paths()
+        if paths and os.path.isfile(paths[0]):
+            try:
+                os.startfile(paths[0])
+            except Exception:
+                pass
+
+    def copy_selected_paths():
+        paths = _selected_paths()
+        if not paths:
+            return
+        parent.clipboard_clear()
+        parent.clipboard_append("\n".join(paths))
+
+    ctx_menu = tk.Menu(tree, tearoff=0)
+    ctx_menu.add_command(label="打开图片所在文件夹", command=open_selected_folder)
+    ctx_menu.add_command(label="打开图片", command=open_selected_image)
+    ctx_menu.add_separator()
+    ctx_menu.add_command(label="复制图片路径", command=copy_selected_paths)
+
+    def on_right_click(e):
+        iid = tree.identify_row(e.y)
+        if not iid:
+            return                      # 空白区域不弹菜单
+        if iid not in tree.selection():
+            tree.selection_set(iid)
+        try:
+            ctx_menu.tk_popup(e.x_root, e.y_root)
+        finally:
+            ctx_menu.grab_release()
+
+    tree.bind("<Button-3>", on_right_click)
+    tree.bind("<Double-1>", lambda _e: open_selected_folder())
 
     # ---- 按钮行 ----
     frame_btn = ui.Frame(parent)
@@ -861,6 +977,20 @@ def build_compress_tab(parent, app=None):
     label_status = ui.Label(frame_prog, text="就绪", width=46, anchor="e")
     label_status.grid(row=0, column=1, sticky="e", padx=(10, 0))
 
+    # ---- 底部结果筛选：全部 / 压缩成功 / 变大 / 通过 / 动图 / 只读 / 失败 / 未处理 ----
+    filter_bar = ui.Frame(parent)
+    filter_bar.grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
+    ui.Label(filter_bar, text="筛选：", auto_wrap=False,
+             foreground=COLOR["text_secondary"]).pack(side="left")
+    filter_btns = {}
+    for _key in FILTER_KEYS:
+        _b = ui.Button(filter_bar, text=_key, font=FONTS["sm"],
+                       bg=COLOR["surface_alt"], fg=COLOR["text"],
+                       activebackground=COLOR["border"])
+        _b.pack(side="left", padx=(0, 5))
+        _b.config(command=lambda k=_key: set_filter(k))
+        filter_btns[_key] = _b
+
     # ---- 功能函数 ----
     def set_status(text):
         label_status.config(text=text)
@@ -868,7 +998,9 @@ def build_compress_tab(parent, app=None):
             app.status.config(text=f"图片压缩：{text}")
 
     def existing_paths():
-        return {tree.set(i, 'path') for i in tree.get_children()}
+        # 用 order 全量而不是 get_children()：被筛选隐藏的行也算已存在，
+        # 不然筛选状态下再拖入同一文件夹会出现重复行
+        return {tree.set(i, 'path') for i in state["order"]}
 
     def add_paths(paths):
         """把拖入 / 选择到的路径加进列表。
@@ -930,17 +1062,30 @@ def build_compress_tab(parent, app=None):
     def _import_batch(batch, counter):
         """主线程：把一批图片插进表格（不重算全表，边导边看）"""
         added = 0
+        new_iids = []
         for fp, size, q in batch:
-            tree.insert('', 'end',
-                        values=(os.path.basename(fp), fp, human_size(size),
-                                str(q) if q is not None else "-", "-", "-"))
+            iid = tree.insert('', 'end',
+                              values=(os.path.basename(fp), fp, human_size(size),
+                                      str(q) if q is not None else "-", "-", "-"))
+            state["order"].append(iid)
+            state["cats"][iid] = None
+            state["attached"].add(iid)
+            state["cat_counts"]["未处理"] += 1
+            new_iids.append(iid)
             counter["n"] += 1
             counter["bytes"] += size
             added += 1
+        # 正在按分类查看时，新导入的都是「未处理」，不应出现在当前视图里
+        if state["filter"] != "全部" and new_iids:
+            try:
+                tree.detach(*new_iids)
+            except tk.TclError:
+                pass
+            state["attached"].difference_update(new_iids)
         if added:
-            total = len(tree.get_children())
-            set_status(f"正在读取图片信息… 已添加 {total} 项，"
+            set_status(f"正在读取图片信息… 已添加 {len(state['order'])} 项，"
                        f"合计 {human_size(counter['bytes'])}")
+            refresh_counts()
 
     def _import_done(added, counter):
         state["import_job"] = None
@@ -981,9 +1126,17 @@ def build_compress_tab(parent, app=None):
             job.cancel()                 # 停掉还在跑的导入，别再往表里插
             state["import_job"] = None
         state["import_queue"] = []
-        n = len(tree.get_children())
-        tree.delete(*tree.get_children())
+        iids = list(state["order"])
+        n = len(iids)
+        if iids:
+            tree.delete(*iids)           # 含被筛选隐藏的行，一并删掉
+        state["order"].clear()
+        state["cats"].clear()
+        state["attached"].clear()
+        for k in state["cat_counts"]:
+            state["cat_counts"][k] = 0
         pbar['value'] = 0
+        refresh_counts()
         update_count()
         set_status(f"已清空 {n} 项")
 
@@ -996,6 +1149,82 @@ def build_compress_tab(parent, app=None):
             if v:
                 total += v
         set_status(f"共 {n} 项，合计 {human_size(total)}")
+
+    # ---- 底部筛选 ----
+    def refresh_counts():
+        """刷新筛选按钮的条数与选中高亮（导入批次 / 每个压缩结果后调用）"""
+        counts = state["cat_counts"]
+        total = len(state["order"])
+        for key, b in filter_btns.items():
+            n = total if key == "全部" else counts.get(key, 0)
+            txt = f"{key} {n}"
+            on = (key == state["filter"])
+            try:
+                b.config(text=txt,
+                         bg=COLOR["accent"] if on else COLOR["surface_alt"],
+                         fg=COLOR["text_on_accent"] if on else COLOR["text"],
+                         activebackground=(COLOR["accent_active"] if on
+                                           else COLOR["border"]))
+                # 文字带条数会变宽，按内容重算按钮宽度（CTk 宽度是建好的定值）
+                b.configure(width=max(56, min(260,
+                            ui._text_px(txt, FONTS["sm"]) + 34)))
+            except Exception:
+                pass
+
+    def apply_filter():
+        """按当前分类重建可见行：先全部摘下，再按列表原顺序挂回匹配的行"""
+        cur = state["filter"]
+        if cur == "全部" and len(state["attached"]) == len(state["order"]):
+            refresh_counts()
+            update_count()
+            return
+        visible = []
+        for iid in state["order"]:
+            # 未出结果的行 cats 里是 None，对应「未处理」分类
+            cat = state["cats"].get(iid) or "未处理"
+            if cur == "全部" or cat == cur:
+                visible.append(iid)
+        hidden = list(state["attached"])
+        if hidden:
+            try:
+                tree.detach(*hidden)
+            except tk.TclError:
+                pass
+        for iid in visible:
+            try:
+                tree.move(iid, "", "end")   # move 会把 detach 的行重新挂回
+            except tk.TclError:
+                pass
+        state["attached"] = set(visible)
+        refresh_counts()
+        update_count()
+
+    def set_filter(key):
+        state["filter"] = key
+        apply_filter()
+
+    def _bump_cat(iid, cat):
+        """行出结果：从未处理挪到对应分类的计数"""
+        state["cats"][iid] = cat
+        counts = state["cat_counts"]
+        counts["未处理"] = max(0, counts["未处理"] - 1)
+        counts[cat] = counts.get(cat, 0) + 1
+
+    def _sync_visibility(iid, cat):
+        """压缩进行中按当前筛选实时收放该行（worker 线程调用，与既有
+        的表格直接更新保持同一线程模型）"""
+        cur = state["filter"]
+        attached = state["attached"]
+        try:
+            if cur == "全部" or cur == cat:
+                if iid not in attached:
+                    tree.move(iid, "", "end")
+                    attached.add(iid)
+            elif iid in attached:
+                tree.detach(iid)
+                attached.discard(iid)
+        except tk.TclError:
+            pass
 
     def show_options():
         # 每次打开都先同步本地(已保存)设置
@@ -1022,7 +1251,8 @@ def build_compress_tab(parent, app=None):
         if state.get("import_job") is not None:
             messagebox.showinfo("提示", "还在读取图片信息，等导入完成再开始压缩。")
             return
-        items = tree.get_children()
+        # 压缩始终针对全量列表（筛选只是视图），不受当前分类视图影响
+        items = list(state["order"])
         if not items:
             messagebox.showinfo("提示", "列表为空, 请先添加图片。")
             return
@@ -1043,8 +1273,8 @@ def build_compress_tab(parent, app=None):
     def compress_worker(items):
         path2iid = {tree.set(i, 'path'): i for i in items}
         total = len(items)
-        ok = skip = fail = ro_skip = q_skip = big_skip = anim_skip = 0
         saved_bytes = 0
+        run_n = {k: 0 for k in RESULT_CATS}   # 本轮各分类数量（区别于累计的筛选条数）
 
         def task(p):
             return compress_one(p, options)
@@ -1065,62 +1295,73 @@ def build_compress_tab(parent, app=None):
                 if iid:
                     vals = tree.item(iid, 'values')
                     qval = vals[3]
-                    if err:
-                        if err.startswith("跳过"):
-                            if "只读" in err:
-                                short, ro_skip = "跳过·只读", ro_skip + 1
-                            elif "动图" in err:
-                                short, anim_skip = "跳过·动图", anim_skip + 1
-                            elif "质量" in err:
-                                short, q_skip = "跳过·质量低", q_skip + 1
-                            else:
-                                short, big_skip = "跳过·体积大", big_skip + 1
-                            tree.item(iid, values=(vals[0], vals[1], vals[2], qval, vals[2], short),
-                                      tags=("done",))
-                            skip += 1
-                        else:
-                            tree.item(iid, values=(vals[0], vals[1], vals[2], qval, "-", "失败"),
-                                      tags=("fail",))
-                            _collect_failed(p, options)
-                            fail += 1
+                    if err and err.startswith("跳过"):
+                        cat = skip_category(err)
+                        tag = "warn" if cat in ("动图", "只读", "变大") else "pass"
+                        tree.item(iid, values=(vals[0], vals[1], vals[2], qval,
+                                               vals[2], skip_label(err)),
+                                  tags=(tag,))
+                        run_n[cat] += 1
+                    elif err:
+                        cat, tag = "失败", "fail"
+                        tree.item(iid, values=(vals[0], vals[1], vals[2], qval,
+                                               "-", "失败"),
+                                  tags=("fail",))
+                        _collect_failed(p, options)
+                        run_n[cat] += 1
                     elif new_size is None:
-                        tree.item(iid, values=(vals[0], vals[1], vals[2], qval, vals[2], "跳过"),
-                                  tags=("done",))
-                        skip += 1
+                        # 兜底：正常流程到不了（跳过/失败都带 err）
+                        cat, tag = "通过", "pass"
+                        tree.item(iid, values=(vals[0], vals[1], vals[2], qval,
+                                               vals[2], "跳过"),
+                                  tags=("pass",))
+                        run_n[cat] += 1
                     else:
                         orig = _size_of(vals[2])
+                        pct = (1 - new_size / orig) * 100 if orig else 0.0
+                        cat, tag = "压缩成功", "done"
                         tree.item(
                             iid,
-                            values=(vals[0], vals[1], vals[2], (str(new_q) if new_q is not None else qval),
+                            values=(vals[0], vals[1], vals[2],
+                                    (str(new_q) if new_q is not None else qval),
                                     human_size(new_size),
-                                    f"-{(1 - new_size / orig) * 100:.1f}%" if orig else "-"),
+                                    f"-{pct:.1f}%" if orig else "-"),
                             tags=("done",))
-                        ok += 1
-                        saved_bytes += max(0, orig - new_size)
+                        run_n[cat] += 1
+                        saved_bytes += max(0, (orig or 0) - new_size)
+                    _bump_cat(iid, cat)
+                    _sync_visibility(iid, cat)
                 parent.after(0, _progress, done, total)
 
-        msg = (f"完成: 成功 {ok}  跳过(只读 {ro_skip} / 动图 {anim_skip} / 质量过低 {q_skip} / 体积变大 {big_skip})  "
-               f"失败 {fail}  |  共节省 {human_size(saved_bytes)}")
-        if (ro_skip + q_skip + big_skip + anim_skip) > 0:
-            detail = (f"跳过统计:\n"
-                      f"  · 只读属性（未覆盖原图）: {ro_skip} 个\n"
-                      f"  · 动图（多帧动画，压缩会丢失动画）: {anim_skip} 个\n"
-                      f"  · 源质量低于目标质量: {q_skip} 个\n"
-                      f"  · 压缩后体积未变小/变大: {big_skip} 个")
-            if ro_skip:
-                detail += "\n\n其中『只读属性』的文件未覆盖原图，请取消只读属性后重新加入列表压缩。"
-            parent.after(0, lambda t=detail: messagebox.showinfo("压缩完成 · 跳过统计", t))
+        ok, fail = run_n["压缩成功"], run_n["失败"]
+        msg = (f"完成: 压缩成功 {ok}  变大 {run_n['变大']}  通过 {run_n['通过']}  "
+               f"动图 {run_n['动图']}  只读 {run_n['只读']}  失败 {fail}"
+               f"  |  共节省 {human_size(saved_bytes)}")
+        skipped = run_n["变大"] + run_n["通过"] + run_n["动图"] + run_n["只读"]
+        if skipped or fail:
+            detail = (f"压缩成功 {ok}  变大 {run_n['变大']}  通过 {run_n['通过']}"
+                      f"  动图 {run_n['动图']}  只读 {run_n['只读']}  失败 {fail}\n\n"
+                      "  · 变大：压缩后体积反而更大，已保留原图\n"
+                      "  · 通过：质量已达标 / 压缩无收益，保留原图\n"
+                      "  · 动图：多帧动画，压缩会丢失动画，未处理\n"
+                      "  · 只读：文件为只读属性，未覆盖原图\n\n"
+                      "可点击表格下方的分类按钮筛选查看。")
+            if run_n["只读"]:
+                detail += "\n\n『只读』的文件未覆盖原图，取消只读属性后可重新压缩。"
+            parent.after(0, lambda t=detail: messagebox.showinfo("压缩完成 · 结果统计", t))
         parent.after(0, _done, msg)
 
     def _progress(done, total):
         pbar['value'] = done
         set_status(f"压缩中… {done}/{total}")
+        refresh_counts()              # 筛选条数在主线程跟着进度走
 
     def _done(msg):
         state["compressing"] = False
         toggle_buttons(True)
         set_status(msg)
         pbar['value'] = pbar['maximum']
+        refresh_counts()
 
     def on_drop(paths):
         """拖放回调：路径原样交给后台展开（这里绝不做目录遍历）"""
@@ -1128,6 +1369,7 @@ def build_compress_tab(parent, app=None):
             return
         add_paths(list(paths))
 
+    refresh_counts()
     update_count()
     if app is not None:
         app.register_drop_handler(parent, on_drop)
