@@ -3393,7 +3393,7 @@ def build_hash_tab(parent, app=None):
     parent = page.body
 
     parent.grid_columnconfigure(0, weight=1)
-    parent.grid_rowconfigure(4, weight=1)
+    parent.grid_rowconfigure(6, weight=1)
 
     make_tip(parent, 0,
              "冷数据建档与校验：库 filehash.db 建在扫描根目录。快速模式只建索引，完整模式算哈希；"
@@ -3479,8 +3479,11 @@ def build_hash_tab(parent, app=None):
         ui.Button(db_btns, text=_text, command=_cmd).pack(
             side=tk.LEFT, padx=(0, 4))
 
-    lbl_scope = ui.Label(form, text="", foreground=COLOR["text_secondary"],
-                         font=FONTS["sm"], wraplength=760)
+    # 库摘要这一行也会改字（库统计算完 / 扫描完刷新）：锁成两行高，
+    # 免得一行变两行时把下面的执行行、进度条整片推下去。
+    lbl_scope = ui.FixedLabel(form, text="", lines=2, anchor="nw",
+                              foreground=COLOR["text_secondary"],
+                              font=FONTS["sm"], wraplength=760)
     lbl_scope.grid(row=3, column=1, columnspan=3, sticky="w",
                    padx=(0, 4), pady=(0, 1))
 
@@ -3585,14 +3588,22 @@ def build_hash_tab(parent, app=None):
         if var_sound.get():
             play_done_sound()
 
-    lbl_prog = ui.Label(run_row, text="未开始", foreground=COLOR["text_secondary"],
-                        justify="left")
-    # 单独占一行：扫描结果文案可能很长，放按钮 / 进度条同一行会溢出窗口
-    lbl_prog.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+    # 进度文字自己占 body 的一行（v1.71）。原先它是 run_row 里 columnspan=4 的
+    # 一个标签：跨列标签的「请求宽度」会摊到整组列上，文字一长整行按钮 /
+    # 进度条就被推向右边（实测「开始扫描」横移 38px）；而且一行变两行时
+    # 高度变化还会把下面的搜索栏、表格整片顶下去。
+    # 现在：横向不再和按钮同组（宽度由整页给死），纵向用 FixedLabel 锁成两行，
+    # 文字再长也只在自己的格子里截断，按钮 / 进度条 / 表格位置全程不动。
+    prog_row = ui.Frame(parent)
+    prog_row.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 2))
+    lbl_prog = ui.FixedLabel(prog_row, text="未开始", lines=2,
+                             foreground=COLOR["text_secondary"],
+                             justify="left", anchor="nw")
+    lbl_prog.pack(fill="x")
 
     # ---------------- 搜索 ----------------
     search_row = ui.Frame(parent)
-    search_row.grid(row=3, column=0, sticky="ew", padx=8, pady=(2, 2))
+    search_row.grid(row=4, column=0, sticky="ew", padx=8, pady=(2, 2))
     ui.Label(search_row, text="搜索：").pack(side=tk.LEFT)
     var_kw = tk.StringVar()
     ent_kw = ttk.Entry(search_row, textvariable=var_kw, width=30)
@@ -3611,12 +3622,19 @@ def build_hash_tab(parent, app=None):
         side=tk.LEFT, padx=(0, 6))
     ui.Button(search_row, text="导出 CSV", command=lambda: export_csv()).pack(
         side=tk.LEFT, padx=(0, 6))
-    lbl_count = ui.Label(search_row, text="", foreground=COLOR["text_secondary"])
-    lbl_count.pack(side=tk.LEFT, padx=6)
+    # 列表状态（命中条数 / 本次修改条数）单独一行：
+    # 搜索行已经被输入框 + 两个下拉 + 三个按钮占满，再塞一段文字只能折行 ——
+    # 一行变三行时整行被撑高，下面表格跟着往下跳（v1.71）。
+    # 单行、放不下就截断（RowLabel），行高恒定。
+    count_row = ui.Frame(parent)
+    count_row.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 2))
+    lbl_count = ui.RowLabel(count_row, text="",
+                            foreground=COLOR["text_secondary"])
+    lbl_count.pack(fill="x")
 
     # ---------------- 结果表格 ----------------
     tree_frame = ui.Frame(parent)
-    tree_frame.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 4))
+    tree_frame.grid(row=6, column=0, sticky="nsew", padx=8, pady=(0, 4))
     tree_frame.grid_rowconfigure(1, weight=1)
     tree_frame.grid_columnconfigure(0, weight=1)
 
@@ -3636,9 +3654,9 @@ def build_hash_tab(parent, app=None):
     btn_sel_all_pages.pack(side=tk.LEFT, padx=(4, 0))
     btn_sel_none = ui.Button(bar_list, text="全不选", width=7, state=tk.DISABLED)
     btn_sel_none.pack(side=tk.LEFT, padx=(4, 0))
-    lbl_sel = ui.Label(bar_list, text="", foreground=COLOR["text_secondary"])
+    lbl_sel = ui.RowLabel(bar_list, text="", foreground=COLOR["text_secondary"])
     lbl_sel.pack(side=tk.LEFT, padx=(10, 0))
-    lbl_hint = ui.Label(bar_list, text="", foreground=COLOR["success"])
+    lbl_hint = ui.RowLabel(bar_list, text="", foreground=COLOR["success"])
     lbl_hint.pack(side=tk.LEFT, padx=(12, 0))
 
     tree = ttk.Treeview(tree_frame, columns=[c[0] for c in COLS], show="headings",
@@ -3755,7 +3773,10 @@ def build_hash_tab(parent, app=None):
     var_page = tk.StringVar(value="1")
     ent_page = ttk.Entry(page_inner, textvariable=var_page, width=6, justify="center")
     ent_page.pack(side=tk.LEFT, padx=(6, 4))
-    lbl_pages = ui.Label(page_inner, text="/ 1 页 · 共 0 条", foreground=COLOR["text_secondary"])
+    # 这一行里它是中段（右边还有两个翻页按钮），按剩余宽度截断会算错，
+    # 只关掉自动换行：单行显示，宽度自己变，不影响别的行
+    lbl_pages = ui.Label(page_inner, text="/ 1 页 · 共 0 条", auto_wrap=False,
+                         foreground=COLOR["text_secondary"])
     lbl_pages.pack(side=tk.LEFT)
     btn_pg_next = ui.Button(page_inner, text=">", width=3)
     btn_pg_next.pack(side=tk.LEFT, padx=(6, 0))
@@ -3768,7 +3789,7 @@ def build_hash_tab(parent, app=None):
 
     # ---------------- 日志（默认收起，把空间留给表格） ----------------
     log_wrap = ui.Frame(parent)
-    log_wrap.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 6))
+    log_wrap.grid(row=7, column=0, sticky="ew", padx=8, pady=(0, 6))
     log_wrap.grid_columnconfigure(0, weight=1)
     log_head = ui.Frame(log_wrap)
     log_head.grid(row=0, column=0, sticky="ew")

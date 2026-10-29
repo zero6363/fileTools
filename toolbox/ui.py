@@ -74,6 +74,30 @@ def _text_px(text, font_desc=None):
     return len(text) * 14
 
 
+def fit_lines(text, width_px, lines=2, font_desc=None):
+    """把文字截到「lines 行 × width_px」放得下的长度，超出用 … 收尾。
+
+    只做容量判断（不逐字折行）：整段宽度 ≤ 行数 × 行宽就没问题，
+    超了就在这一侧截断 —— 锁死高度的标签装不下的部分会被 Tk 直接裁掉，
+    半个字悬在边上看得出是「坏了」，截断加省略号才像是有意为之。
+    """
+    text = "" if text is None else str(text)
+    if not text or width_px <= 0:
+        return text
+    limit = float(width_px) * max(1, int(lines)) * 0.97
+    if _text_px(text, font_desc) <= limit:
+        return text
+    ell = "…"
+    lo, hi = 0, len(text)
+    while lo < hi:                       # 二分找最长可放前缀
+        mid = (lo + hi + 1) // 2
+        if _text_px(text[:mid] + ell, font_desc) <= limit:
+            lo = mid
+        else:
+            hi = mid - 1
+    return (text[:lo] + ell) if lo > 0 else ell
+
+
 def init_appearance():
     """显式初始化外观（在创建任何控件前调用一次即可）。"""
     ctk.set_appearance_mode("light")
@@ -258,6 +282,126 @@ class Label(_CTkCompat, ctk.CTkLabel):
             self.after(250, apply)
         except Exception:
             pass
+
+
+class FixedLabel(Label):
+    """高度锁成固定行数、文字自动截断的标签（动态状态文字专用）。
+
+    普通 Label 的尺寸跟着文字走：一行变两行时，同一页下面的控件整体下移；
+    用 columnspan 占满一行的标签，文字一长还会把那一组列撑宽 —— ⑲ 扫描页
+    实测「开始扫描」被推着横移 38px、进度条跟着跑。
+    这里把高度按「N 行字」写死，宽度只用于截断，位置就再也不会动。
+    """
+
+    def __init__(self, master=None, lines=2, **kw):
+        self._lines = max(1, int(lines))
+        self._font_desc = kw.get("font") or FONTS["base"]
+        self._fit_job = None
+        super().__init__(master, **kw)
+        self._lock_height()
+
+    def _lock_height(self):
+        try:
+            f = _design_font(self._font_desc)
+            line = f.metrics("linespace") if f is not None else 22
+        except Exception:
+            line = 22
+        try:
+            super().configure(height=int(round(line * self._lines)) + 2)
+        except Exception:
+            pass
+
+    def _avail_px(self):
+        """这行能给文字用多宽（设计像素）：父容器宽度，受显式 wraplength 约束。"""
+        try:
+            avail = self.master.winfo_width() / max(1.0, ui_scale()) - 12
+        except Exception:
+            return 0
+        if avail <= 1:
+            return 0
+        try:
+            cap = float(self.cget("wraplength") or 0)
+        except Exception:
+            cap = 0
+        if cap > 0:
+            avail = min(avail, cap)
+        return max(80, avail)
+
+    def configure(self, cnf=None, **kw):
+        if isinstance(cnf, dict):
+            kw = {**cnf, **kw}
+            cnf = None
+        text = kw.get("text")
+        if text is not None:
+            avail = self._avail_px()
+            if avail:
+                kw["text"] = fit_lines(text, avail, self._lines, self._font_desc)
+            self._queue_fit_check()
+        return super().configure(cnf, **kw)
+
+    # ---- 兜底：容量估算偶尔差几十像素（Tk 只在空格处折行，长串会整段挪行）----
+    def _queue_fit_check(self):
+        if self._fit_job is not None:
+            return
+        try:
+            self._fit_job = self.after_idle(self._fit_check)
+        except Exception:
+            self._fit_job = None
+
+    def _fit_check(self):
+        """文字真装不下时再收窄 10% / 20% 重截一次 —— 免得留下半行被裁的字。"""
+        self._fit_job = None
+        try:
+            inner = getattr(self, "_label", None)      # CTkLabel 内部的 tk.Label
+            if inner is None or not inner.winfo_exists():
+                return
+            box = self.winfo_height()
+            if box <= 1:
+                box = self.winfo_reqheight()
+            if box <= 1 or inner.winfo_reqheight() <= box + 1:
+                return
+            text = str(self.cget("text") or "")
+            avail = self._avail_px()
+            if not text or not avail:
+                return
+            for factor in (0.9, 0.8):
+                shorter = fit_lines(text, avail * factor, self._lines,
+                                    self._font_desc)
+                if shorter == text:
+                    break
+                super().configure(text=shorter)
+                if inner.winfo_reqheight() <= box + 1:
+                    return
+        except Exception:
+            pass
+
+
+class RowLabel(FixedLabel):
+    """行内状态标签：单行、不折行，宽度只用「自己 x → 所在行行尾」。
+
+    这类标签（命中条数、已选条数、翻页信息）挂在按钮行 / 搜索行的末尾，
+    剩余宽度往往只有一两百像素：让它按行宽折行，一行变三行就把整行撑高、
+    下面的表格跟着跳；不折行又会顶出行尾被窗口切掉半行字。
+    这里按「剩下多少地方」截断 + 省略号，行高恒为一行。
+    """
+
+    def __init__(self, master=None, **kw):
+        kw.setdefault("lines", 1)
+        kw.setdefault("auto_wrap", False)
+        super().__init__(master, **kw)
+
+    def _avail_px(self):
+        try:
+            row = self.master
+            w = row.winfo_width()
+            x = self.winfo_x()
+        except Exception:
+            return 0
+        if w <= 1:
+            return 0
+        if x > 1:                        # 前面还有别的控件时，只用剩下的地盘
+            w -= x
+        return max(80, w / max(1.0, ui_scale()) - 10)
 
 
 class Frame(_CTkCompat, ctk.CTkFrame):
