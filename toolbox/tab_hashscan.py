@@ -111,7 +111,7 @@ MODE_QUICK = "quick"        # 快速建档：改库，不算哈希
 MODE_PRECHECK = "precheck"  # 快速预检：只读，不算哈希
 MODE_FULL = "full"          # 完整建档：改库，算哈希
 MODE_VERIFY = "verify"      # 完整检查：只读，算哈希
-MODE_SAMPLE = "sample"      # 随机完整检查：只读，算哈希，只抽查一部分文件
+MODE_SAMPLE = "sample"      # 随机完整检查：只读，算哈希，从库里已有哈希中按体积抽查（不遍历目录）
 MODE_ORDER = (MODE_PRECHECK, MODE_QUICK, MODE_VERIFY, MODE_FULL, MODE_SAMPLE)
 MODE_NAMES = {MODE_QUICK: "快速建档", MODE_PRECHECK: "快速预检",
               MODE_FULL: "完整建档", MODE_VERIFY: "完整检查",
@@ -125,6 +125,8 @@ MODE_LABELS = {
     MODE_VERIFY: "完整检查 · 只读校验",
     MODE_SAMPLE: "随机完整检查 · 只读抽查",
 }
+# 随机完整检查不遍历目录：只对库里已经算过哈希的记录按体积抽查 ——
+# 适合「几个 T 的冷数据盘，想确认哈希还对不对，但不想走一遍目录树」。
 # 哪些模式会写库 / 哪些会算哈希
 WRITABLE_MODES = (MODE_QUICK, MODE_FULL)
 HASHING_MODES = (MODE_FULL, MODE_VERIFY, MODE_SAMPLE)
@@ -670,6 +672,24 @@ class HashDB:
                 (prefix, _like_escape(prefix) + "/%")).fetchall()
         return self.conn.execute(self._search_sql("status='deleted'")).fetchall()
 
+    def list_hashed(self, prefix=""):
+        """范围内「有效且已有哈希」的记录 —— 随机完整检查的抽样池。
+
+        随机完整检查不遍历目录，靠这条查询拿到全部可校验的条目；
+        rel_path 有唯一索引，顺带按它排一下，抽样的输入顺序就是稳定的。
+        """
+        cond = "status='active' AND sha256 IS NOT NULL AND sha256<>''"
+        cols = "rel_path, sha256, file_size, mtime, last_hash_time"
+        if prefix:
+            return self.conn.execute(
+                "SELECT " + cols + " FROM file_records WHERE " + cond +
+                " AND (rel_path = ? OR rel_path LIKE ? ESCAPE '\\')"
+                " ORDER BY rel_path",
+                (prefix, _like_escape(prefix) + "/%")).fetchall()
+        return self.conn.execute(
+            "SELECT " + cols + " FROM file_records WHERE " + cond +
+            " ORDER BY rel_path").fetchall()
+
     def count_nohash(self, prefix=""):
         """范围内「有效但还没算哈希」的记录数"""
         cond = "status='active' AND (sha256 IS NULL OR sha256='')"
@@ -1131,16 +1151,16 @@ class Scanner:
             return stored[len(self.prefix) + 1:]
         return stored
 
-    def _sample_files(self, files):
-        """随机完整检查：按体积比例抽一部分文件，返回抽查子集。
+    def _sample_records(self, rows):
+        """随机完整检查：从「库里已有哈希」的记录中按体积比例抽一批。
 
-        做法是每个文件独立以「比例%」的概率入选（伯努利抽样）：期望抽查体积
-        正好是总量的那个百分比 —— 100 GB 的目录抽 20% 平均读 20 GB。
-        文件越多越接近目标，不追求精确；实际抽到多少会写进日志和统计。
-        只有「读文件算哈希」这一步按比例省了 I/O，枚举和缺失判断仍然是全量。
+        每个条目独立以「比例%」的概率入选（伯努利抽样）：期望抽查体积正好是
+        池子总量的那个百分比 —— 10 TB 的库填 20 平均读 2 TB。条目越多越接近
+        目标，不追求精确；实际抽了多少条 / 多少字节会写进日志与统计。
+        rows = [(rel_path, sha256, file_size, mtime, last_hash_time), ...]
         """
-        total_files = len(files)
-        total_bytes = sum(int(s or 0) for _r, s, _m in files)
+        total_files = len(rows)
+        total_bytes = sum(int(r[2] or 0) for r in rows)
         try:
             pct = float(self.sample_pct)
         except (TypeError, ValueError):
@@ -1149,35 +1169,36 @@ class Scanner:
         info = dict(pct=pct, total_files=total_files, total_bytes=total_bytes,
                     files=0, bytes=0, target_bytes=int(total_bytes * pct / 100.0))
         picked = []
-        if files and pct > 0:
+        if rows and pct > 0:
             if pct >= 100:
-                picked = list(files)
+                picked = list(rows)
             else:
                 p = pct / 100.0
                 rnd = random.random
-                picked = [f for f in files if rnd() < p]
-                if not picked:      # 小目录 / 运气太差：至少抽一个，别白跑一趟
-                    picked = [files[random.randrange(total_files)]]
+                picked = [r for r in rows if rnd() < p]
+                if not picked:      # 库太小 / 运气太差：至少抽一条，别白跑一趟
+                    picked = [rows[random.randrange(total_files)]]
         info["files"] = len(picked)
-        info["bytes"] = sum(int(s or 0) for _r, s, _m in picked)
+        info["bytes"] = sum(int(r[2] or 0) for r in picked)
         self.sample_info = info
         return picked
 
     def _log_sample(self):
-        """把抽样结果写进日志：抽了多少个 / 多少 GB / 实际占多少"""
+        """把抽样结果写进日志：池子多大 / 抽了多少条 / 多少字节 / 实际比例"""
         info = self.sample_info or {}
         if not info:
             return
         total_bytes = info.get("total_bytes") or 0
         real = (info.get("bytes", 0) / total_bytes * 100.0) if total_bytes else 0.0
         self._log(
-            f"抽样：按体积抽 {info.get('pct', 0):g}% —— 全量 "
-            f"{info.get('total_files', 0)} 个 / {fmt_size(total_bytes)}，"
-            f"本次抽查 {info.get('files', 0)} 个 / "
+            f"抽样：按体积抽 {info.get('pct', 0):g}% —— 库内可抽查 "
+            f"{info.get('total_files', 0)} 条 / {fmt_size(total_bytes)}，"
+            f"本次抽查 {info.get('files', 0)} 条 / "
             f"{fmt_size(info.get('bytes', 0))}（{real:.1f}%，"
-            f"目标约 {fmt_size(info.get('target_bytes', 0))}）")
+            f"目标约 {fmt_size(info.get('target_bytes', 0))}）；"
+            f"不遍历目录")
         if info.get("files", 0) < 200:
-            self._log("提示：抽查样本不足 200 个文件，实际比例与目标可能差得比较多；"
+            self._log("提示：抽查样本不足 200 条，实际比例与目标可能差得比较多；"
                       "想更准就调大比例或改用「完整检查」")
         s = self.stats
         s["sample_pct"] = info.get("pct", 0)
@@ -1185,6 +1206,49 @@ class Scanner:
         s["sample_bytes"] = info.get("bytes", 0)
         s["sample_total_files"] = info.get("total_files", 0)
         s["sample_total_bytes"] = total_bytes
+
+    def _open_db(self):
+        """按模式打开库：只读模式三种兜底，写档模式直接读写打开。
+
+        只读模式（快速预检 / 完整检查 / 随机完整检查）一个字节都不许写盘：
+          ① 有库 → mode=ro 只读打开；失败再退 immutable 快照；
+          ② 没库 → 内存空库，绝不创建 filehash.db；
+          ③ 连只读都打不开 → 内存空库 + 日志说明，流程照常往下走。
+        """
+        db = HashDB(self.db_path)
+        if not self.writable:
+            if not os.path.isfile(self.db_path):
+                db.open_memory()
+                self._log("该目录还没有 filehash.db —— 按空库比对（不会创建文件）")
+            else:
+                try:
+                    db.open(readonly=True)      # 只读：连 WAL 头都不碰
+                except sqlite3.Error as e:
+                    self._log(f"只读打开失败（{e}），改用不可变快照")
+                    db.close()
+                    try:
+                        db.open(readonly=True, immutable=True)
+                        self._log("已用 immutable 快照打开："
+                                  "可能读不到尚未合并的 -wal 数据")
+                    except sqlite3.Error as e2:
+                        db.close()
+                        db.open_memory()
+                        self._log(f"[数据库无法读取] {e2}")
+                        self._log("本次按空库比对：清单里全部算「新增」，"
+                                  "库里的记录不会被写入或修改")
+        else:
+            db.open()
+
+        # 老库 / 空库可能连 file_records 表都没有：先探一次，
+        # 别让每个文件都各自抛一次「no such table」把错误数刷满。
+        if not self.writable:
+            try:
+                db.conn.execute("SELECT 1 FROM file_records LIMIT 1").fetchone()
+            except sqlite3.Error:
+                self._log("库里还没有 file_records 表 —— 按空库比对（不写库）")
+                db.close()
+                db.open_memory()
+        return db
 
     def run(self):
         """返回 stats 字典（结束后 ui["done_flag"]=True）"""
@@ -1199,6 +1263,15 @@ class Scanner:
                   + (f"；相对路径前缀：{self.prefix}/" if self.prefix else ""))
         db = None
         try:
+            # ---------- 随机完整检查：先分叉，一个目录都不遍历 ----------
+            # 大盘上枚举一遍目录树本身就要几分钟到几十分钟，而这个模式要回答的
+            # 只是「库里已经算过的哈希现在还对不对」—— 直接从库里抽记录重算。
+            # 代价：查不出磁盘上多出来的新文件，也判不出没抽到的那部分是否缺失；
+            # 要全量请用「完整检查」。
+            if self.mode == MODE_SAMPLE:
+                db = self._open_db()
+                return self._run_sample(db)
+
             # ---------- 阶段 1：枚举 ----------
             self.ui["phase"] = "枚举文件"
             files = []
@@ -1218,53 +1291,8 @@ class Scanner:
                 return self.stats
             self._log(f"枚举完成：{len(files)} 个文件，用时 {time.time() - t0:.1f}s")
 
-            # 随机完整检查：枚举是全量的（否则判不出缺失），只把「算哈希」这一步
-            # 抽掉一部分 —— 硬盘上真正要多读的就是这百分之几十。
-            all_files = files
-            if self.mode == MODE_SAMPLE:
-                self.ui["phase"] = "随机抽样"
-                files = self._sample_files(all_files)
-                self.ui["total"] = len(files)
-                self._log_sample()
-
             # ---------- 阶段 2：打开库 ----------
-            # 只读模式（快速预检 / 完整检查）的三种情况都不许写盘：
-            #   ① 有库 → mode=ro 只读打开；失败再退 immutable 快照；
-            #   ② 没库 → 内存空库（所有文件算新增），绝不创建 filehash.db；
-            #   ③ 连只读都打不开 → 内存空库 + 日志说明，扫描照常出清单。
-            db = HashDB(self.db_path)
-            if not self.writable:
-                if not os.path.isfile(self.db_path):
-                    db.open_memory()
-                    self._log("该目录还没有 filehash.db —— 按空库比对（不会创建文件）")
-                else:
-                    try:
-                        db.open(readonly=True)      # 只读：连 WAL 头都不碰
-                    except sqlite3.Error as e:
-                        self._log(f"只读打开失败（{e}），改用不可变快照")
-                        db.close()
-                        try:
-                            db.open(readonly=True, immutable=True)
-                            self._log("已用 immutable 快照打开："
-                                      "可能读不到尚未合并的 -wal 数据")
-                        except sqlite3.Error as e2:
-                            db.close()
-                            db.open_memory()
-                            self._log(f"[数据库无法读取] {e2}")
-                            self._log("本次按空库比对：清单里全部算「新增」，"
-                                      "库里的记录不会被写入或修改")
-            else:
-                db.open()
-
-            # 老库 / 空库可能连 file_records 表都没有：先探一次，
-            # 别让每个文件都各自抛一次「no such table」把错误数刷满。
-            if not self.writable:
-                try:
-                    db.conn.execute("SELECT 1 FROM file_records LIMIT 1").fetchone()
-                except sqlite3.Error:
-                    self._log("库里还没有 file_records 表 —— 按空库比对（不写库）")
-                    db.close()
-                    db.open_memory()
+            db = self._open_db()
 
             # 本次遍历到的 rel_path 集合。优先用连接级 TEMP 表（不写主库）；
             # 万一连接不允许建临时表（特殊只读介质 / 老版本驱动），
@@ -1290,18 +1318,6 @@ class Scanner:
 
             def flush_seen():
                 _flush_buf(seen_buf)
-
-            # 随机完整检查：没抽到的文件同样算「本次遍历到了」，否则缺失检查
-            # 会把它们整片判成「缺失」。这里先把全量 rel_path 登记进 seen
-            # （只写连接级 TEMP 表，主库一个字节都不动）。
-            if self.mode == MODE_SAMPLE and all_files:
-                self.ui["phase"] = "登记已遍历文件"
-                buf = []
-                for rel, _s, _m in all_files:
-                    buf.append((self._stored_rel(rel),))
-                    if len(buf) >= 4000:
-                        _flush_buf(buf)
-                _flush_buf(buf)
 
             # ---------- 阶段 3：比对 / 哈希 ----------
             seen_buf = []
@@ -1417,6 +1433,99 @@ class Scanner:
             if db is not None:
                 db.close()
             self.ui["done_flag"] = True
+
+    # ---- 随机完整检查：只在库里已有哈希的记录上抽查，不遍历目录 ----
+    def _run_sample(self, db):
+        """随机完整检查：从库里抽「已算哈希」的记录重算校验，一个文件夹都不走。
+
+        每抽到一条：stat 取当前大小/时间 → 重算 SHA256 → 和库里比。
+          · 哈希一致          → 未变（不计入差异清单）
+          · 哈希不同          → 变更（状态列写清大小 / 时间 / 哈希变了什么）
+          · 文件已经不在了    → 缺失（带上库里的原大小 / 修改时间 / 上次校验）
+          · 读失败（权限等）  → 计入「读取失败」，跳过
+        因为不枚举目录，磁盘上多出来的新文件、以及没抽到的那部分是否缺失，
+        这个模式都答不了 —— 那是「完整检查」的活。全程只读，一个字节都不写库。
+        """
+        s = self.stats
+        self.ui["phase"] = "读取库内哈希记录"
+        rows = db.list_hashed(self.prefix)
+        s["sample_pool"] = len(rows)
+        s["sample_pool_bytes"] = sum(int(r[2] or 0) for r in rows)
+        try:
+            s["nohash"] = db.count_nohash(self.prefix)
+        except sqlite3.Error:
+            s["nohash"] = 0
+        self._log(f"库里可抽查（已有哈希）{len(rows)} 条 / "
+                  f"{fmt_size(s['sample_pool_bytes'])}"
+                  + (f"；另有 {s['nohash']} 条还没算哈希，本次跳过"
+                     if s["nohash"] else ""))
+        if not rows:
+            self._log("库里没有「已有哈希」的有效记录：随机完整检查只在已有哈希里"
+                      "抽查，先跑一次「完整建档」把哈希建起来")
+            self.ui["done"] = 0
+            return s
+
+        picked = self._sample_records(rows)
+        self.ui["total"] = len(picked)
+        self._log_sample()
+
+        started = time.time()
+        for i, (stored, old_sha, old_size, old_mtime, old_last) in enumerate(picked, 1):
+            if self.stop.is_set():
+                self.ui["aborted"] = True
+                self._log(f"已手动停止（已校验 {i - 1}/{len(picked)} 条）")
+                break
+            rel = self._display_rel(stored)
+            abs_path = os.path.join(self.root, rel.replace("/", os.sep))
+            self.ui["cur_name"] = rel
+            self.ui["cur_done"] = 0
+            self.ui["cur_total"] = int(old_size or 0)
+            self.ui["done"] = i - 1
+            try:
+                st = os.stat(long_path(abs_path))
+            except (FileNotFoundError, NotADirectoryError):
+                s["missing"] += 1
+                self._add_diff("缺失", rel, stored, old_size, old_mtime,
+                               old_sha=old_sha, old_last=old_last, hash_state="—")
+                self._log(f"[抽查·缺失] {rel}")
+                self.ui["done"] = i
+                continue
+            except OSError as e:
+                s["errors"] += 1
+                self._log(f"[跳过文件] {rel}：{e}")
+                self.ui["done"] = i
+                continue
+
+            self.ui["cur_total"] = st.st_size
+            digest = self._hash(abs_path, st.st_size)
+            if digest is None:
+                self.ui["done"] = i
+                if self.stop.is_set():
+                    self.ui["aborted"] = True
+                    break
+                continue
+            if str(old_sha).lower() == digest.lower():
+                s["same"] += 1
+            else:
+                s["changed"] += 1
+                self._add_diff("变更", rel, stored, st.st_size, st.st_mtime,
+                               digest=digest, old_sha=old_sha,
+                               old_size=old_size, old_mtime=old_mtime,
+                               old_last=old_last)
+                self._log(f"[抽查·已变化] {rel}")
+            self.ui["done"] = i
+
+        if not self.ui["aborted"]:
+            self.ui["done"] = len(picked)
+        self._log(
+            f"随机完整检查结束，用时 {time.time() - started:.1f}s —— 抽查 "
+            f"{len(picked)} 条：一致 {s['same']}，变更 {s['changed']}，"
+            f"缺失 {s['missing']}，读取失败 {s['errors']}"
+            f"（不遍历目录、未写库）")
+        if s["changed"] or s["missing"]:
+            self._log(f"发现 {s['changed'] + s['missing']} 条问题，"
+                      f"可在表格里勾选差异行查看/写回")
+        return s
 
     # ---- 单文件处理：A 新增 / B 比对 / C 恢复 ----
     def _process_one(self, db, stored, abs_path, rel, size, mtime):
@@ -3287,9 +3396,9 @@ def build_hash_tab(parent, app=None):
     parent.grid_rowconfigure(4, weight=1)
 
     make_tip(parent, 0,
-             "冷数据建档与校验：数据库 filehash.db 建在扫描根目录。快速模式只建索引，完整模式计算 SHA256，"
-             "「随机完整检查」按体积抽查一部分（默认 20%）；差异可多选写回。"
-             "「管理…」支持多选目录、查重与镜像比对。",
+             "冷数据建档与校验：库 filehash.db 建在扫描根目录。快速模式只建索引，完整模式算哈希；"
+             "「随机完整检查」不遍历目录，只对库里已有哈希的记录按体积抽查，默认 20%。"
+             "差异可多选写回，「管理…」支持多选目录、查重与镜像比对。",
              colspan=1, autowrap=True, font=FONTS["sm"])
 
     state = {
@@ -3385,8 +3494,8 @@ def build_hash_tab(parent, app=None):
                         variable=var_mode).grid(
             row=_i // 2, column=_i % 2, sticky="w", padx=(0, 18), pady=0)
 
-    # 抽检比例：只对「随机完整检查」有效，按体积算 —— 目录 100 GB 填 20 就约读 20 GB。
-    # 记在配置里（hashscan.sample_pct），下次打开还是上次填的数。
+    # 抽检比例：只对「随机完整检查」有效，按体积算 —— 库里 100 GB 的哈希记录
+    # 填 20 就约读 20 GB。记在配置里（hashscan.sample_pct），下次打开还是上次填的数。
     def load_sample_pct():
         try:
             v = int(round(float(config.get_section("hashscan").get(
@@ -5485,9 +5594,34 @@ def build_hash_tab(parent, app=None):
             lbl_prog.config(text="扫描出错，详见日志")
         elif aborted:
             bar_all["value"] = 0
-            lbl_prog.config(text=f"已停止 —— 新增 {stats.get('new', 0)}，"
-                                 f"变更 {stats.get('changed', 0)}，"
-                                 f"未变 {stats.get('same', 0)}")
+            if mode == MODE_SAMPLE:
+                lbl_prog.config(text=f"已停止 —— 一致 {stats.get('same', 0)}，"
+                                     f"变更 {stats.get('changed', 0)}，"
+                                     f"缺失 {stats.get('missing', 0)}")
+            else:
+                lbl_prog.config(text=f"已停止 —— 新增 {stats.get('new', 0)}，"
+                                     f"变更 {stats.get('changed', 0)}，"
+                                     f"未变 {stats.get('same', 0)}")
+        elif mode == MODE_SAMPLE:
+            # 抽查模式没有「新增/删除」的概念（不枚举目录），单独给一份文案：
+            # 抽查了多少条、多少字节、其中多少一致 / 变了 / 没了。
+            bar_all["value"] = 100
+            if not stats.get("sample_pool"):
+                lbl_prog.config(
+                    text="随机完整检查：库里没有已算哈希的记录 —— 先跑「完整建档」")
+            else:
+                text = (f"随机完整检查完成 —— 抽查 {stats.get('sample_files', 0)}/"
+                        f"{stats.get('sample_pool', 0)} 条："
+                        f"一致 {stats.get('same', 0)}，"
+                        f"变更 {stats.get('changed', 0)}，"
+                        f"缺失 {stats.get('missing', 0)}")
+                if stats.get("errors"):
+                    text += f"，读取失败 {stats['errors']}"
+                text += (f"　·　抽 {stats.get('sample_pct', 0):g}%："
+                         f"{fmt_size(stats.get('sample_bytes', 0))}/"
+                         f"{fmt_size(stats.get('sample_total_bytes', 0))}"
+                         f"（不遍历目录，未写库）")
+                lbl_prog.config(text=text)
         else:
             bar_all["value"] = 100
             extra = f"，补哈希 {stats.get('filled', 0)}" if stats.get("filled") else ""
@@ -5502,12 +5636,6 @@ def build_hash_tab(parent, app=None):
                 text += "（未计算哈希）"
             elif stats.get("nohash"):
                 text += f"，未计哈希 {stats['nohash']}"
-            if mode == MODE_SAMPLE and stats.get("sample_files") is not None:
-                text += (f"　·　抽 {stats.get('sample_pct', 0):g}%："
-                         f"{stats.get('sample_files', 0)}/"
-                         f"{stats.get('sample_total_files', 0)} 个文件，"
-                         f"{fmt_size(stats.get('sample_bytes', 0))}/"
-                         f"{fmt_size(stats.get('sample_total_bytes', 0))}")
             lbl_prog.config(text=text + extra)
 
         # 记录到「已管理目录」配置：统计每次都刷新，最后扫描时间只记完成的。
@@ -5580,7 +5708,7 @@ def build_hash_tab(parent, app=None):
                 if mode == MODE_SAMPLE and not aborted:
                     head += (f"（抽 {stats.get('sample_pct', 0):g}%，"
                              f"{stats.get('sample_files', 0)}/"
-                             f"{stats.get('sample_total_files', 0)} 个文件）")
+                             f"{stats.get('sample_pool', 0)} 条记录）")
                 lbl_count.config(text=f"{head}差异 {len(pairs)} 条（未写库）")
             elif errored:
                 lbl_count.config(
@@ -5812,9 +5940,9 @@ def build_hash_tab(parent, app=None):
                 messagebox.showwarning(
                     "抽检比例填错了",
                     f"{pct_err}。\n\n"
-                    f"这里按**体积**填 1–100 的百分比：\n"
-                    f"· 填 20 = 抽查约 20% 的字节（100 GB 的目录约读 20 GB）\n"
-                    f"· 填 100 = 和「完整检查」一样全查")
+                    f"这里按**体积**填 1–100 的百分比（只针对库里已算哈希的记录）：\n"
+                    f"· 填 20 = 抽查约 20% 的字节（库里 100 GB 的哈希记录约读 20 GB）\n"
+                    f"· 填 100 = 把库里已算过哈希的记录全查一遍（同样不遍历目录）")
                 return
             sample_pct = pct_value
             if str(var_pct.get()) != str(sample_pct):
@@ -5826,6 +5954,17 @@ def build_hash_tab(parent, app=None):
         db_root, prefix = resolve_db_root(root, False)
         db_path = os.path.join(db_root, DB_NAME)
 
+        # 随机完整检查不遍历目录，只在库里已有哈希的记录上抽查：连库都没有就
+        # 无从抽起，别让它白跑一趟才说「没有可抽查的记录」。
+        if mode == MODE_SAMPLE and not os.path.isfile(db_path):
+            messagebox.showwarning(
+                "还没有数据库",
+                f"{db_path}\n\n"
+                f"「随机完整检查」不遍历目录，只校验库里已经算过哈希的记录。\n"
+                f"这个目录还没有 {DB_NAME}，先跑一次「完整建档」把哈希建起来，"
+                f"再来抽查。")
+            return
+
         # quick_check 在大库上要扫全部页，先给个状态免得看起来像没反应。
         # v1.68：整段「校验库 → 取锁 → 写探测」都放后台 —— 库被别的程序占着时
         # 探测会一直等到超时（8 秒），主线程做就是整整 8 秒的「无响应」。
@@ -5835,6 +5974,17 @@ def build_hash_tab(parent, app=None):
         def check_done(res):
             busy_end()
             ok, msg, kind = res
+            if mode == MODE_SAMPLE and kind in ("corrupt", "unreadable"):
+                # 这个模式全靠库里的哈希，库读不出来 / 校验不过就没什么可抽的；
+                # 也别在这里怂恿改名——库一改名，哈希就全没了。
+                messagebox.showerror(
+                    "数据库无法使用",
+                    f"{db_path}\n\n{msg}\n\n"
+                    f"「随机完整检查」只校验库里已有的哈希记录，"
+                    f"库读不出来就没法抽查。\n"
+                    f"请先处理权限 / 关掉占用它的程序；"
+                    f"库确实损坏的话只能重新「完整建档」。")
+                return
             if kind == "unreadable":
                 # 只读介质 / 没有权限 / 被别的程序独占：不是损坏，别怂恿用户改名。
                 # 但库都读不出来，扫出来全是「新增」—— 先问清楚，别让人白等一晚上。
