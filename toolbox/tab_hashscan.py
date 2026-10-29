@@ -6003,8 +6003,13 @@ def build_hash_tab(parent, app=None):
         # 来源库文件已删 → 顺手把「已管理目录」里对应的条目去掉
         if s.get("removed_paths"):
             try:
+                n_before = len(load_roots())
                 roots = drop_roots_by_db(load_roots(), s["removed_paths"])
                 save_roots(roots)
+                n_drop = n_before - len(roots)
+                if n_drop:
+                    log(f"已从「管理扫描目录」移除 {n_drop} 个"
+                        f"已合并的目录（来源库已删除）")
             except Exception:
                 pass
         # 并进上级库后本级已经没有库了：把扫描根切到上级，让用户直接看到合并结果
@@ -6021,10 +6026,23 @@ def build_hash_tab(parent, app=None):
 
     def start():
         root = clean_path(var_root.get())
-        if not root or not os.path.isdir(root):
-            messagebox.showwarning("提示", "请先选择一个存在的扫描根目录（盘符或文件夹）")
+        if not root:
+            messagebox.showwarning("提示", "请先选择一个扫描根目录（盘符或文件夹）")
             return
         root = os.path.abspath(root)
+        if not os.path.isdir(root):
+            # 目录不存在（常见于：库并进上级后把文件夹删了，管理列表里还留着
+            # 这条路径）：不再拦下，自动建一个空目录继续扫 —— 空目录扫完就是
+            # 一份空库，以后文件放回来再扫即正常建档（v1.73）。
+            try:
+                os.makedirs(root)
+            except OSError as e:
+                messagebox.showwarning(
+                    "提示",
+                    f"扫描根目录不存在，自动创建也失败了：\n{root}\n\n{e}\n\n"
+                    f"请检查路径是否正确、盘符 / 网络位置是否可用。")
+                return
+            log(f"目录不存在，已自动创建空目录：{root}")
         mode = var_mode.get()
         # 抽检比例只对「随机完整检查」生效：填错了当场拦下，别等跑完才发现没抽
         sample_pct = DEFAULT_SAMPLE_PCT
