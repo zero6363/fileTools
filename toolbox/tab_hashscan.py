@@ -6,9 +6,10 @@
   一、四种模式（是否改库 × 是否算哈希 两两组合，界面按此顺序排）+ 一个抽查变体
       快速预检   —— 只读，不算哈希：只比对大小 + 修改时间，不读文件、不写库，只出差异清单
       快速建档   —— 改库，不算哈希：只记路径 / 大小 / 修改时间，几秒到几十秒建好全盘索引，
-                    记录里 sha256 为空（界面标「未计算哈希」），之后跑完整建档会补上
+                    记录里 sha256 为空（界面标「未计算哈希」，之后跑完整建档会补上）；
+                    文件已消失的记录直接删除（v1.72 起，不再有「缺失」状态）
       完整检查   —— 只读，算哈希：算出新哈希做核对，但一个字节都不写库
-      完整建档   —— 改库，算哈希：读文件算 SHA256，并标记缺失
+      完整建档   —— 改库，算哈希：读文件算 SHA256，文件已消失的记录直接删除
       随机完整检查 —— 只读，算哈希：和完整检查完全一样，只是**按体积随机抽一部分文件**
                     读盘（v1.65）。界面上填百分比（默认 20），100 GB 的目录平均读 20 GB；
                     每个文件独立以该概率入选，目录越大越接近目标，不追求精确。
@@ -46,7 +47,7 @@
       同意后在后台线程递归找（只 scandir 目录、认文件名、不读文件内容），
       界面实时显示已查文件夹数，找到后先列清单确认再合并。
       重复记录**保留较新的那条**（先比 last_hash_time，再比 mtime，
-      都相同再比两个库的最后扫描时间，让「缺失」标记也能传播），
+      都相同再比两个库的最后扫描时间，旧版库里的「缺失」记录也能按新旧传播），
       但**哈希值不会被空值覆盖**：较新却没算哈希的记录只更新大小 / 修改时间 /
       状态，保留目标库已有的 sha256 和它那次校验时间（否则下级跑一轮快速预检，
       上级库辛苦算好的哈希就全被 NULL 冲掉了）。
@@ -69,8 +70,10 @@
   1. 一库一根：数据库固定名 `filehash.db`，直接放在扫描根目录下（不建 _index 目录）；
      filehash.db 及其 -wal / -shm / -journal、scan_log.txt、filehash.db.merged 等
      自己产生的文件永远不录入、也不写进日志。
-  2. 增量三分支：无记录→建档；有且 active→size+mtime 一致就不读文件；deleted→文件还在则恢复。
-  3. 缺失标记只作用于本次扫描范围内的 rel_path 子集；中途停止则不做缺失标记。
+  2. 增量三分支：无记录→建档；有且 active→size+mtime 一致就不读文件；
+     deleted（旧版库才可能有）→文件还在则恢复。
+  3. 「删除记录」（建档收尾）只作用于本次扫描范围内的 rel_path 子集；
+     中途停止、或有读不了的目录 / 文件时都不删（读不到 ≠ 不存在）。
   4. 并发：同一个库同时只允许一个扫描进程（Windows 命名互斥体，不落锁文件）。
   5. 长路径：内部统一加 `\\\\?\\` 前缀访问（sqlite3 不认这个前缀，需要时再剥掉）。
   6. 权限异常的文件 / 目录：跳过、写日志、不中断。
@@ -88,6 +91,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import traceback
 import tkinter as tk
 from collections import deque
 from tkinter import filedialog, messagebox
@@ -144,7 +148,7 @@ DEFAULT_PAGE_SIZE = 500
 PAGE_SIZE_CHOICES = ("100", "200", "500", "1000", "2000", "5000", "全部")
 DIFF_CAT = {"新增": CAT_NEW, "恢复": CAT_NEW,
             "变更": CAT_UPD, "补哈希": CAT_UPD,
-            "缺失": CAT_DEL}
+            "缺失": CAT_DEL, "删除": CAT_DEL}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS file_records (
@@ -991,10 +995,10 @@ def _upsert_record(conn, stored, sha, size, mtime, last):
 def write_pending(conn, p):
     """把一条差异记录写回数据库。
     新增 / 变更 / 恢复 → 整理成 active 记录（没有新哈希就把 sha256 置空）；
-    补哈希 → 只更新哈希；缺失 → 只把 status 标成 deleted。"""
+    补哈希 → 只更新哈希；缺失 → 从库里直接删除该记录（不碰硬盘文件）。"""
     stored = p["stored"]
     if p["cat"] == CAT_DEL:
-        conn.execute("UPDATE file_records SET status='deleted' WHERE rel_path=?",
+        conn.execute("DELETE FROM file_records WHERE rel_path=?",
                      (stored,))
         return
     sha = p.get("digest") or None
@@ -1010,9 +1014,13 @@ def write_pending(conn, p):
 # 遍历 / 哈希
 # ============================================================
 
-def iter_files(root, log=None, stop_event=None, on_tick=None):
+def iter_files(root, log=None, stop_event=None, on_tick=None, on_skip=None):
     """递归产出 (rel_path, size, mtime)。跳过软链接/联接点、目录、自产文件
-    （含各级子目录里的 filehash.db）。权限异常逐项记录后跳过，不中断。"""
+    （含各级子目录里的 filehash.db）。权限异常逐项记录后跳过，不中断。
+
+    on_skip() 在读不到目录 / 文件时回调一次：调用方据此判断「这次没扫全」，
+    别把读不到的记录当成真的没了。
+    """
     root_scan = long_path(root)
     stack = [root_scan]
     found = 0
@@ -1026,6 +1034,8 @@ def iter_files(root, log=None, stop_event=None, on_tick=None):
         except OSError as e:
             if log:
                 log(f"[跳过目录] {strip_long(cur)}：{e}")
+            if on_skip:
+                on_skip()
             continue
         for entry in entries:
             try:
@@ -1047,6 +1057,8 @@ def iter_files(root, log=None, stop_event=None, on_tick=None):
             except OSError as e:
                 if log:
                     log(f"[跳过文件] {strip_long(entry.path)}：{e}")
+                if on_skip:
+                    on_skip()
 
 
 def sha256_file(path, stop_event=None, on_chunk=None):
@@ -1117,7 +1129,10 @@ class Scanner:
                    "rows": [],        # 只读模式的差异清单（表格用 7 元组）
                    "pending": []}      # 与 rows 平行的结构化记录（写回库用）
         self.stats = dict(new=0, changed=0, same=0, restored=0, missing=0,
-                          errors=0, hashed=0, filled=0, bytes=0, nohash=0)
+                          errors=0, hashed=0, filled=0, bytes=0, nohash=0,
+                          # removed: 建档时「文件已消失」被直接删除的记录数（v1.72）
+                          # skipped: 本次读不了的目录 / 文件数（>0 时不删记录）
+                          removed=0, skipped=0)
         # 本次扫描到过的 rel_path。默认走 TEMP 表；建不了临时表时这里变成 set
         self._seen_mem = None
 
@@ -1281,13 +1296,21 @@ class Scanner:
                 self.ui["total"] = n
                 self.ui["phase"] = f"枚举文件（已发现 {n}）"
 
-            for item in iter_files(self.root, self.log, self.stop, tick):
+            def skipped():
+                self.stats["skipped"] += 1
+
+            for item in iter_files(self.root, self.log, self.stop, tick,
+                                   on_skip=skipped):
                 files.append(item)
             files.sort(key=lambda x: x[0].lower())
             self.ui["total"] = len(files)
+            if self.stats["skipped"]:
+                self._log(f"注意：本次有 {self.stats['skipped']} 个目录 / 文件读不了"
+                          f"（权限 / 被占用），它们下面的记录不会被删除"
+                          f"（读不到 ≠ 不存在）")
             if self.stop.is_set():
                 self.ui["aborted"] = True
-                self._log(f"已手动停止（已枚举 {len(files)} 个文件，未做缺失标记）")
+                self._log(f"已手动停止（已枚举 {len(files)} 个文件，未删除任何记录）")
                 return self.stats
             self._log(f"枚举完成：{len(files)} 个文件，用时 {time.time() - t0:.1f}s")
 
@@ -1376,13 +1399,20 @@ class Scanner:
                     self._log(f"[数据库写不进去] 提交失败：{e}"
                               f"（最后一批可能没保存，之前的已提交）")
 
-            # ---------- 阶段 4：缺失标记 ----------
+            # ---------- 阶段 4：删除失效记录（建档）/ 列出缺失（只读） ----------
+            # 建档：本次没扫到的记录直接从库里删掉（v1.72 取消「缺失」状态），
+            # 文件回来下次作为新增重新建档，库里不留僵尸记录。
+            # 只读：只列缺失清单，勾选「写入数据库」才删，或不管（下次建档自动删）。
             if self.ui["aborted"]:
-                self._log("扫描被中断：本次不做缺失标记"
-                          "（避免把还没遍历到的文件误标为缺失）")
+                self._log("扫描被中断：本次不删除任何记录"
+                          "（避免把还没遍历到的文件误删）")
             elif self.writable:
-                self.ui["phase"] = "标记缺失记录"
-                self.stats["missing"] = self._mark_missing(db)
+                self.ui["phase"] = "删除失效记录"
+                if self.stats["skipped"]:
+                    self._log(f"本次有 {self.stats['skipped']} 个目录 / 文件读不了，"
+                              f"暂不删除记录（读不到 ≠ 不存在，避免误删）")
+                else:
+                    self.stats["removed"] = self._remove_missing(db)
             else:
                 self.ui["phase"] = "查找缺失记录"
                 self.stats["missing"] = self._list_missing(db)
@@ -1398,11 +1428,12 @@ class Scanner:
                 self.ui["done"] = len(files)
             dur = time.time() - started
             s = self.stats
+            gone = (f"删除记录 {s['removed']}" if self.writable
+                    else f"缺失 {s['missing']}")
             self._log(
                 f"扫描结束，用时 {dur:.1f}s —— 新增 {s['new']}，变更 {s['changed']}，"
-                f"恢复 {s['restored']}，未变 {s['same']}，缺失 {s['missing']}，"
-                f"补哈希 {s['filled']}，"
-                f"跳过(权限/读失败) {s['errors']}")
+                f"恢复 {s['restored']}，未变 {s['same']}，{gone}，"
+                f"补哈希 {s['filled']}，跳过(权限/读失败) {s['errors']}")
             if s["nohash"]:
                 self._log(f"当前范围内有 {s['nohash']} 条记录尚未计算哈希"
                           f"（跑「完整建档」可补上）")
@@ -1786,41 +1817,67 @@ class Scanner:
         return [r for r in db.conn.execute(sql, params).fetchall()
                 if r[0] not in self._seen_mem]
 
-    def _mark_missing(self, db):
-        rows = self._missing_rows(
-            db, "rel_path, sha256, file_size, mtime, last_hash_time")
+    def _remove_missing(self, db):
+        """建档收尾：本次没扫到的记录直接从库里删除（v1.72 取消「缺失」状态）。
+
+        旧版标过「缺失」的记录也在这里一并清掉 —— 文件还在的已在阶段 3
+        恢复成 active（都在 seen 里），不会被误删。删除的条目逐条列进
+        下方清单（状态「删除」），和新增 / 更新一样看得见。
+        """
+        scope_sql, params = self._scope_sql()
+        sql = ("SELECT rel_path, sha256, file_size, mtime, last_hash_time "
+               "FROM file_records WHERE " + scope_sql)
+        try:
+            if self._seen_mem is None:
+                rows = db.conn.execute(
+                    sql + " AND rel_path NOT IN (SELECT rel_path FROM seen)",
+                    params).fetchall()
+            else:
+                rows = [r for r in db.conn.execute(sql, params).fetchall()
+                        if r[0] not in self._seen_mem]
+        except sqlite3.Error as e:
+            self._log(f"[删除记录] 统计失败：{e}")
+            return 0
         if not rows:
             return 0
-        db.conn.execute("BEGIN")
-        if self._seen_mem is None:
-            scope_sql, params = self._scope_sql()
-            db.conn.execute(
-                f"UPDATE file_records SET status='deleted' WHERE status='active' "
-                f"AND {scope_sql} AND rel_path NOT IN (SELECT rel_path FROM seen)",
-                params)
-        else:
-            # 内存模式：按 rel_path 分批 UPDATE（避开 SQLite 变量数上限）
-            for i in range(0, len(rows), 800):
-                chunk = [r[0] for r in rows[i:i + 800]]
-                marks = ",".join("?" * len(chunk))
+        try:
+            db.conn.execute("BEGIN")
+            if self._seen_mem is None:
                 db.conn.execute(
-                    f"UPDATE file_records SET status='deleted' "
-                    f"WHERE status='active' AND rel_path IN ({marks})", chunk)
-        db.conn.execute("COMMIT")
+                    f"DELETE FROM file_records WHERE {scope_sql} "
+                    f"AND rel_path NOT IN (SELECT rel_path FROM seen)", params)
+            else:
+                # 内存模式：按 rel_path 分批 DELETE（避开 SQLite 变量数上限）
+                for i in range(0, len(rows), 800):
+                    chunk = [r[0] for r in rows[i:i + 800]]
+                    marks = ",".join("?" * len(chunk))
+                    db.conn.execute(
+                        f"DELETE FROM file_records WHERE rel_path IN ({marks})",
+                        chunk)
+            db.conn.execute("COMMIT")
+        except sqlite3.Error as e:
+            try:
+                if db.conn.in_transaction:
+                    db.conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            self._log(f"[删除记录] 删除失败（已回滚）：{e}")
+            return 0
         for rp, _sha, _size, _mt, _last in rows[:200]:
-            self._log(f"[缺失] {rp}")
+            self._log(f"[删除记录] {rp}")
         if len(rows) > 200:
-            self._log(f"[缺失] …… 另有 {len(rows) - 200} 条，详见数据库")
+            self._log(f"[删除记录] …… 另有 {len(rows) - 200} 条")
         for rp, sha, fsize, fmtime, flast in rows:
-            self._add_written("缺失", self._display_rel(rp), rp,
+            self._add_written("删除", self._display_rel(rp), rp,
                               fsize, fmtime, digest=sha, last=flast)
+        self._log(f"已从库里删除 {len(rows)} 条失效记录"
+                  f"（文件回来会作为新增重新建档）")
         return len(rows)
-
     def _list_missing(self, db):
         """只读模式：列出缺失清单，一个字节也不往主库写。
 
         大小 / 修改时间 / 上次校验一律取库里的原值，与可写模式
-        `_mark_missing` 显示的一致。文件已经不在了，这三项是判断
+        建档扫描会删除的记录一致。文件已经不在了，这三项是判断
         「消失的是哪个版本」的唯一线索，不能空着。
         """
         rows = self._missing_rows(
@@ -1833,6 +1890,13 @@ class Scanner:
         for rp, sha, fsize, fmtime, flast in rows:
             self._add_diff("缺失", self._display_rel(rp), rp, fsize, fmtime,
                            old_sha=sha, old_last=flast, hash_state="—")
+        if rows:
+            # 只读模式一个字节都不写库：这些记录仍是「有效」，每次预检都会再报。
+            # 两条路：勾选后「写入数据库」（= 从库里删除这些记录），
+            # 或不处理 —— 下次建档扫描找不到它们时会自动删除。
+            self._log(f"只读模式不写库：这 {len(rows)} 条记录在库里仍是「有效」，"
+                      f"每次预检都会再报；可勾选后「写入数据库」直接删除，"
+                      f"或不处理（下次建档会自动删除）")
         return len(rows)
 
 
@@ -3866,7 +3930,9 @@ def build_hash_tab(parent, app=None):
         if st is None:
             return "库读取失败（可能被占用或文件损坏）"
         total, active, deleted, nbytes, nohash = st
-        return (f"库内 {total} 条 · 有效 {active} · 缺失 {deleted} · "
+        # v1.72 起建档不再产生「缺失」，只有旧版库还留着时才显示这一段
+        miss = (f"缺失 {deleted}（建档扫描会自动清除） · " if deleted else "")
+        return (f"库内 {total} 条 · 有效 {active} · {miss}"
                 f"未计哈希 {nohash} · 共 {fmt_size(nbytes)}")
 
     def db_brief(db_path):
@@ -5359,8 +5425,9 @@ def build_hash_tab(parent, app=None):
                 "写入数据库",
                 f"把{scope_text}的 {len(picked)} 条差异写回数据库？\n\n"
                 f"新增 {counts[CAT_NEW]} 条，更新 {counts[CAT_UPD]} 条，"
-                f"标记删除 {counts[CAT_DEL]} 条\n"
-                f"涉及 {len(by_db)} 个数据库：\n{db_text}"):
+                f"删除记录 {counts[CAT_DEL]} 条"
+                + ("（只删库里的记录，不碰硬盘文件）" if counts[CAT_DEL] else "")
+                + f"\n涉及 {len(by_db)} 个数据库：\n{db_text}"):
             return
 
         started = time.time()
@@ -5464,7 +5531,10 @@ def build_hash_tab(parent, app=None):
             "完成",
             f"已写入 {done} 条"
             + (f"，失败 {failed} 条（详见运行日志，失败行仍保留）" if failed else "")
-            + ("。\n写过的行已从清单里移除。" if left else "。\n差异清单已清空。"))
+            + ("。\n写过的行已从清单里移除。" if left else "。\n差异清单已清空。")
+            + (f"\n\n其中 {counts[CAT_DEL]} 条失效记录已从库里直接删除"
+               f"（不碰硬盘文件）。"
+               if counts[CAT_DEL] and done else ""))
 
     menu = tk.Menu(parent, tearoff=0)
     menu.add_command(label="校验哈希（只读）", command=verify_selected)   # 0
@@ -5648,9 +5718,12 @@ def build_hash_tab(parent, app=None):
             extra = f"，补哈希 {stats.get('filled', 0)}" if stats.get("filled") else ""
             updated = (stats.get("changed", 0) + stats.get("restored", 0)
                        + stats.get("filled", 0))
+            gone = (f"，删除记录 {stats.get('removed', 0)}"
+                    if sc is not None and sc.writable
+                    else f"，缺失 {stats.get('missing', 0)}")
             text = (f"{MODE_NAMES.get(mode, '')}完成 —— "
                     f"新增 {stats.get('new', 0)}，更新 {updated}，"
-                    f"未变 {stats.get('same', 0)}，删除 {stats.get('missing', 0)}")
+                    f"未变 {stats.get('same', 0)}{gone}")
             if sc is not None and not sc.writable:
                 text += "（只读，未写库）"
             elif mode == MODE_QUICK:
@@ -5698,7 +5771,7 @@ def build_hash_tab(parent, app=None):
                 added=stats.get("new", 0),
                 updated=(stats.get("changed", 0) + stats.get("restored", 0)
                          + stats.get("filled", 0)),
-                removed=stats.get("missing", 0),
+                removed=stats.get("removed", 0),
                 failed=stats.get("errors", 0),
                 detail=detail, started_at=sc.started_at)
 
