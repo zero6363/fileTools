@@ -19,6 +19,16 @@ if not exist "%PY%" (
     )
 )
 
+:: 解释器必须带 tkinter / PIL：否则打出来的 exe 一启动就 ModuleNotFoundError
+:: （比如 %LOCALAPPDATA% 解析不到、退到某个精简版 python 时就是这样，产物只有 14 MB）
+"%PY%" -c "import tkinter" >nul 2>nul
+if errorlevel 1 (
+    echo [错误] 这个 Python 没有 tkinter：%PY%
+    echo        请装带 tcl/tk 的 Python，或手动把 PY 改成 %LOCALAPPDATA%\Programs\Python\Python315\python.exe
+    pause
+    exit /b 1
+)
+
 :: 检查并安装 PyInstaller
 "%PY%" -c "import PyInstaller" >nul 2>nul
 if errorlevel 1 (
