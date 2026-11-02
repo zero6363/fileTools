@@ -36,6 +36,79 @@ def _px(n, scale=_CHAR_PX, minimum=0):
     return max(minimum, n * scale)
 
 
+# ============================================================
+# 自动折行的批量调度
+# ============================================================
+# 为什么需要这一层：Label 的 wraplength 得跟着容器宽度走，但如果每个
+# Label 都自己 bind("<Configure>")，一页几百个 Label 就是几百条绑定；
+# 父容器一次 Configure 会把它们全部叫一遍（实测一次切页 2200 次回调、
+# 磕掉 0.2 秒），画面上就是「切页抽搐抖动」。
+# 这里改成按「容器」聚合：一个容器只绑一条，宽度真变了才遍历，
+# 而且同一轮里合并成一次调度。
+_REFIT = {}
+
+
+def _refit_apply(owner):
+    ent = _REFIT.get(id(owner))
+    if not ent or ent["owner"] is not owner:
+        return
+    ent["job"] = None
+    try:
+        if not owner.winfo_exists():
+            _REFIT.pop(id(owner), None)
+            return
+        w = owner.winfo_width()
+    except Exception:
+        return
+    if w == ent["w"]:
+        return                 # 宽度没变 → 所有折行结果都不会变
+    ent["w"] = w
+    for fn in list(ent["items"]):
+        try:
+            fn()
+        except Exception:
+            pass
+
+
+def _refit_schedule(owner):
+    ent = _REFIT.get(id(owner))
+    if not ent or ent["job"] is not None:
+        return
+    try:
+        ent["job"] = owner.after(ent["delay"],
+                                 lambda o=owner: _refit_apply(o))
+    except Exception:
+        ent["job"] = None
+
+
+def register_refit(owner, fn, delay=80):
+    """登记「容器宽度变了就重算一次折行」的回调（同一容器只绑一条事件）。"""
+    if owner is None:
+        try:
+            return fn()
+        except Exception:
+            return None
+    ent = _REFIT.get(id(owner))
+    if ent is None:
+        ent = {"owner": owner, "items": [], "w": None, "job": None,
+               "delay": delay}
+        _REFIT[id(owner)] = ent
+        try:
+            owner.bind("<Configure>",
+                       lambda _e, o=owner: _refit_schedule(o), add="+")
+        except Exception:
+            pass
+    ent["items"].append(fn)
+    if len(ent["items"]) == 1:
+        # 首个登记时兜底跑两次：布局还没出来时先等着，等出来了再对一次
+        try:
+            owner.after_idle(lambda o=owner: _refit_apply(o))
+            owner.after(150, lambda o=owner: _refit_apply(o))
+        except Exception:
+            pass
+    return fn
+
+
 def _design_font(font_desc=None):
     """把 (家族, 字号[, 字重]) 变成「设计像素」字体对象。
 
@@ -237,49 +310,42 @@ class Label(_CTkCompat, ctk.CTkLabel):
             self._install_auto_wrap()
 
     def _install_auto_wrap(self):
-        """按父容器可用宽度自动设置 wraplength；容器变宽 / 变窄时跟着调整。"""
-        state = {"job": None}
+        """按父容器可用宽度自动设置 wraplength；容器变宽 / 变窄时跟着调整。
 
-        def apply():
-            state["job"] = None
+        注册到 `register_refit` 而不是自己绑 `<Configure>`：一页几百个
+        Label 各绑一条，切页时父容器一次 Configure 就会触发几百次重算
+        （实测 2200 次、磕掉 0.2 秒），页面看着就是「抽搐抖动」。
+        """
+        if self._wrap_fixed:
+            # 宽度写死了，容器怎么变折行都不变 → 只算一次，不进注册表
             try:
-                if not self.winfo_exists():
+                self.after_idle(self._apply_wrap)
+            except Exception:
+                pass
+            return
+        register_refit(self.master, self._apply_wrap)
+
+    def _apply_wrap(self):
+        try:
+            if not self.winfo_exists():
+                return
+            # winfo_* 是真实像素，而 wraplength 按设计像素配置
+            # （CTk 会再乘缩放），高 DPI 下要先除回去，否则永远不折行
+            scale = max(1.0, ui_scale())
+            if self._wrap_fixed:
+                avail = self._wrap_fixed
+            else:
+                master = self.master
+                mw = master.winfo_width() / scale
+                if mw <= 1:
                     return
-                # winfo_* 是真实像素，而 wraplength 按设计像素配置
-                # （CTk 会再乘缩放），高 DPI 下要先除回去，否则永远不折行
-                scale = max(1.0, ui_scale())
-                if self._wrap_fixed:
-                    avail = self._wrap_fixed
-                else:
-                    master = self.master
-                    mw = master.winfo_width() / scale
-                    if mw <= 1:
-                        return
-                    avail = mw - max(0, self.winfo_x() / scale) - 12
-                if self._wrap_cap:
-                    avail = min(avail, self._wrap_cap)
-                avail = max(80, int(avail))
-                cur = int(float(self.cget("wraplength") or 0))
-                if abs(cur - avail) > 12:
-                    self.configure(wraplength=avail)
-            except Exception:
-                pass
-
-        def schedule(_event=None):
-            try:
-                if state["job"] is not None:
-                    self.after_cancel(state["job"])
-                state["job"] = self.after(60, apply)
-            except Exception:
-                pass
-
-        try:
-            self.master.bind("<Configure>", schedule, add="+")
-        except Exception:
-            pass
-        try:
-            self.after_idle(apply)
-            self.after(250, apply)
+                avail = mw - max(0, self.winfo_x() / scale) - 12
+            if self._wrap_cap:
+                avail = min(avail, self._wrap_cap)
+            avail = max(80, int(avail))
+            cur = int(float(self.cget("wraplength") or 0))
+            if abs(cur - avail) > 12:
+                self.configure(wraplength=avail)
         except Exception:
             pass
 
@@ -760,6 +826,22 @@ class Scrollbar(_CTkCompat, ctk.CTkScrollbar):
             return (self._start_value, self._end_value)
         except Exception:
             return (0.0, 1.0)
+
+    def set(self, first, last):
+        """ttk / CTk 兼容：区间没变就不重画。
+
+        CTk 的 set() 无条件调 _draw()，而 _draw() 要走一遍 PIL 圆角绘制
+        （实测 20~100ms）。页面每次重新布局都会 set 一次相同区间，
+        等于白白卡一帧。
+        """
+        try:
+            f, l = float(first), float(last)
+            if (abs(f - float(self._start_value)) < 1e-4
+                    and abs(l - float(self._end_value)) < 1e-4):
+                return
+        except Exception:
+            pass
+        super().set(first, last)
 
 
 class Slider(_CTkCompat, ctk.CTkSlider):

@@ -7,7 +7,9 @@
     ├─ "window"   窗口位置 / 大小 / 最大化 / 左侧菜单宽度
     ├─ "compress" ⑯ 图片压缩的选项记忆
     ├─ "ffmpeg"   ⑦ 手动指定的 ffmpeg 路径
-    └─ "hashscan" ⑲ 已管理的扫描目录清单
+    ├─ "hashscan" ⑲ 已管理的扫描目录清单
+    ├─ "speedcopy" ⑳ Robocopy 极速复制的路径与选项
+    └─ "audioextract" ㉑ 音轨提取的路径与选项
 
 旧文件（toolbox_window.json / compressor_config.json / ffmpeg_config.json /
 hashscan_roots.json）在**首次加载时自动并入**合并文件，内容读得出来才删除原文件；

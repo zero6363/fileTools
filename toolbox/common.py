@@ -16,7 +16,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ttk_font, ui_scale
 
-APP_VERSION = "1.75"
+APP_VERSION = "1.81"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -475,6 +475,34 @@ def _existing_dir_prefix(cand):
     return ""
 
 
+# 收尾括号 → 对应的开始括号（用于判断括号是路径名的一部分还是句子标点）
+_CLOSE_TO_OPEN = {"）": "（", ")": "(", "】": "【", "]": "["}
+_TRAIL_PUNCT = " \t，。、；：！？,.;:!?…—'\""
+
+
+def _trim_path_tail(s):
+    r"""剥掉匹配尾部带进来的句末标点，但不误伤名字自带的成对括号。
+
+    「D:\相册\合集（2023）」这种以括号结尾的合法路径：收尾的「）」在
+    前面能找到未配对的「（」，说明它是名字的一部分，要保留；而
+    「（输出到 D:\abc）」里的「）」前面没有对应的「（」，才是句子标点。
+    """
+    while s:
+        ch = s[-1]
+        op = _CLOSE_TO_OPEN.get(ch)
+        if op is not None:
+            body = s[:-1]
+            if body.count(op) > body.count(ch):
+                break  # 剩余部分有未配对的开始括号 → 收尾括号属于路径名
+            s = body
+            continue
+        if ch in _TRAIL_PUNCT:
+            s = s[:-1]
+            continue
+        break
+    return s
+
+
 def parse_windows_path(text):
     """从任意文本（可带引号、多行、说明文字）里提取 Windows 绝对路径。
 
@@ -492,8 +520,7 @@ def parse_windows_path(text):
             pass
     paths = []
     for m in _WIN_PATH_RE.finditer(text[:200000]):
-        raw = m.group(0).strip().strip('"').strip("'")
-        raw = raw.rstrip(" \t，。、；：！？,.;:!?'\"）)】]")
+        raw = _trim_path_tail(m.group(0).strip().strip('"').strip("'"))
         cand = _normalize_win_path(raw)
         if len(cand) < 3:
             continue
@@ -516,7 +543,9 @@ def paste_path_to(var, entry=None, on_change=None, allow_file=False):
     file:///D:/xxx 形式。返回是否识别到路径（False 时输入框已清空）。
     """
     path = parse_windows_path(_clipboard_text())
-    if not path:
+    if not path or not (os.path.isdir(path) or os.path.isfile(path)):
+        # 文本里识别不到、或识别出来的路径在磁盘上不存在（例如被误剥了
+        # 结尾括号）→ 改用资源管理器复制时自带的 CF_HDROP 精确路径兜底
         hdrop = _clipboard_hdrop()
         if hdrop:
             norm = _normalize_win_path(hdrop)
@@ -597,10 +626,8 @@ def form_note(parent, row, text, column=3, columnspan=1):
             pass
 
     try:
-        top = lbl.winfo_toplevel()
-        top.bind("<Configure>", _rewrap, add="+")
-        top.after_idle(_rewrap)
-        top.after(200, _rewrap)
+        # 注册到统一的重排调度（顶层宽度变了才重算，切页不再触发全部说明文字）
+        ui.register_refit(lbl.winfo_toplevel(), _rewrap, delay=120)
     except Exception:
         pass
     return lbl
@@ -1222,6 +1249,7 @@ class ScrollPage(tk.Frame):
         self._pending = None
         self._job = None
         self._watch = None
+        self._verify = 0          # 定高后的自校验次数（见 _layout）
 
         # 原生 tk.Frame：请求高度只反映子控件，不会被「刚被拉高」带偏
         self.body = tk.Frame(self.canvas, bg=bg, highlightthickness=0, bd=0)
@@ -1262,6 +1290,8 @@ class ScrollPage(tk.Frame):
         if self._job is not None:
             return
         try:
+            # 外部（Configure / refresh）要求重排 → 重新开始一轮密集自校验
+            self._verify = 0
             self._job = self.after(16, self._layout)
         except Exception:
             self._job = None
@@ -1305,6 +1335,15 @@ class ScrollPage(tk.Frame):
                 else:
                     self.canvas.itemconfigure(self._win, width=cw, height=want)
                 self.canvas.configure(scrollregion=(0, 0, cw, want))
+            # 定高这一轮常常还没测准：CTk 控件要等一轮字体测量，说明文字的
+            # 自动折行也要等 master 宽度确定，实测 need 在 100~700ms 内还会
+            # 再从 442 → 484 → 696 长两轮。以前只有 1 秒一次的兜底轮询，
+            # 于是进页面两秒后内容「突然长出来、滚动条突然冒出来」——
+            # 那一下就是用户说的「页面抽搐」。这里定高后固定密集校验
+            # 8 轮（约 400ms），把跳变全部收在这段肉眼难辨的时间内。
+            if self._verify < 8:
+                self._verify += 1
+                self._job = self.after(50, self._layout)
             self._need = need
         except Exception:
             pass
@@ -1328,7 +1367,7 @@ class ScrollPage(tk.Frame):
                     self._pending = need
             else:
                 self._pending = None
-            self._watch = self.after(1000, self._tick)
+            self._watch = self.after(500, self._tick)
         except Exception:
             self._watch = None
 

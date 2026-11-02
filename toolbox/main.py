@@ -45,17 +45,28 @@
                       toolbox_config.json 的 hashscan 分区里，可统一管理、跨库
                       检索；「合并数据库」把子目录的库并进来，「用上级库」按上级
                       库给子目录建库（两者都只动数据库、不读文件）
+  ⑳ Robocopy极速复制 <- 新增：封装 Windows 自带 robocopy，在文件夹之间
+                       多线程（/MT）快速复制；可选断点续传（/Z），中断后重跑
+                       会跳过已完成文件、续传未完成的大文件；限制重试次数
+                       避免被占用文件卡住；不启用镜像模式，绝不删除目标里
+                       多出来的文件；运行日志默认收起
+  ㉑ 音轨提取      <- 新增：从 ts / flv / mp4 等视频里把音轨原样抽出来
+                       （ffmpeg -c:a copy，不转码，几 GB 的视频也只要一两秒）；
+                       按音轨编码自动选容器（AAC → m4a、MP3 → mp3、
+                       FLAC → flac、AC-3 / DTS → mka）；输出文件夹里已有
+                       同名音频则跳过，绝不覆盖；可递归子文件夹、保留目录
+                       结构、多文件并行
 
 模块划分：
   common.py         通用基础设施 + 拖放支持
-  config.py         统一配置（toolbox_config.json，按 window/compress/ffmpeg/hashscan 分区，
-                    老版本分散的四个 json 首次启动自动并入）
+  config.py         统一配置（toolbox_config.json，按 window/compress/ffmpeg/hashscan/
+                    speedcopy/audioextract 分区，老版本分散的四个 json 首次启动自动并入）
   tab_grouping.py   ①②③   tab_live.py ④   tab_rename.py ⑤⑥⑨
-  tab_encode.py ⑦         tab_video.py ⑧
+  tab_encode.py ⑦         tab_video.py ⑧         tab_audio.py ㉑
   tab_docs.py ⑩⑪⑫⑬       tab_media.py ⑭⑮
   tab_compress.py ⑯       tab_rsbackup.py ⑰   tab_translate.py ⑱
-  tab_hashscan.py ⑲
-  （⑦ tab_encode.py 依赖外部 FFmpeg；⑱ 只需标准库 + 联网；⑲ 只需标准库）
+  tab_hashscan.py ⑲        tab_speedcopy.py ⑳
+  （⑦ / ㉑ 依赖外部 FFmpeg；⑱ 只需标准库 + 联网；⑲ / ⑳ 只需标准库）
 
 所有涉及文件移动/重命名的操作均防覆盖：同名跳过或自动改名，两阶段重命名，绝不丢失数据。
 依赖（按需安装，缺失时对应标签页会在运行时提示）：
@@ -85,9 +96,9 @@ NAV_MAX_WIDTH = 380
 # 顺序按实际操作流程排，编号仍是稳定 ID，不受显示顺序影响。
 NAV_GROUPS = [
     ("文件整理", [0, 4, 1, 2, 3, 5, 8]),
-    ("媒体处理", [6, 7, 13, 15]),
+    ("媒体处理", [6, 7, 20, 13, 15]),
     ("文本与文档", [9, 10, 11, 12, 17]),
-    ("校验与备份", [14, 16, 18]),
+    ("校验与备份", [14, 16, 18, 19]),
 ]
 from .tab_grouping import build_empty_tab, build_flatten_tab, build_group_tab
 from .tab_live import build_live_tab
@@ -98,9 +109,38 @@ from .tab_docs import (build_md_tab, build_merge_tab, build_txt2img_tab,
 from .tab_media import build_webp_tab, build_zip_tab
 from .tab_compress import build_compress_tab
 from .tab_encode import build_encode_tab
+from .tab_audio import build_audioextract_tab
 from .tab_rsbackup import build_rsbackup_tab
 from .tab_translate import build_translate_tab
 from .tab_hashscan import build_hash_tab
+from .tab_speedcopy import build_speedcopy_tab
+
+# 工具清单：列表下标 = 工具编号（① = 0），导航显示顺序由 NAV_GROUPS 决定。
+# 放在模块级是为了让「共 N 个工具」这类文案和页面列表共用同一份数据，
+# 以后加页面只改这里 + NAV_GROUPS，不会漏掉某处的硬编码数字。
+TOOL_BUILDERS = [
+    ("① 文件分组", build_group_tab),
+    ("② 移动到根目录", build_flatten_tab),
+    ("③ 删除空文件夹", build_empty_tab),
+    ("④ 实况图分组", build_live_tab),
+    ("⑤ 文件名添加路径", build_rename_tab),
+    ("⑥ 序号重命名", build_seq_rename_tab),
+    ("⑦ 视频常用压制", build_encode_tab),
+    ("⑧ 视频横竖屏", build_video_tab),
+    ("⑨ 文件名删除", build_trim_tab),
+    ("⑩ 图片生成MD", build_md_tab),
+    ("⑪ TXT转图片", build_txt2img_tab),
+    ("⑫ TXT合并", build_merge_tab),
+    ("⑬ TXT重命名", build_txt_rename_tab),
+    ("⑭ WebP转JPG", build_webp_tab),
+    ("⑮ 加密包分类", build_zip_tab),
+    ("⑯ 图片压缩", build_compress_tab),
+    ("⑰ ReSoBackup备份", build_rsbackup_tab),
+    ("⑱ 文本翻译", build_translate_tab),
+    ("⑲ 硬盘哈希扫描", build_hash_tab),
+    ("⑳ Robocopy极速复制", build_speedcopy_tab),
+    ("㉑ 音轨提取", build_audioextract_tab),
+]
 
 
 # 主窗口
@@ -152,8 +192,9 @@ class ToolboxApp:
 
         ui.Label(nav_inner, text="文件工具箱", font=FONTS["nav_title"],
                  text_color=COLOR["text"]).pack(anchor="w", padx=16, pady=(10, 0))
-        ui.Label(nav_inner, text="19 个实用工具", font=FONTS["xs"],
-                 text_color=COLOR["text_muted"]).pack(anchor="w", padx=16, pady=(0, 4))
+        ui.Label(nav_inner, text="%d 个实用工具" % len(TOOL_BUILDERS),
+                 font=FONTS["xs"], text_color=COLOR["text_muted"]).pack(
+                     anchor="w", padx=16, pady=(0, 4))
 
         # 分隔条：拖拽调整导航宽度（限制在 NAV_MIN~NAV_MAX），双击恢复默认宽度
         sash = tk.Frame(body, width=2, bg=COLOR["border"], cursor="sb_h_double_arrow")
@@ -180,45 +221,30 @@ class ToolboxApp:
 
         page_host = ui.Frame(content)
         page_host.pack(fill=tk.BOTH, expand=True)
+        # 页面容器用 place 叠放，切页只做 lift()（见 show_tool 注释）：
+        # pack_forget + pack 会把整页控件窗口全部 unmap 再 map，
+        # CTk 每个控件都是独立 Win32 窗口，一页两三百个，切一次要
+        # 150~570ms，还是一个一个冒出来的 —— 那就是「切页抽搐」。
+        self.page_host = page_host
+        self._page_pad = 4
 
+        builders = TOOL_BUILDERS
         self.tool_frames = []
-        self.nav_items = []  # 按工具编号索引：[None] * 19 → (button, frame, title)
-        self._tool_groups = [""] * 19
+        self._tool_groups = [""] * len(builders)
         self._drop_handlers = {}  # {frame: handler} 各工具页注册的拖放处理器
         self._show_handlers = {}  # {frame: handler} 各工具页注册的「切换到该页时」回调
         self._current_index = 0
         self._hash_api = None    # ⑲ 页面首次打开后才创建（懒加载）
         self._encode_api = None  # ⑦ 同上
-        builders = [
-            ("① 文件分组", build_group_tab),
-            ("② 移动到根目录", build_flatten_tab),
-            ("③ 删除空文件夹", build_empty_tab),
-            ("④ 实况图分组", build_live_tab),
-            ("⑤ 文件名添加路径", build_rename_tab),
-            ("⑥ 序号重命名", build_seq_rename_tab),
-            ("⑦ 视频常用压制", build_encode_tab),
-            ("⑧ 视频横竖屏", build_video_tab),
-            ("⑨ 文件名删除", build_trim_tab),
-            ("⑩ 图片生成MD", build_md_tab),
-            ("⑪ TXT转图片", build_txt2img_tab),
-            ("⑫ TXT合并", build_merge_tab),
-            ("⑬ TXT重命名", build_txt_rename_tab),
-            ("⑭ WebP转JPG", build_webp_tab),
-            ("⑮ 加密包分类", build_zip_tab),
-            ("⑯ 图片压缩", build_compress_tab),
-            ("⑰ ReSoBackup备份", build_rsbackup_tab),
-            ("⑱ 文本翻译", build_translate_tab),
-            ("⑲ 硬盘哈希扫描", build_hash_tab),
-        ]
-        # 启动时只造 19 个空容器，页面内容等第一次点开再建。
-        # 19 页 CTk 控件一次性造完要 2.3 秒（占启动耗时八成），
-        # 而用户每次只看一页，不该为没打开的 18 页付这笔时间。
+        # 启动时只造 N 个空容器，页面内容等第一次点开再建。
+        # 全部 CTk 控件一次性造完要 2.4 秒（占启动耗时八成），
+        # 而用户每次只看一页，不该为没打开的页面付这笔时间。
         self._builders = builders
         self._built = [False] * len(builders)
         for _index in range(len(builders)):
             self.tool_frames.append(ui.Frame(page_host))
 
-        # 导航按场景分组显示；nav_items 仍按工具编号索引，
+        # 导航按场景分组显示；nav_items 仍按工具编号索引（[编号] → (button, frame, title)），
         # show_tool 的编号映射不受左侧显示顺序影响。
         self.nav_items = [None] * len(builders)
         for group_name, indices in NAV_GROUPS:
@@ -298,12 +324,13 @@ class ToolboxApp:
             handler(paths)
         else:
             self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑦视频常用压制 / "
-                                    "⑧视频横竖屏 / ⑯图片压缩 / ⑱文本翻译 / ⑲硬盘哈希扫描）")
+                                    "⑧视频横竖屏 / ⑯图片压缩 / ⑱文本翻译 / ⑲硬盘哈希扫描 / "
+                                    "㉑音轨提取）")
 
     def _build_page(self, index):
         """首次打开某页时才构建它的内容（空容器在启动时已经建好）。
 
-        CTk 控件是一个个 canvas 画出来的，19 页一次性造完要 2.3 秒左右，
+        CTk 控件是一个个 canvas 画出来的，20 页一次性造完要 2.4 秒左右，
         占了冷启动的八成；而用户每次只看一页，拆成按需构建后
         冷启动只造第 ① 页，其余各页打开时花 40~130 ms。
         """
@@ -323,7 +350,8 @@ class ToolboxApp:
         try:
             if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
                            build_compress_tab, build_rsbackup_tab, build_encode_tab,
-                           build_translate_tab, build_hash_tab):
+                           build_translate_tab, build_hash_tab,
+                           build_audioextract_tab):
                 result = builder(frame, self)
                 if builder is build_hash_tab:
                     # 暴露给自动化冒烟测试（不影响正常使用）
@@ -343,27 +371,60 @@ class ToolboxApp:
             except Exception:
                 pass
 
+    def _park_page(self, frame, current):
+        """把页面摆进容器：当前页跟随容器尺寸，其它页钉住当前尺寸。
+
+        为什么不干脆全用 relwidth=1：隐藏页也跟随容器的话，窗口一拉大，
+        21 页（每页数百个 CTk 子窗口）全部重排，拖拽窗口会卡成幻灯片。
+        钉住绝对尺寸后，窗口 resize 只重排当前页，代价和以前一样。
+        """
+        pad = self._page_pad
+        # CTk 的 place() 禁止传 width/height，用 tk 的原始实现绕过去
+        if not current:
+            # 钉住「当前实际尺寸」而不是按容器算：数值一模一样，
+            # Tk 判定几何没变就不会发 <Configure>，页面里的 Label
+            # 也就不会集体重算折行（那才是切页卡顿的大头）。
+            w = frame.winfo_width()
+            h = frame.winfo_height()
+            if w <= 1 or h <= 1:
+                w = self.page_host.winfo_width() - pad * 2
+                h = self.page_host.winfo_height() - pad * 2
+            if w > 1 and h > 1:
+                tk.Place.place(frame, x=pad, y=pad, width=w, height=h)
+                return
+        tk.Place.place(frame, x=pad, y=pad, relwidth=1, width=-pad * 2,
+                       relheight=1, height=-pad * 2)
+
     def show_tool(self, index):
-        """切换到指定工具：隐藏其他页，显示对应页，并高亮菜单按钮"""
+        """切换到指定工具：把对应页抬到最上层，并高亮菜单按钮"""
         self._build_page(index)
+        old = self._current_index
         self._current_index = index
         frame = self.tool_frames[index]
-        for i, f in enumerate(self.tool_frames):
-            if i != index:
-                f.pack_forget()
-        frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        # 旧页不再 unmap，只钉住尺寸沉到下面：map/unmap 才是抖动的根源
+        if old != index:
+            of = self.tool_frames[old]
+            try:
+                if of.winfo_manager():
+                    self._park_page(of, False)
+            except Exception:
+                pass
+        self._park_page(frame, True)
+        frame.lift()
         current_title = self.nav_items[index][2]
         self.page_title.configure(text=current_title)
         self.page_group.configure(text=self._tool_groups[index])
-        for i, (btn, _f, _title) in enumerate(self.nav_items):
-            if i == index:
-                btn._active = True
-                btn.config(fg_color=COLOR["accent_soft"], text_color=COLOR["accent_active"],
-                           hover_color=COLOR["accent_soft"], font=FONTS["nav_active"])
-            else:
-                btn._active = False
-                btn.config(fg_color=COLOR["nav_bg"], text_color=COLOR["text"],
-                           hover_color=COLOR["nav_item_hover"], font=FONTS["nav"])
+        # 只改动前后两项：以前每次切页把 21 个按钮全 config 一遍，
+        # 等于让 21 个 CTkButton 各重画一次，纯属白花时间。
+        if old != index:
+            ob, _of, _ot = self.nav_items[old]
+            ob._active = False
+            ob.config(fg_color=COLOR["nav_bg"], text_color=COLOR["text"],
+                      hover_color=COLOR["nav_item_hover"], font=FONTS["nav"])
+        btn = self.nav_items[index][0]
+        btn._active = True
+        btn.config(fg_color=COLOR["accent_soft"], text_color=COLOR["accent_active"],
+                   hover_color=COLOR["accent_soft"], font=FONTS["nav_active"])
         self.status.config(text=f"当前工具：{current_title}　·　{self._tool_groups[index]}")
         handler = self._show_handlers.get(frame)
         if handler:

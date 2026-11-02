@@ -840,11 +840,15 @@ def select_pix_fmt(info, mode, enc, keep_dv=False):
 
 
 def video_encode_args(enc, codec, quality, preset, pix_fmt, dovi=None, keep_dv=False,
-                      dims=None):
+                      dims=None, emit_pix_fmt=True):
     """按编码器生成视频参数（cq / global_quality / crf 三种质量体系）。
        pix_fmt 由 select_pix_fmt 决定（保留源色度与位深；640p 强制 8bit 4:2:0）。
        dovi / keep_dv：源是杜比视界且要保留元数据时，libx265 用 -dolbyvision 1 写回 RPU。
-       x265 的杜比视界必须开 HRD/VBV，否则报 "Dolby Vision requires VBV settings" 直接打不开编码器。"""
+       x265 的杜比视界必须开 HRD/VBV，否则报 "Dolby Vision requires VBV settings" 直接打不开编码器。
+       emit_pix_fmt=False（显存直通）：hw 帧格式由 NVDEC/nvenc 自动协商（nv12/p010），
+       显式 -pix_fmt 会让部分 ffmpeg 版本在 hw 帧上插 CPU 格式转换，
+       swscale 对 P010 不支持时直接报 "Function not implemented"（vf#0:0 ENOSYS），
+       编码器随之级联打不开。profile 判断仍用 pix_fmt 的值，只是不再输出该参数。"""
     args = ["-c:v", enc]
     if enc.endswith("_nvenc"):
         # ShanaEncoder 同款：VBR + cq，b:v 0 表示纯质量模式
@@ -852,7 +856,8 @@ def video_encode_args(enc, codec, quality, preset, pix_fmt, dovi=None, keep_dv=F
                  "-cq", str(quality), "-b:v", "0"]
         if codec == CODEC_HEVC:
             args += ["-profile:v", "main10" if "10" in pix_fmt else "main"]
-        args += ["-pix_fmt", pix_fmt]
+        if emit_pix_fmt:
+            args += ["-pix_fmt", pix_fmt]
     elif enc.endswith("_qsv"):
         args += ["-preset", str(preset), "-global_quality", str(quality)]
         if codec == CODEC_HEVC:
@@ -971,7 +976,7 @@ def resolve_plan(settings, info):
 
 
 def build_command(settings, info, plan, src, dst, work_dir, sub_name,
-                  progress_to="pipe:1"):
+                  progress_to="pipe:1", no_hwaccel=False):
     ff = settings["ffmpeg"]
     show_console = bool(settings.get("show_console"))
     # 显示 ffmpeg 窗口时用 warning + 自带统计行；否则静默，只看我们解析的进度
@@ -993,6 +998,19 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
         args += ["-movflags", "+faststart", "-f", "mp4", dst]
         return args
     filters = build_filters(info, plan["target"], sub_name)
+    # NVENC 显存直通：解码走 NVDEC、帧全程留在显存直到编码完成，省掉 CPU↔GPU
+    # 来回拷贝（高清/4K 提速最明显）。有 CPU 滤镜（缩放/旋转/字幕烧录）时退一级：
+    # 只开 GPU 解码（帧自动回内存），滤镜链照常工作——显存帧进不了 CPU 滤镜，
+    # 硬塞会报 "Impossible to convert between the formats" 直接失败。
+    # QSV/软编不加：QSV 走系统内存上传链路，软编本来就在 CPU。
+    # no_hwaccel=True：跳过全部 hwaccel 参数（直通失败后的自动回退重试用，
+    # 即没有 GPU 链路的原始稳定命令）。
+    gpu_pass = (plan["enc"] or "").endswith("_nvenc") and not no_hwaccel
+    direct = gpu_pass and not filters
+    if gpu_pass:
+        args += ["-hwaccel", "cuda"]
+        if direct:
+            args += ["-hwaccel_output_format", "cuda"]
     if info["rotation"]:
         # 旋转由我们自己用 transpose 处理（滤镜顺序：字幕 → 旋转）。
         # -display_rotation 0 让 ffmpeg 既不自动旋转、也不把旋转矩阵带到输出
@@ -1010,10 +1028,17 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
     fw, fh = plan["target"] if plan.get("target") else (dw, dh)
     pix_fmt = select_pix_fmt(info, settings["mode"], plan["enc"],
                              keep_dv=bool(plan.get("keep_dv")))
+    if gpu_pass and pix_fmt == "yuv420p":
+        # NVENC 链路统一用 NV12：解码加速（有滤镜退级）时 NVDEC 输出就是 nv12，
+        # 直接对齐可省一次 nv12→yuv420p 的 CPU 格式拷贝（编码器吃这两种
+        # 格式产出的码流一致，profile 不受影响）。直通场景不输出 -pix_fmt，
+        # 这个值只用于 profile 判断。10bit 的 p010le 与 NVDEC 输出天然一致。
+        pix_fmt = "nv12"
     args += video_encode_args(plan["enc"], plan["codec"], plan["quality"],
                               plan["preset"], pix_fmt,
                               dovi=info.get("dovi"), keep_dv=bool(plan.get("keep_dv")),
-                              dims=(fw, fh, info.get("fps") or 30))
+                              dims=(fw, fh, info.get("fps") or 30),
+                              emit_pix_fmt=not direct)
     # 只在真正输出 10bit 时才写 HDR 色彩标签（640p 强制 8bit 不写，否则 SDR 内容会被误标 HDR）
     if info["hdr"] and "10" in pix_fmt:
         args += ["-color_primaries", info["color_primaries"] or "bt2020",
@@ -1286,11 +1311,12 @@ def read_report_errors(path, limit=5):
     return uniq[-limit:]
 
 
-def run_encode(settings, info, plan, src, dst, work_dir, on_progress, stop_event,
-               running, on_cmd=None):
+def _encode_once(settings, info, plan, src, dst, work_dir, on_progress, stop_event,
+                 running, on_cmd=None, no_hwaccel=False):
     """跑一次 ffmpeg，返回 (成功?, 说明, 字幕说明)。on_progress(百分比, 速度) 会被高频调用。
 
-    on_cmd(命令行字符串) 在启动前回调一次，用来把实际执行的命令写进日志。"""
+    on_cmd(命令行字符串) 在启动前回调一次，用来把实际执行的命令写进日志。
+    no_hwaccel=True：构建命令时不带任何 hwaccel 参数（直通失败后的回退重试）。"""
     sub_name = None
     sub_note = ""
     # 极速转封装不解码，没法烧字幕（烧字幕必须重编码），直接跳过
@@ -1312,7 +1338,8 @@ def run_encode(settings, info, plan, src, dst, work_dir, on_progress, stop_event
     tail = []
     try:
         cmd = build_command(settings, info, plan, src, dst,
-                            work_dir, sub_name, progress_to=prog_path)
+                            work_dir, sub_name, progress_to=prog_path,
+                            no_hwaccel=no_hwaccel)
         if on_cmd:
             on_cmd(cmd)
         if show_console:
@@ -1409,6 +1436,40 @@ def run_encode(settings, info, plan, src, dst, work_dir, on_progress, stop_event
     if not os.path.isfile(dst) or os.path.getsize(dst) == 0:
         return False, "输出文件为空", sub_note
     return True, "", sub_note
+
+
+def run_encode(settings, info, plan, src, dst, work_dir, on_progress, stop_event,
+               running, on_cmd=None, on_retry=None):
+    """跑一次 ffmpeg；NVENC 带硬件链路失败时自动回退重试一次。
+
+    显存直通 / GPU 解码依赖解码器-滤镜-编码器的 hw 帧协商，个别 ffmpeg 构建
+    或驱动组合会协商失败（如 vf#0:0 "Function not implemented"）。失败时
+    自动用不带 hwaccel 的原始稳定命令（纯软解 → 编码器）重试一次：
+      · 直通协商问题 → 回退后必然能出片（等于加速前的老链路，只是慢）；
+      · 编码器参数本身错误 → 重试同样秒败，成本≈0，最终报回退后的错误。
+    取消不算失败，不重试。on_retry() 在开始回退重试前回调（本函数运行在
+    后台线程，写 UI 日志由调用方经该回调走 run_ui）。"""
+    ok, msg, sub_note = _encode_once(settings, info, plan, src, dst, work_dir,
+                                     on_progress, stop_event, running, on_cmd)
+    if ok or msg == "已取消" or stop_event.is_set():
+        return ok, msg, sub_note
+    if not (plan.get("enc") or "").endswith("_nvenc"):
+        # 只有 NVENC 的命令才带 hwaccel；QSV/软编失败与直通无关，照旧报错
+        return ok, msg, sub_note
+    if on_retry:
+        try:
+            on_retry()
+        except Exception:
+            pass
+    ok2, msg2, sub_note2 = _encode_once(settings, info, plan, src, dst, work_dir,
+                                        on_progress, stop_event, running,
+                                        on_cmd, no_hwaccel=True)
+    if ok2:
+        return True, "", sub_note2 or sub_note
+    if msg2 == "已取消":
+        return False, "已取消", sub_note2 or sub_note
+    # 两次都失败：把第一次（直通）的错误一起带上，便于判断是协商问题还是参数问题
+    return False, f"{msg}（回退纯解码链路仍失败：{msg2}）", sub_note2 or sub_note
 
 
 # ============================================================
@@ -2357,9 +2418,12 @@ def build_encode_tab(parent, app=None):
                         line = subprocess.list2cmdline([str(c) for c in cmd])
                         run_ui(lambda: log("  命令：" + line))
 
+                def on_retry():
+                    run_ui(lambda: log("  ↻ 显存直通/GPU 解码失败，回退到纯解码链路重试……"))
+
                 ok, msg, sub_note = run_encode(settings, info, plan, src, dst, work_dir,
                                                on_progress, state["stop"], state["procs"],
-                                               on_cmd=on_cmd)
+                                               on_cmd=on_cmd, on_retry=on_retry)
                 if sub_note:
                     run_ui(lambda: log(f"  字幕：{sub_note}"))
                 try:
