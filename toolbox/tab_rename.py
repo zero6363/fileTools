@@ -127,12 +127,13 @@ def collect_files(paths, recursive):
 
 
 def collect_dirs(paths):
-    """仅文件夹模式：把拖入的文件夹展开为其子文件夹（仅当前层，文件忽略），
-    去重后按自然排序。直接拖入的子文件夹自身也会被收集。"""
+    """仅文件夹模式：收集拖入的文件夹本身 + 其子文件夹（仅当前层，文件忽略），
+    去重后按自然排序。拖入的文件夹没有子文件夹时，列表里至少有它自己。"""
     dirs = []
     for p in paths:
         if not os.path.isdir(p):
             continue
+        dirs.append(os.path.abspath(p))     # 拖入的文件夹本身也纳入处理
         for name in os.listdir(p):
             fp = os.path.join(p, name)
             if os.path.isdir(fp):
@@ -379,15 +380,22 @@ def trim_filename(name, start, count, from_end):
     return name[:begin] + name[end_pos:]
 
 
-def build_trim_plan(items, start, count, from_end):
+def build_trim_plan(items, start, count, from_end, include_ext=False):
     """生成文件名删除计划 [(old, new)] 及删后为空的跳过列表；
-    文件只删除主文件名部分，扩展名（.jpg 等）保持不变；文件夹按整个名称处理。
+    文件默认只删除主文件名部分，扩展名（.jpg 等）保持不变（include_ext=True 时
+    连同扩展名一起按整个名称处理）；文件夹按整个名称处理。
     新旧名相同的条目不放入计划。"""
     plan = []
     empty_names = []
     for old in items:
         name = os.path.basename(old)
         if os.path.isdir(old):
+            new_name = trim_filename(name, start, count, from_end)
+            if not new_name:
+                empty_names.append(old)
+                continue
+        elif include_ext:
+            # 连同扩展名一起处理（点号也算一个字符）
             new_name = trim_filename(name, start, count, from_end)
             if not new_name:
                 empty_names.append(old)
@@ -405,12 +413,58 @@ def build_trim_plan(items, start, count, from_end):
     return plan, empty_names
 
 
+def build_add_plan(items, text, at_end, include_ext=False):
+    """生成文字添加计划 [(old, new)] 及跳过列表（形状与删除计划一致）。
+    at_end=False 加在名称前面，True 加在后面；
+    文件默认只处理主文件名（后缀位置不变），include_ext=True 时加在整个名称上；
+    文件夹按整个名称处理。"""
+    plan = []
+    for old in items:
+        name = os.path.basename(old)
+        if os.path.isdir(old) or include_ext:
+            new_name = (name + text) if at_end else (text + name)
+        else:
+            stem, ext = os.path.splitext(name)
+            new_name = (stem + text + ext) if at_end else (text + stem + ext)
+        new = os.path.join(os.path.dirname(old), new_name)
+        if os.path.abspath(new) != os.path.abspath(old):
+            plan.append((old, new))
+    return plan, []
+
+
+def build_replace_plan(items, find_text, repl_text, include_ext=False):
+    """生成文字替换计划 [(old, new)] 及替换后名称为空的跳过列表。
+    文件默认只替换主文件名中的文字（后缀不变），include_ext=True 时整个名称参与替换
+    （可借此改掉扩展名）；文件夹按整个名称处理。"""
+    plan = []
+    empty_names = []
+    for old in items:
+        name = os.path.basename(old)
+        if os.path.isdir(old) or include_ext:
+            new_name = name.replace(find_text, repl_text)
+            # 空名 / 纯点号在 Windows 上不合法，跳过
+            if not new_name.strip("."):
+                empty_names.append(old)
+                continue
+        else:
+            stem, ext = os.path.splitext(name)
+            stem = stem.replace(find_text, repl_text)
+            if not stem:
+                empty_names.append(old)
+                continue
+            new_name = stem + ext
+        new = os.path.join(os.path.dirname(old), new_name)
+        if os.path.abspath(new) != os.path.abspath(old):
+            plan.append((old, new))
+    return plan, empty_names
+
+
 def build_seq_rename_tab(parent, app=None):
     """⑥ 序号重命名：拖放/按钮添加文件或文件夹，遍历读取，自然排序，预览后执行"""
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(7, weight=1)
     make_tip(parent, 0, "拖入文件/文件夹，自然排序后重命名：可全部改为序号，或原文件名前加序号；"
-                        "勾选「仅处理文件夹」只重命名子文件夹。",
+                        "勾选「仅处理文件夹」只重命名文件夹（含拖入的文件夹本身与其子文件夹）。",
              colspan=4, autowrap=True)
 
     file_list = []      # 收集到的文件完整路径（自然排序）
@@ -491,7 +545,7 @@ def build_seq_rename_tab(parent, app=None):
     table_frame.grid_rowconfigure(0, weight=1)
     table_frame.grid_columnconfigure(0, weight=1)
 
-    tree = ttk.Treeview(table_frame, columns=("old", "new"), show="headings", height=6)
+    tree = ttk.Treeview(table_frame, columns=("old", "new"), show="headings", height=12)
     tree.heading("old", text="原文件（完整路径）")
     tree.heading("new", text="重命名后（新文件名）")
     tree.column("old", width=440, minwidth=200, stretch=True)
@@ -508,7 +562,9 @@ def build_seq_rename_tab(parent, app=None):
     label_preview = ui.Label(parent, text="", foreground=COLOR["text_secondary"])
     label_preview.grid(row=8, column=0, columnspan=3, sticky="w", padx=8)
 
-    text_log, log = make_log_panel(parent, 9, colspan=4, title="执行日志", height=2)
+    # 日志默认折叠（点标题展开），空间让给预览表格
+    text_log, log = make_log_panel(parent, 9, colspan=4, title="执行日志", height=2,
+                                   collapsible=True, collapsed=True)
 
     # ---- 功能函数 ----
     def unit_name():
@@ -557,7 +613,7 @@ def build_seq_rename_tab(parent, app=None):
                 messagebox.showinfo(
                     "提示",
                     f"未找到可处理的{unit_name()}。\n"
-                    f"仅文件夹模式下，请拖入/添加文件夹（收集其中的子文件夹）。")
+                    f"仅文件夹模式下，请拖入/添加文件夹（收集该文件夹本身及其子文件夹）。")
 
         collect_async(parent, paths, collect, apply,
                       on_busy=lambda: label_count.config(
@@ -629,11 +685,13 @@ def build_seq_rename_tab(parent, app=None):
 
 
 def build_trim_tab(parent, app=None):
-    """⑨ 文件名删除：按位置删除文件名中的字符（可选文件/文件夹，从前/从后）"""
+    """⑨ 文件名处理：删除字符 / 添加文字 / 替换文字（可选文件/文件夹，含后缀名开关）"""
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(7, weight=1)
-    make_tip(parent, 0, "按位置删除文件名中的字符：可设起始位、删除个数、从前/从后；"
-                        "例如 '01_照片.jpg' → '照片.jpg'。",
+    make_tip(parent, 0, "按模式处理文件名：删除字符（设起始位、个数，从前/从后）、添加文字（名称前/后）、"
+                        "替换文字（「替换为」留空即删除该文字）。默认只处理主文件名、后缀不变，"
+                        "勾选「包括后缀名」则整个文件名参与；「仅处理文件夹」忽略文件，"
+                        "含拖入的文件夹本身与其子文件夹。",
              colspan=4, autowrap=True)
 
     file_list = []      # 收集到的文件/文件夹完整路径（自然排序）
@@ -649,7 +707,7 @@ def build_trim_tab(parent, app=None):
             add_paths(list(paths))
 
     def on_add_folder():
-        p = filedialog.askdirectory(title="选择文件夹（仅文件夹模式下取其子文件夹）")
+        p = filedialog.askdirectory(title="选择文件夹（仅文件夹模式下含该文件夹本身与其子文件夹）")
         if p:
             add_paths([p])
 
@@ -678,29 +736,105 @@ def build_trim_tab(parent, app=None):
     chk_rec = ttk.Checkbutton(info_row, text="添加文件夹时遍历子目录", variable=var_rec)
     chk_rec.pack(side=tk.LEFT, padx=(24, 0))
 
-    # ---- 处理对象与删除参数 ----
+    # ---- 处理模式与对象 ----
+    var_mode = tk.StringVar(value="delete")
     var_dirs_only = tk.BooleanVar(value=False)
-    ttk.Checkbutton(parent, text="仅处理文件夹（忽略文件，只重命名子文件夹）",
+
+    frame_mode = ui.Frame(parent)
+    frame_mode.grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 0))
+    ttk.Radiobutton(frame_mode, text="删除字符", variable=var_mode, value="delete",
+                    command=lambda: on_mode_change()).pack(side=tk.LEFT)
+    ttk.Radiobutton(frame_mode, text="添加文字", variable=var_mode, value="add",
+                    command=lambda: on_mode_change()).pack(side=tk.LEFT, padx=(18, 0))
+    ttk.Radiobutton(frame_mode, text="替换文字", variable=var_mode, value="replace",
+                    command=lambda: on_mode_change()).pack(side=tk.LEFT, padx=(18, 0))
+    ttk.Checkbutton(frame_mode, text="仅处理文件夹",
                     variable=var_dirs_only, command=lambda: sync_dirs_mode()
-                    ).grid(row=4, column=0, sticky="w", padx=8)
+                    ).pack(side=tk.LEFT, padx=(26, 0))
 
     # 参数行放独立子框架，避免列宽互相干扰
     frame_params = ui.Frame(parent)
     frame_params.grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=5)
-    ui.Label(frame_params, text="从第几位开始：").grid(row=0, column=0, sticky="w", padx=8)
-    box_start, var_start = make_num_box(frame_params, 1, 1, 999)
+
+    # -- 删除字符参数行 --
+    frame_row_del = ui.Frame(frame_params)
+    ui.Label(frame_row_del, text="从第几位开始：").grid(row=0, column=0, sticky="w", padx=8)
+    box_start, var_start = make_num_box(frame_row_del, 1, 1, 999)
     box_start.grid(row=0, column=1, sticky="w")
-    ui.Label(frame_params, text="删除几个字：").grid(row=0, column=2, sticky="w", padx=(16, 0))
-    box_count, var_count = make_num_box(frame_params, 2, 0, 999)
+    ui.Label(frame_row_del, text="删除几个字：").grid(row=0, column=2, sticky="w", padx=(16, 0))
+    box_count, var_count = make_num_box(frame_row_del, 2, 0, 999)
     box_count.grid(row=0, column=3, sticky="w")
     var_from_end = tk.BooleanVar(value=False)
-    ttk.Radiobutton(frame_params, text="从前", variable=var_from_end, value=False
+    ttk.Radiobutton(frame_row_del, text="从前", variable=var_from_end, value=False
                     ).grid(row=0, column=4, sticky="w", padx=(20, 0))
-    ttk.Radiobutton(frame_params, text="从后", variable=var_from_end, value=True
+    ttk.Radiobutton(frame_row_del, text="从后", variable=var_from_end, value=True
                     ).grid(row=0, column=5, sticky="w", padx=(12, 0))
-    ui.Label(frame_params, text="位数从 1 开始；文件只删主名、不动后缀；删后为空自动跳过",
-              foreground=COLOR["text_secondary"]).grid(
-                  row=1, column=0, columnspan=7, sticky="w", padx=8, pady=(4, 0))
+
+    # -- 添加文字参数行 --
+    frame_row_add = ui.Frame(frame_params)
+    var_add_text = tk.StringVar()
+    ui.Label(frame_row_add, text="添加文字：").grid(row=0, column=0, sticky="w", padx=8)
+    entry_add = ttk.Entry(frame_row_add, textvariable=var_add_text, width=24)
+    entry_add.grid(row=0, column=1, sticky="w")
+    ui.Label(frame_row_add, text="位置：").grid(row=0, column=2, sticky="w", padx=(16, 0))
+    var_add_end = tk.BooleanVar(value=False)
+    ttk.Radiobutton(frame_row_add, text="前面", variable=var_add_end, value=False
+                    ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+    ttk.Radiobutton(frame_row_add, text="后面", variable=var_add_end, value=True
+                    ).grid(row=0, column=4, sticky="w", padx=(12, 0))
+
+    # -- 替换文字参数行 --
+    frame_row_replace = ui.Frame(frame_params)
+    var_find = tk.StringVar()
+    var_repl = tk.StringVar()
+    ui.Label(frame_row_replace, text="查找文字：").grid(row=0, column=0, sticky="w", padx=8)
+    entry_find = ttk.Entry(frame_row_replace, textvariable=var_find, width=18)
+    entry_find.grid(row=0, column=1, sticky="w")
+    ui.Label(frame_row_replace, text="替换为：").grid(row=0, column=2, sticky="w", padx=(16, 0))
+    ttk.Entry(frame_row_replace, textvariable=var_repl, width=18).grid(row=0, column=3, sticky="w")
+
+    # 三个参数行叠放在 frame_params 的同一行上，按模式切换显示（grid 记忆原位置）
+    for w in (frame_row_del, frame_row_add, frame_row_replace):
+        w.grid(row=0, column=0, columnspan=8, sticky="w")
+    frame_row_add.grid_remove()
+    frame_row_replace.grid_remove()
+
+    # -- 通用选项行：包括后缀名 + 动态提示 --
+    var_include_ext = tk.BooleanVar(value=False)
+    ttk.Checkbutton(frame_params, text="包括后缀名",
+                    variable=var_include_ext, command=lambda: clear_preview()
+                    ).grid(row=1, column=0, sticky="w", padx=8, pady=(4, 0))
+    label_hint = ui.Label(frame_params, text="", foreground=COLOR["text_secondary"],
+                          auto_wrap=False)
+    label_hint.grid(row=1, column=1, columnspan=7, sticky="w", padx=8, pady=(4, 0))
+
+    MODE_HINTS = {
+        "delete": "位数从 1 开始；默认只删主文件名、不动后缀；删后为空自动跳过",
+        "add": "文字加在主文件名前/后（后缀位置不变）；文字为空时不处理",
+        "replace": "替换主文件名中的文字，后缀不变；「替换为」留空即删除该文字",
+    }
+    MODE_ROWS = {
+        "delete": frame_row_del,
+        "add": frame_row_add,
+        "replace": frame_row_replace,
+    }
+
+    def on_mode_change():
+        """切换模式：只换参数行和提示，列表保留，预览失效清空；
+        切完把焦点放到该模式的第一个输入框，切完直接打字即可"""
+        mode = var_mode.get()
+        for w in MODE_ROWS.values():
+            w.grid_remove()
+        MODE_ROWS[mode].grid(row=0, column=0, columnspan=8, sticky="w")
+        label_hint.config(text=MODE_HINTS[mode])
+        clear_preview()
+        focus = {"delete": box_start, "add": entry_add, "replace": entry_find}
+        try:
+            focus[mode].focus_set()
+        except Exception:
+            pass
+
+    label_hint.config(text=MODE_HINTS["delete"])
 
     # ---- 预览 / 执行 ----
     frame_run = ui.Frame(parent)
@@ -774,7 +908,7 @@ def build_trim_tab(parent, app=None):
                 messagebox.showinfo(
                     "提示",
                     f"未找到可处理的{unit_name()}。\n"
-                    f"仅文件夹模式下，请拖入/添加文件夹（收集其中的子文件夹）。")
+                    f"仅文件夹模式下，请拖入/添加文件夹（收集该文件夹本身及其子文件夹）。")
 
         collect_async(parent, paths, collect, apply,
                       on_busy=lambda: label_count.config(
@@ -783,27 +917,47 @@ def build_trim_tab(parent, app=None):
     def do_preview():
         clear_preview()
         if not file_list:
-            messagebox.showwarning("提示", f"请先添加{unit_name()}或文件夹！")
+            label_preview.config(text=f"请先添加{unit_name()}或文件夹！")
             return
-        try:
-            start = int(var_start.get().strip())
-            count = int(var_count.get().strip())
-        except ValueError:
-            messagebox.showerror("错误", "起始位数与删除字数必须是正整数！")
-            return
-        if start < 1:
-            messagebox.showerror("错误", "起始位数需大于等于 1！")
-            return
-        if count < 0:
-            messagebox.showerror("错误", "删除字数不能为负！")
-            return
-        plan, empty_names = build_trim_plan(file_list, start, count, var_from_end.get())
+        mode = var_mode.get()
+        include_ext = bool(var_include_ext.get())
+        if mode == "delete":
+            try:
+                start = int(var_start.get().strip())
+                count = int(var_count.get().strip())
+            except ValueError:
+                label_preview.config(text="起始位数与删除字数必须是正整数！")
+                return
+            if start < 1:
+                label_preview.config(text="起始位数需大于等于 1！")
+                return
+            if count < 0:
+                label_preview.config(text="删除字数不能为负！")
+                return
+            plan, empty_names = build_trim_plan(
+                file_list, start, count, var_from_end.get(), include_ext)
+        elif mode == "add":
+            # 新名称要成为合法文件名：非法字符自动转为 _
+            text = safe_filename(var_add_text.get())
+            if not text.strip():
+                label_preview.config(text="请先在上方「添加文字」框输入文字！")
+                return
+            plan, empty_names = build_add_plan(
+                file_list, text, var_add_end.get(), include_ext)
+        else:
+            find_text = var_find.get()
+            if not find_text:
+                label_preview.config(
+                    text="请先在上方「查找文字」框输入文字（「替换为」可留空，留空即删除该文字）！")
+                return
+            plan, empty_names = build_replace_plan(
+                file_list, find_text, safe_filename(var_repl.get()), include_ext)
         preview_plan.extend(plan)
         for old, new in plan:
             tree.insert("", tk.END, values=(old, os.path.basename(new)))
         msg = f"预览完成：共 {len(file_list)} 个{unit_name()}，其中 {len(plan)} 个将重命名"
         if empty_names:
-            msg += f"，{len(empty_names)} 个删后文件名为空已跳过"
+            msg += f"，{len(empty_names)} 个新名称为空已跳过"
         label_preview.config(text=msg)
 
     def do_execute():

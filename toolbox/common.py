@@ -16,7 +16,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ttk_font, ui_scale
 
-APP_VERSION = "1.81"
+APP_VERSION = "1.84"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -792,18 +792,48 @@ def make_start_button(parent, row, text, command, colspan=3):
     return btn
 
 
-def make_log_panel(parent, row, colspan=3, title="运行日志", height=12):
-    """日志面板：区块标题 + 带描边的文本框（比 LabelFrame 标题更清爽）。"""
+def make_log_panel(parent, row, colspan=3, title="运行日志", height=12,
+                   collapsible=False, collapsed=False):
+    """日志面板：区块标题 + 带描边的文本框（比 LabelFrame 标题更清爽）。
+
+    collapsible=True 时标题可点击折叠/展开（▾/▸），collapsed=True 初始折叠——
+    日志收起后空间自动让给同页的预览表格等 weight=1 的行。"""
     wrap = ttk.Frame(parent)
     wrap.grid(row=row, column=0, columnspan=colspan, sticky="nsew", padx=8, pady=6)
     wrap.grid_rowconfigure(1, weight=1)
     wrap.grid_columnconfigure(0, weight=1)
-    ttk.Label(wrap, text=title, font=FONTS["md"],
-              foreground=COLOR["text"]).grid(row=0, column=0, sticky="w", pady=(0, 4))
+    lbl = ttk.Label(wrap, text=title, font=FONTS["md"],
+                    foreground=COLOR["text"])
+    lbl.grid(row=0, column=0, sticky="w", pady=(0, 4))
     text = ui.Textbox(wrap, height=height, state="disabled",
                       font=FONTS["log"],
                       background=COLOR["surface_inset"], foreground=COLOR["text"])
     text.grid(row=1, column=0, sticky="nsew")
+
+    if collapsible:
+        state = {"open": not collapsed}
+
+        def _refresh():
+            lbl.config(text=(f"▾ {title}" if state["open"]
+                             else f"▸ {title}（点击展开）"))
+            if state["open"]:
+                text.grid()
+            else:
+                text.grid_remove()
+
+        def _toggle(_event=None):
+            state["open"] = not state["open"]
+            _refresh()
+
+        try:
+            lbl.configure(cursor="hand2")
+        except Exception:
+            pass
+        lbl.bind("<Button-1>", _toggle)
+        # 挂一个引用，便于测试/外部代码直接切换（CTk 内部 bind 转发结构不稳定）
+        text._toggle_log = _toggle
+        _refresh()
+
     return text, make_logger(text)
 
 
