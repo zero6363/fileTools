@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑰ ReSoBackup 备份（迁移自 Go 版 ReSoBackup，Python 重实现）
+"""⑲ ReSoBackup 备份（迁移自 Go 版 ReSoBackup，Python 重实现）
 Reed-Solomon 纠删码分片 + 可选 AES-256-GCM 加密（scrypt KDF）
 分片格式：31 字节头（magic RSBK）+ 数据；新备份在数据尾部附带 .rsmeta 副本"""
 import hashlib
@@ -17,7 +17,7 @@ from .common import (clean_path, clear_log, form_label, form_note,
 from .theme import COLOR
 
 
-# ⑰ ReSoBackup 备份（迁移自 Go 版 ReSoBackup，Python 重实现）
+# ⑲ ReSoBackup 备份（迁移自 Go 版 ReSoBackup，Python 重实现）
 # Reed-Solomon 纠删码分片 + 可选 AES-256-GCM 加密（scrypt KDF）
 # 分片格式：31 字节头（magic RSBK）+ 数据；新备份在数据尾部附带 .rsmeta 副本
 # ============================================================
@@ -677,7 +677,7 @@ def rs_run_restore(input_path, password, output_dir, log):
 # ============================================================
 
 
-# ⑰ ReSoBackup 备份标签页 UI
+# ⑲ ReSoBackup 备份标签页 UI
 # ============================================================
 
 def build_rsbackup_tab(parent, app=None):

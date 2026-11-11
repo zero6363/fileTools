@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""㉑ 音轨提取
+"""⑩ 音轨提取
 
 从视频里把音轨「原样搬出来」——`-c:a copy` 只拆封装、不重编码，
 所以几个 GB 的视频取音频通常只要一两秒，音质与源文件完全一致。
@@ -536,7 +536,7 @@ def build_audioextract_tab(parent, app=None):
                           row=6, column=1, columnspan=3)
 
     form_label(form, 7, "FFmpeg：")
-    lbl_ff = form_note(form, 7, "检测中…（⑦ 视频压制 与本页共用同一个 ffmpeg）")
+    lbl_ff = form_note(form, 7, "检测中…（⑧ 视频压制 与本页共用同一个 ffmpeg）")
 
     def refresh_ff():
         """只在切到本页 / 点「指定…」后跑，不参与启动。"""

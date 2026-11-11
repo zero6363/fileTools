@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑭ WebP转JPG / ⑮ 加密包分类"""
+"""⑪ WebP转JPG / ⑱ 加密包分类"""
 import os
 import shutil
 import zipfile
@@ -14,7 +14,7 @@ from .common import (_is_relative_to, _module_available, clean_path,
                      make_start_button, make_tip, run_task)
 
 
-# ⑭ WebP转JPG —— 原 webp2jpg.py
+# ⑪ WebP转JPG —— 原 webp2jpg.py
 # ============================================================
 
 def webp_to_jpg(src_dir, out_dir, quality, delete_src, log):
@@ -62,7 +62,7 @@ def webp_to_jpg(src_dir, out_dir, quality, delete_src, log):
 
 
 # ============================================================
-# ⑮ 加密包分类 —— 原 zipTestPsw.py
+# ⑱ 加密包分类 —— 原 zipTestPsw.py
 # ============================================================
 
 def _zip_encrypted(file_path):

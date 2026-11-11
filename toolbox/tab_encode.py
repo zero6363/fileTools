@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑦ 视频常用压制 —— FFmpeg 硬件编码（NVENC 优先 / 无则 QSV）+ 内嵌字幕硬烧 + 自动归档
+"""⑧ 视频常用压制 —— FFmpeg 硬件编码（NVENC 优先 / 无则 QSV）+ 内嵌字幕硬烧 + 自动归档
 
 压制参数参考 ShanaEncoder 的常用设置：
     AV1  (NVENC)   -preset p1      -cq 36
@@ -1736,16 +1736,16 @@ def build_encode_tab(parent, app=None):
     var_keepdv = tk.BooleanVar(value=False)
     check(opt_line, "杜比视界", var_keepdv)
 
-    # 第 4 行：归档动作开关（默认全开；关掉就地把文件留在原位）
+    # 第 4 行：归档动作开关（默认全关：完成后文件都留在原位，需要归档再勾）
     move_line = ui.Frame(card)
     move_line.grid(row=4, column=0, columnspan=3, sticky="w",
                    padx=PAD, pady=(0, 6))
     hint_label(move_line, "完成后").pack(side=tk.LEFT, padx=(0, 10))
-    var_move_ok = tk.BooleanVar(value=True)
+    var_move_ok = tk.BooleanVar(value=False)
     check(move_line, "成功 → success/", var_move_ok, pad=(0, 18))
-    var_move_fail = tk.BooleanVar(value=True)
+    var_move_fail = tk.BooleanVar(value=False)
     check(move_line, "失败 → error/", var_move_fail, pad=(0, 18))
-    var_move_grow = tk.BooleanVar(value=True)
+    var_move_grow = tk.BooleanVar(value=False)
     check(move_line, "变大 → oversize/", var_move_grow, pad=(0, 18))
 
     # 第 5 行：运行期开关（最小窗口宽度下也不会被右边缘裁掉）

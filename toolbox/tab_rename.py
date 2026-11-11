@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑤ 文件名添加路径 / ⑥ 序号重命名（拖放 + 数值化自然排序 + 两阶段防覆盖）"""
+"""② 文件名添加路径 / ⑥ 序号重命名（拖放 + 数值化自然排序 + 两阶段防覆盖）"""
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -33,7 +33,7 @@ def collect_async(parent, paths, collect, on_items, on_busy=None):
     return job
 
 
-# ⑤ 文件夹重命名 —— 原 重命名.py
+# ② 文件夹重命名 —— 原 重命名.py
 # ============================================================
 
 def safe_filename(name):
@@ -685,7 +685,7 @@ def build_seq_rename_tab(parent, app=None):
 
 
 def build_trim_tab(parent, app=None):
-    """⑨ 文件名处理：删除字符 / 添加文字 / 替换文字（可选文件/文件夹，含后缀名开关）"""
+    """⑦ 文件名处理：删除字符 / 添加文字 / 替换文字（可选文件/文件夹，含后缀名开关）"""
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(7, weight=1)
     make_tip(parent, 0, "按模式处理文件名：删除字符（设起始位、个数，从前/从后）、添加文字（名称前/后）、"

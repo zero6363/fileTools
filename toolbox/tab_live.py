@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""④ 实况图分组（JPEG 内嵌视频识别 / LivePhotos 归档）"""
+"""⑤ 实况图分组（JPEG 内嵌视频识别 / LivePhotos 归档）"""
 import os
 import shutil
 from pathlib import Path
@@ -12,7 +12,7 @@ from .common import (clean_path, clear_log, form_note, get_unique_path, make_che
                      make_start_button, make_tip, run_task)
 
 
-# ④ 实况图分组 —— 原 实况分组-可视化.py
+# ⑤ 实况图分组 —— 原 实况分组-可视化.py
 # ============================================================
 
 def extract_video_from_jpeg(jpeg_path):

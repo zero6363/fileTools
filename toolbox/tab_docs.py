@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑩ 图片生成MD / ⑪ TXT转图片 / ⑫ TXT合并 / ⑬ TXT重命名"""
+"""⑭ 图片生成MD / ⑮ TXT转图片 / ⑯ TXT合并 / ⑰ TXT重命名"""
 import codecs
 import os
 import random
@@ -18,7 +18,7 @@ from .common import (_module_available, clean_path, clear_log, form_label,
                      make_start_button, make_tip, natural_key, run_task)
 
 
-# ⑩ 图片生成MD —— 原 记录md.py
+# ⑭ 图片生成MD —— 原 记录md.py
 # ============================================================
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
@@ -331,7 +331,7 @@ def generate_image_md(root_input_dir, custom_dir_name, scan_subdir,
 
 
 # ============================================================
-# ⑪ TXT转图片 —— 原 txt2img.py
+# ⑮ TXT转图片 —— 原 txt2img.py
 # ============================================================
 
 def read_text_auto(file_path):
@@ -465,7 +465,7 @@ def txt_to_images(input_dir, output_dir, font_path, font_size, max_chars_per_lin
 
 
 # ============================================================
-# ⑫ TXT合并 —— 原 txt合并.py
+# ⑯ TXT合并 —— 原 txt合并.py
 # ============================================================
 
 def merge_files(target_dir, target_suffix, scan_subdir):
@@ -526,7 +526,7 @@ def merge_files(target_dir, target_suffix, scan_subdir):
 
 
 # ============================================================
-# ⑬ TXT重命名 —— 原 txt重命名.py
+# ⑰ TXT重命名 —— 原 txt重命名.py
 # ============================================================
 
 def clean_filename(s):

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑳ Robocopy 极速复制
+"""㉑ Robocopy 极速复制
 
 封装 Windows 自带的 robocopy.exe，在两个文件夹之间快速复制：
   · /MT:n    多线程并发复制，机械硬盘 / SSD / 网络共享都能吃满带宽；

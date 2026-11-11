@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑯ 图片压缩（移植自 image_compressor）
+"""⑫ 图片压缩（移植自 image_compressor）
 mozjpeg 静态二进制随包分发（bin/mozjpeg/），Pillow(libjpeg-turbo) 为备选编码器"""
 import logging
 import os
@@ -23,7 +23,7 @@ from .common import (APP_TITLE, BgJob, _module_available, add_table_hscroll,
 from .theme import COLOR
 
 
-# ⑯ 图片压缩（移植自 image_compressor）
+# ⑫ 图片压缩（移植自 image_compressor）
 # mozjpeg 静态二进制随包分发（bin/mozjpeg/），Pillow(libjpeg-turbo) 为备选编码器
 # ============================================================
 
@@ -833,7 +833,7 @@ class CompressOptionsDialog(ui.Toplevel):
 # ============================================================
 
 
-# ⑯ 图片压缩标签页 UI
+# ⑫ 图片压缩标签页 UI
 # ============================================================
 
 def build_compress_tab(parent, app=None):
@@ -895,7 +895,7 @@ def build_compress_tab(parent, app=None):
                 if tree.set(i, 'path')]
 
     def open_selected_folder():
-        """在资源管理器中打开图片所在文件夹并选中该图（同 ⑲ 哈希扫描页）"""
+        """在资源管理器中打开图片所在文件夹并选中该图（同 ⑳ 哈希扫描页）"""
         paths = _selected_paths()
         if not paths:
             return

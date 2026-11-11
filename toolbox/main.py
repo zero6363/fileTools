@@ -3,38 +3,50 @@
 =====================================
 将原先分散的多个小工具合并为一个 GUI 程序，点击左侧纵向菜单即可切换使用对应工具。
 
-标签页与原工具对应关系：
+编号规则：编号 = 左侧菜单从上到下的顺序（① 为第一项），由 TOOL_BUILDERS 的下标
+自动生成，不手写；列表顺序即显示顺序，改顺序只需挪动列表项，编号会自动顺着排。
+
+标签页与原工具对应关系（按菜单顺序）：
   ① 文件分组      <- 分组.bat / 分组 - jpg.bat / 分组 -mp4.bat / 分组 -txt.bat / 分组年月.bat
                     （四个"按数量"的 bat 已合并：后缀下拉可选（jpg/txt/mp4/*）也可自定义，
                       * = 按图片格式分组（jpg/jpeg/png/gif/bmp/tiff/webp 可改），不会分组所有文件；
                       每组数量可自定义，文件夹前缀默认随后缀自动变化；同时保留"按年月分组"模式）
-  ② 移动到根目录  <- move.bat（省略了原 bat 的自我删除；默认同名跳过，可选同名重命名移动）
-  ③ 删除空文件夹  <- 空文件夹删除.py
-  ④ 实况图分组    <- 实况分组-可视化.py
-  ⑤ 文件名添加路径 <- 重命名.py（把目录层级添加到文件名前）
+  ② 文件名添加路径 <- 重命名.py（把目录层级添加到文件名前）
+  ③ 移动到根目录  <- move.bat（省略了原 bat 的自我删除；默认同名跳过，可选同名重命名移动）
+  ④ 删除空文件夹  <- 空文件夹删除.py
+  ⑤ 实况图分组    <- 实况分组-可视化.py
   ⑥ 序号重命名    <- 新增：拖入文件/文件夹，遍历读取，数值化自然排序（9 在 10 前面），
                       支持【全部重命名为序号 001/002…】和【前加序号 001-原文件名】，
                       可勾选【仅处理文件夹】只重命名子文件夹
-  ⑦ 视频常用压制  <- 新增：调用 FFmpeg 批量压制（NVENC 优先 / 无则 QSV / 再退软件），
+  ⑦ 文件名删除    <- 新增：按位置删除文件名中的字符（可选文件/文件夹、第几位开始、
+                      删几个字、从前/从后），拖入列表读取，预览后执行
+  ⑧ 视频常用压制  <- 新增：调用 FFmpeg 批量压制（NVENC 优先 / 无则 QSV / 再退软件），
                       AV1 / H.265 自由选，内嵌字幕硬烧（复刻 ShanaEncoder 样式），
                       成功后源文件归档到 success/
-  ⑧ 视频横竖屏    <- 新增：识别指定文件夹下的视频是横屏还是竖屏，分别移动到
+  ⑨ 视频横竖屏    <- 新增：识别指定文件夹下的视频是横屏还是竖屏，分别移动到
                       「横屏」「竖屏」子文件夹；不处理子文件夹，纯读容器头极速
-  ⑨ 文件名删除    <- 新增：按位置删除文件名中的字符（可选文件/文件夹、第几位开始、
-                      删几个字、从前/从后），拖入列表读取，预览后执行
-  ⑩ 图片生成MD    <- 记录md.py
-  ⑪ TXT转图片     <- txt2img.py
-  ⑫ TXT合并       <- txt合并.py
-  ⑬ TXT重命名     <- txt重命名.py
-  ⑭ WebP转JPG     <- webp2jpg.py
-  ⑮ 加密包分类    <- zipTestPsw.py
-  ⑯ 图片压缩      <- image_compressor（D:/code/pigc）：mozjpeg 无损优化 + libjpeg-turbo 备选
-  ⑰ ReSoBackup备份 <- ReSoBackup-main（Go 项目，Python 重实现）：RS 纠删码分片 + AES-256-GCM
-  ⑱ 文本翻译      <- 新增：拖入 txt/lrc/srt/ass/vtt 等文本文件，调用免费翻译接口
-                      （DeepL 免费网页版 / 谷歌免费接口 / MyMemory / LibreTranslate，
-                        一个失败自动切换下一个）翻译成中文；保留字幕序号与时间轴、
-                      LRC 时间标签，译文写回同名文件，原文件重命名为「原名.old」
-  ⑲ 硬盘哈希扫描  <- 新增：冷数据建档校验。数据库 filehash.db 直接建在
+  ⑩ 音轨提取      <- 新增：从 ts / flv / mp4 等视频里把音轨原样抽出来
+                       （ffmpeg -c:a copy，不转码，几 GB 的视频也只要一两秒）；
+                       按音轨编码自动选容器（AAC → m4a、MP3 → mp3、
+                       FLAC → flac、AC-3 / DTS → mka）；输出文件夹里已有
+                       同名音频则跳过，绝不覆盖；可递归子文件夹、保留目录
+                       结构、多文件并行
+  ⑪ WebP转JPG     <- webp2jpg.py
+  ⑫ 图片压缩      <- image_compressor（D:/code/pigc）：mozjpeg 无损优化 + libjpeg-turbo 备选
+  ⑬ 视频字幕清理  <- 新增：双向清理字幕与视频的配对残留。没有视频
+                       伴生的字幕（srt/ass/ssa/sub，视频已删或未下载的
+                       残留）统一移动到根目录的 novideo/；勾选反向后，
+                       没有字幕伴生的视频也移动到 nosrt/。按文件主名
+                       匹配（不要求同目录），默认认识 abc.zh.srt 这类
+                       语言后缀；同名不覆盖（自动 _1/_2），可先「仅列出」
+                       预览再执行
+  ⑭ 图片生成MD    <- 记录md.py
+  ⑮ TXT转图片     <- txt2img.py
+  ⑯ TXT合并       <- txt合并.py
+  ⑰ TXT重命名     <- txt重命名.py
+  ⑱ 加密包分类    <- zipTestPsw.py
+  ⑲ ReSoBackup备份 <- ReSoBackup-main（Go 项目，Python 重实现）：RS 纠删码分片 + AES-256-GCM
+  ⑳ 硬盘哈希扫描  <- 新增：冷数据建档校验。数据库 filehash.db 直接建在
                       扫描根目录下（一块盘/一个根目录一个库）。四种模式按
                       「改不改库 × 算不算哈希」组合：快速建档 / 快速预检 /
                       完整建档 / 完整检查；只读模式（预检、检查）扫出的差异
@@ -45,33 +57,27 @@
                       toolbox_config.json 的 hashscan 分区里，可统一管理、跨库
                       检索；「合并数据库」把子目录的库并进来，「用上级库」按上级
                       库给子目录建库（两者都只动数据库、不读文件）
-  ⑳ Robocopy极速复制 <- 新增：封装 Windows 自带 robocopy，在文件夹之间
+  ㉑ Robocopy极速复制 <- 新增：封装 Windows 自带 robocopy，在文件夹之间
                        多线程（/MT）快速复制；可选断点续传（/Z），中断后重跑
                        会跳过已完成文件、续传未完成的大文件；限制重试次数
                        避免被占用文件卡住；不启用镜像模式，绝不删除目标里
                        多出来的文件；运行日志默认收起
-  ㉑ 音轨提取      <- 新增：从 ts / flv / mp4 等视频里把音轨原样抽出来
-                       （ffmpeg -c:a copy，不转码，几 GB 的视频也只要一两秒）；
-                       按音轨编码自动选容器（AAC → m4a、MP3 → mp3、
-                       FLAC → flac、AC-3 / DTS → mka）；输出文件夹里已有
-                       同名音频则跳过，绝不覆盖；可递归子文件夹、保留目录
-                       结构、多文件并行
 
 模块划分：
   common.py         通用基础设施 + 拖放支持
   config.py         统一配置（toolbox_config.json，按 window/compress/ffmpeg/hashscan/
                     speedcopy/audioextract 分区，老版本分散的四个 json 首次启动自动并入）
-  tab_grouping.py   ①②③   tab_live.py ④   tab_rename.py ⑤⑥⑨
-  tab_encode.py ⑦         tab_video.py ⑧         tab_audio.py ㉑
-  tab_docs.py ⑩⑪⑫⑬       tab_media.py ⑭⑮
-  tab_compress.py ⑯       tab_rsbackup.py ⑰   tab_translate.py ⑱
-  tab_hashscan.py ⑲        tab_speedcopy.py ⑳
-  （⑦ / ㉑ 依赖外部 FFmpeg；⑱ 只需标准库 + 联网；⑲ / ⑳ 只需标准库）
+  tab_grouping.py   ①③④   tab_live.py ⑤    tab_rename.py ②⑥⑦
+  tab_encode.py ⑧         tab_video.py ⑨         tab_audio.py ⑩
+  tab_media.py ⑪⑱        tab_compress.py ⑫       tab_subtitle.py ⑬
+  tab_docs.py ⑭⑮⑯⑰       tab_rsbackup.py ⑲
+  tab_hashscan.py ⑳        tab_speedcopy.py ㉑
+  （⑧ / ⑩ 依赖外部 FFmpeg；⑳ / ㉑ 只需标准库）
 
 所有涉及文件移动/重命名的操作均防覆盖：同名跳过或自动改名，两阶段重命名，绝不丢失数据。
 依赖（按需安装，缺失时对应标签页会在运行时提示）：
   pip install pillow chardet pycryptodome
-  pip install pyzipper rarfile py7zr   # ⑮ 加密包分类增强（zip 用标准库即可识别）
+  pip install pyzipper rarfile py7zr   # ⑱ 加密包分类增强（zip 用标准库即可识别）
 """
 import os
 import sys
@@ -86,20 +92,24 @@ from .theme import apply_theme, COLOR, FONTS, ui_scale
 from . import ui, ui as ttk
 
 # 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）
-# 导航字号加大后需要更宽的默认值，避免最长的「⑰ ReSoBackup备份」被裁切。
+# 导航字号加大后需要更宽的默认值，避免最长的「⑲ ReSoBackup备份」被裁切。
 NAV_DEFAULT_WIDTH = 250
 NAV_MIN_WIDTH = 240
 NAV_MAX_WIDTH = 380
 
-# 导航分组：按使用场景归类，顺序即左侧显示顺序（工具编号保持不变）
-# 「⑤ 文件名添加路径」排在「② 移动到根目录」前面：两者常配套使用（先补路径再加根目录），
-# 顺序按实际操作流程排，编号仍是稳定 ID，不受显示顺序影响。
-NAV_GROUPS = [
-    ("文件整理", [0, 4, 1, 2, 3, 5, 8]),
-    ("媒体处理", [6, 7, 20, 13, 15]),
-    ("文本与文档", [9, 10, 11, 12, 17]),
-    ("校验与备份", [14, 16, 18, 19]),
-]
+# 编号字符：编号 = 列表下标 + 1，一律由 tool_title() 现算，不再手写。
+# 这样以后增删 / 挪动页面，左侧菜单永远是从上到下 ①②③… 连续递增。
+_CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚"
+
+
+def tool_title(index, name=None):
+    """第 index 个工具的标题：「① 文件分组」（导航 / 页头 / 状态栏共用同一份）。"""
+    if name is None:
+        name = TOOL_BUILDERS[index][0]
+    num = _CIRCLED[index] if index < len(_CIRCLED) else "(%d)" % (index + 1)
+    return "%s %s" % (num, name)
+
+
 from .tab_grouping import build_empty_tab, build_flatten_tab, build_group_tab
 from .tab_live import build_live_tab
 from .tab_rename import build_rename_tab, build_seq_rename_tab, build_trim_tab
@@ -111,36 +121,51 @@ from .tab_compress import build_compress_tab
 from .tab_encode import build_encode_tab
 from .tab_audio import build_audioextract_tab
 from .tab_rsbackup import build_rsbackup_tab
-from .tab_translate import build_translate_tab
 from .tab_hashscan import build_hash_tab
 from .tab_speedcopy import build_speedcopy_tab
+from .tab_subtitle import build_subtitle_tab
 
-# 工具清单：列表下标 = 工具编号（① = 0），导航显示顺序由 NAV_GROUPS 决定。
-# 放在模块级是为了让「共 N 个工具」这类文案和页面列表共用同一份数据，
-# 以后加页面只改这里 + NAV_GROUPS，不会漏掉某处的硬编码数字。
+# 工具清单：列表顺序 = 左侧菜单显示顺序 = 编号顺序（下标 0 即 ①）。
+# 名称里不要再写编号，标题由 tool_title() 拼；加页面只需插到对应分组的末尾，
+# 并在下面 NAV_GROUPS 里把该分组的页数 +1 —— 后面的编号会自动顺延。
 TOOL_BUILDERS = [
-    ("① 文件分组", build_group_tab),
-    ("② 移动到根目录", build_flatten_tab),
-    ("③ 删除空文件夹", build_empty_tab),
-    ("④ 实况图分组", build_live_tab),
-    ("⑤ 文件名添加路径", build_rename_tab),
-    ("⑥ 序号重命名", build_seq_rename_tab),
-    ("⑦ 视频常用压制", build_encode_tab),
-    ("⑧ 视频横竖屏", build_video_tab),
-    ("⑨ 文件名删除", build_trim_tab),
-    ("⑩ 图片生成MD", build_md_tab),
-    ("⑪ TXT转图片", build_txt2img_tab),
-    ("⑫ TXT合并", build_merge_tab),
-    ("⑬ TXT重命名", build_txt_rename_tab),
-    ("⑭ WebP转JPG", build_webp_tab),
-    ("⑮ 加密包分类", build_zip_tab),
-    ("⑯ 图片压缩", build_compress_tab),
-    ("⑰ ReSoBackup备份", build_rsbackup_tab),
-    ("⑱ 文本翻译", build_translate_tab),
-    ("⑲ 硬盘哈希扫描", build_hash_tab),
-    ("⑳ Robocopy极速复制", build_speedcopy_tab),
-    ("㉑ 音轨提取", build_audioextract_tab),
+    ("文件分组", build_group_tab),
+    ("文件名添加路径", build_rename_tab),
+    ("移动到根目录", build_flatten_tab),
+    ("删除空文件夹", build_empty_tab),
+    ("实况图分组", build_live_tab),
+    ("序号重命名", build_seq_rename_tab),
+    ("文件名删除", build_trim_tab),
+    ("视频常用压制", build_encode_tab),
+    ("视频横竖屏", build_video_tab),
+    ("音轨提取", build_audioextract_tab),
+    ("WebP转JPG", build_webp_tab),
+    ("图片压缩", build_compress_tab),
+    ("视频字幕清理", build_subtitle_tab),
+    ("图片生成MD", build_md_tab),
+    ("TXT转图片", build_txt2img_tab),
+    ("TXT合并", build_merge_tab),
+    ("TXT重命名", build_txt_rename_tab),
+    ("加密包分类", build_zip_tab),
+    ("ReSoBackup备份", build_rsbackup_tab),
+    ("硬盘哈希扫描", build_hash_tab),
+    ("Robocopy极速复制", build_speedcopy_tab),
 ]
+
+# 导航分组：按使用场景归类，顺序即左侧显示顺序，编号由顺序自动生成。
+# 每组写「分组名, 本组页数」，边界按 TOOL_BUILDERS 顺序切分（合计必须等于总数）。
+# 「② 文件名添加路径」放在「③ 移动到根目录」前面：两者常配套使用（先补路径再加根目录），
+# 顺序按实际操作流程排。
+NAV_GROUPS = [
+    ("文件整理", 7),      # ①~⑦
+    ("媒体处理", 6),      # ⑧~⑬
+    ("文本与文档", 4),    # ⑭~⑰
+    ("校验与备份", 4),    # ⑱~㉑
+]
+
+if sum(_count for _name, _count in NAV_GROUPS) != len(TOOL_BUILDERS):
+    raise ValueError("NAV_GROUPS 页数合计 %d ≠ TOOL_BUILDERS 总数 %d"
+                     % (sum(_count for _name, _count in NAV_GROUPS), len(TOOL_BUILDERS)))
 
 
 # 主窗口
@@ -234,8 +259,8 @@ class ToolboxApp:
         self._drop_handlers = {}  # {frame: handler} 各工具页注册的拖放处理器
         self._show_handlers = {}  # {frame: handler} 各工具页注册的「切换到该页时」回调
         self._current_index = 0
-        self._hash_api = None    # ⑲ 页面首次打开后才创建（懒加载）
-        self._encode_api = None  # ⑦ 同上
+        self._hash_api = None    # ⑳ 页面首次打开后才创建（懒加载）
+        self._encode_api = None  # ⑧ 同上
         # 启动时只造 N 个空容器，页面内容等第一次点开再建。
         # 全部 CTk 控件一次性造完要 2.4 秒（占启动耗时八成），
         # 而用户每次只看一页，不该为没打开的页面付这笔时间。
@@ -244,15 +269,15 @@ class ToolboxApp:
         for _index in range(len(builders)):
             self.tool_frames.append(ui.Frame(page_host))
 
-        # 导航按场景分组显示；nav_items 仍按工具编号索引（[编号] → (button, frame, title)），
-        # show_tool 的编号映射不受左侧显示顺序影响。
+        # 导航按场景分组显示，编号 = 列表下标 + 1，与从上到下的顺序一致。
         self.nav_items = [None] * len(builders)
-        for group_name, indices in NAV_GROUPS:
+        _next = 0
+        for group_name, count in NAV_GROUPS:
             ui.Label(nav_inner, text=group_name, font=FONTS["nav_group"],
                      text_color=COLOR["text_muted"]).pack(
                          fill=tk.X, padx=18, pady=(6, 1))
-            for index in indices:
-                title = builders[index][0]
+            for index in range(_next, _next + count):
+                title = tool_title(index)
                 self._tool_groups[index] = group_name
                 btn = ui.Button(
                     nav_inner, text=title, anchor="w", height=33,
@@ -264,6 +289,7 @@ class ToolboxApp:
                 btn._active = False
                 btn.pack(fill=tk.X, padx=10, pady=0)
                 self.nav_items[index] = (btn, self.tool_frames[index], title)
+            _next += count
 
         # 导航内容不足一屏时隐藏滚动条，避免右侧多出一条灰条；
         # 窗口变矮、内容超出时自动恢复（CTkScrollableFrame 默认始终显示滚动条）。
@@ -323,9 +349,9 @@ class ToolboxApp:
         if handler:
             handler(paths)
         else:
-            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑦视频常用压制 / "
-                                    "⑧视频横竖屏 / ⑯图片压缩 / ⑱文本翻译 / ⑲硬盘哈希扫描 / "
-                                    "㉑音轨提取）")
+            self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑧视频常用压制 / "
+                                    "⑨视频横竖屏 / ⑫图片压缩 / ⑳硬盘哈希扫描 / "
+                                    "⑩音轨提取）")
 
     def _build_page(self, index):
         """首次打开某页时才构建它的内容（空容器在启动时已经建好）。
@@ -340,7 +366,7 @@ class ToolboxApp:
         self._built[index] = True
         frame = self.tool_frames[index]
         title, builder = self._builders[index]
-        # 最复杂的 ⑲ / ⑥ 首次构建约 0.4~0.5 秒，先把状态栏刷出来再建，
+        # 最复杂的 ⑳ / ⑥ 首次构建约 0.4~0.5 秒，先把状态栏刷出来再建，
         # 免得点下去像是没反应（构建完 show_tool 会把状态栏改回当前工具）
         try:
             self.status.config(text=f"正在打开「{title}」…")
@@ -350,7 +376,7 @@ class ToolboxApp:
         try:
             if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
                            build_compress_tab, build_rsbackup_tab, build_encode_tab,
-                           build_translate_tab, build_hash_tab,
+                           build_hash_tab,
                            build_audioextract_tab):
                 result = builder(frame, self)
                 if builder is build_hash_tab:
@@ -443,7 +469,7 @@ class ToolboxApp:
             lines.append("请运行：pip install " + " ".join(p for p, _ in missing))
             if optional:
                 lines.append("")
-                lines.append("可选增强（⑮ 加密包分类）：pip install " + " ".join(optional))
+                lines.append("可选增强（⑱ 加密包分类）：pip install " + " ".join(optional))
             self.status.config(text="部分依赖缺失，详见弹出提示")
             messagebox.showwarning("缺少依赖", "\n".join(lines))
         else:
@@ -567,9 +593,9 @@ class ToolboxApp:
 def check_dependencies():
     missing = []
     if not _module_available("PIL"):
-        missing.append(("pillow", "⑪ TXT转图片 / ⑭ WebP转JPG"))
+        missing.append(("pillow", "⑮ TXT转图片 / ⑪ WebP转JPG"))
     if not _module_available("chardet"):
-        missing.append(("chardet", "⑪ TXT转图片（缺失时使用内置编码猜测，功能仍可用）"))
+        missing.append(("chardet", "⑮ TXT转图片（缺失时使用内置编码猜测，功能仍可用）"))
     optional = []
     for mod in ("pyzipper", "rarfile", "py7zr"):
         if not _module_available(mod):

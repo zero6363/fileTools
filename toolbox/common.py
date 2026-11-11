@@ -16,7 +16,7 @@ from . import ui
 from . import ui as ttk
 from .theme import COLOR, FONTS, ttk_font, ui_scale
 
-APP_VERSION = "1.84"
+APP_VERSION = "1.99"
 APP_TITLE = f"文件工具箱 · 多功能合集 v{APP_VERSION}"
 DEFAULT_IMAGE_FORMATS = "jpg jpeg png gif bmp tiff webp"
 
@@ -793,11 +793,12 @@ def make_start_button(parent, row, text, command, colspan=3):
 
 
 def make_log_panel(parent, row, colspan=3, title="运行日志", height=12,
-                   collapsible=False, collapsed=False):
+                   collapsible=False, collapsed=False, on_toggle=None):
     """日志面板：区块标题 + 带描边的文本框（比 LabelFrame 标题更清爽）。
 
     collapsible=True 时标题可点击折叠/展开（▾/▸），collapsed=True 初始折叠——
-    日志收起后空间自动让给同页的预览表格等 weight=1 的行。"""
+    日志收起后空间自动让给同页的预览表格等 weight=1 的行。
+    on_toggle：折叠状态变化后回调（放在 ScrollPage 里时传 page.refresh）"""
     wrap = ttk.Frame(parent)
     wrap.grid(row=row, column=0, columnspan=colspan, sticky="nsew", padx=8, pady=6)
     wrap.grid_rowconfigure(1, weight=1)
@@ -824,14 +825,26 @@ def make_log_panel(parent, row, colspan=3, title="运行日志", height=12,
         def _toggle(_event=None):
             state["open"] = not state["open"]
             _refresh()
+            if on_toggle is not None:
+                try:
+                    on_toggle()
+                except Exception:
+                    pass
 
         try:
             lbl.configure(cursor="hand2")
         except Exception:
             pass
         lbl.bind("<Button-1>", _toggle)
-        # 挂一个引用，便于测试/外部代码直接切换（CTk 内部 bind 转发结构不稳定）
+        # 挂引用，便于测试/外部代码直接切换（CTk 内部 bind 转发结构不稳定）
         text._toggle_log = _toggle
+        text._log_is_open = lambda: state["open"]
+
+        def _set_open(open_):
+            if state["open"] != bool(open_):
+                _toggle()
+
+        text._log_set_open = _set_open
         _refresh()
 
     return text, make_logger(text)
@@ -1228,7 +1241,7 @@ def _self_scrolls(widget):
 class ScrollPage(tk.Frame):
     """整页竖向滚动容器：内容放 `.body`，表格给固定行数，窗口再矮也看得见。
 
-    为什么需要它：⑲ 这类页面顶部有一堆表单 + 进度 + 搜索栏，窗口一矮，
+    为什么需要它：⑳ 这类页面顶部有一堆表单 + 进度 + 搜索栏，窗口一矮，
     带 weight 的表格行就被压成一条缝（表格越小越看不见，越看不见越不敢用）。
 
     高度策略：
