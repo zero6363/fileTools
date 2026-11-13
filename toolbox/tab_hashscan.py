@@ -110,6 +110,11 @@ LOG_NAME = "scan_log.txt"
 CHUNK = 1024 * 1024          # 哈希读取块大小 1MB
 COMMIT_EVERY = 400           # 每处理多少个文件提交一次事务
 
+_UNSET = object()            # 区分「没传旧记录」和「库里确实没有这条记录」
+# 写库模式（建档）表格最多保留多少条结果行。第一次给上百万文件的盘建档时，
+# 每条都建一个表格行要几百 MB 内存，还要排一次序 —— 记录都已经写进库里了，
+# 表格只是「本次改了什么」的预览，留前 10 万条足够看。
+ROW_CAP = 100000
 # 四种模式 = 是否改库 × 是否算哈希；「随机完整检查」是完整检查的抽查变体
 MODE_QUICK = "quick"        # 快速建档：改库，不算哈希
 MODE_PRECHECK = "precheck"  # 快速预检：只读，不算哈希
@@ -1022,6 +1027,11 @@ def iter_files(root, log=None, stop_event=None, on_tick=None, on_skip=None):
     别把读不到的记录当成真的没了。
     """
     root_scan = long_path(root)
+    # 相对路径靠切片算，不用 os.path.relpath：后者是纯 Python 的
+    # abspath + normpath + 大小写处理，每文件 60~80 µs —— 100 万文件光这一项
+    # 就要 100 秒上下。这里 entry.path 一定以 root_scan 开头（栈里每一层都是
+    # 从它拼出来的），直接切掉前缀再换分隔符，实测 38k~39k 文件/秒。
+    base = len(root_scan.rstrip("\\/")) + 1
     stack = [root_scan]
     found = 0
     while stack:
@@ -1046,10 +1056,13 @@ def iter_files(root, log=None, stop_event=None, on_tick=None, on_skip=None):
                     continue
                 if not entry.is_file(follow_symlinks=False):
                     continue
-                rel = os.path.relpath(entry.path, root_scan).replace(os.sep, "/")
                 if is_skipped_name(entry.name):
                     continue
                 st = entry.stat(follow_symlinks=False)
+                full = entry.path
+                rel = full[base:] if len(full) > base else entry.name
+                if os.sep != "/":
+                    rel = rel.replace(os.sep, "/")
                 found += 1
                 if on_tick and found % 200 == 0:
                     on_tick(found)
@@ -1135,6 +1148,13 @@ class Scanner:
                           removed=0, skipped=0)
         # 本次扫描到过的 rel_path。默认走 TEMP 表；建不了临时表时这里变成 set
         self._seen_mem = None
+        # 枚举时能不能用 TEMP 表流式登记（建不了就退回内存列表 + 逐条 SELECT）
+        self._fast = False
+        self._total = 0
+        # 写库模式下表格最多保留多少条结果行；超出的只计数不建行（见 _add_written）
+        self.truncated = 0
+        # 有前缀时预先拼好，省掉每个文件的 f-string
+        self._prefix_slash = (prefix + "/") if prefix else ""
 
     @property
     def writable(self):
@@ -1158,12 +1178,13 @@ class Scanner:
                 pass
 
     def _stored_rel(self, rel):
-        return f"{self.prefix}/{rel}" if self.prefix else rel
+        return (self._prefix_slash + rel) if self._prefix_slash else rel
 
     def _display_rel(self, stored):
         """库里的 rel_path → 当前扫描根下的相对路径（去掉上级库前缀）"""
-        if self.prefix and stored.startswith(self.prefix + "/"):
-            return stored[len(self.prefix) + 1:]
+        ps = self._prefix_slash
+        if ps and stored.startswith(ps):
+            return stored[len(ps):]
         return stored
 
     def _sample_records(self, rows):
@@ -1265,6 +1286,71 @@ class Scanner:
                 db.open_memory()
         return db
 
+    # ---- 扫描用的连接调优 / 临时表 ----
+    def _tune_scan_conn(self, db):
+        """扫描专用连接参数：临时表放磁盘（几百万行也不吃内存）、缓存 32MB。
+
+        临时表放内存会快一点点（实测 50 万行差 0.2 秒），但库大了就是几百 MB，
+        不值得拿内存换这点时间；磁盘临时表在系统缓存里也够快。
+        """
+        for pragma in ("PRAGMA temp_store=FILE", "PRAGMA cache_size=-32000"):
+            try:
+                db.conn.execute(pragma)
+            except sqlite3.Error:
+                pass
+
+    def _init_seen(self, db):
+        """建 seen 临时表（枚举时直接往里写）。建不了返回 False 走内存兜底。
+
+        seen 只存本次枚举到的文件；后面的「缺失 / 删除」判断都靠它，
+        所以就算临时表可用，也要保证每个枚举到的文件都写进去。
+        """
+        self._seen_mem = None
+        try:
+            db.conn.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS seen("
+                "rel_path TEXT COLLATE NOCASE PRIMARY KEY,"
+                "file_size INTEGER, mtime REAL)")
+            return True
+        except sqlite3.Error as e:
+            self._seen_mem = set()
+            self._log(f"临时表不可用（{e}），改用内存比对（结果不受影响）")
+            return False
+
+    def _row_chunks(self, db, files, size=2000):
+        """按块产出 (stored, rel, size, mtime, 库里的旧记录或 None)。
+
+        快速模式从 todo 临时表按 rowid 分页读：一次只取一块，
+        不会一边开着游标一边 COMMIT（SQLite 会报 statements in progress），
+        内存也只看这一块。兜底模式直接切内存列表、逐条查库。
+        """
+        if self._fast:
+            last = 0
+            while True:
+                rows = db.conn.execute(
+                    "SELECT rowid, p, sz, mt, rid, sha, osz, omt, st, lst"
+                    " FROM todo WHERE rowid > ? ORDER BY rowid LIMIT ?",
+                    (last, size)).fetchall()
+                if not rows:
+                    return
+                last = rows[-1][0]
+                out = []
+                for _rid, p, sz, mt, rid, sha, osz, omt, st, lst in rows:
+                    old = None if rid is None else (rid, sha, osz, omt, st, lst)
+                    out.append((p, self._display_rel(p), sz, mt, old))
+                yield out
+        else:
+            for k in range(0, len(files), size):
+                out = []
+                for rel, sz, mt in files[k:k + size]:
+                    stored = self._stored_rel(rel)
+                    out.append((stored, rel, sz, mt, db.get(stored)))
+                yield out
+
+    def _abs_of(self, rel):
+        """扫描根下的相对路径 → 绝对路径（只在算哈希时才需要）"""
+        return os.path.join(self.root, rel.replace("/", os.sep))
+
     def run(self):
         """返回 stats 字典（结束后 ui["done_flag"]=True）"""
         started = time.time()
@@ -1287,107 +1373,149 @@ class Scanner:
                 db = self._open_db()
                 return self._run_sample(db)
 
-            # ---------- 阶段 1：枚举 ----------
-            self.ui["phase"] = "枚举文件"
-            files = []
-            t0 = time.time()
+            # ---------- 阶段 1：打开库 + 建临时表 ----------
+            # 先开库：枚举的同时就把 (rel_path, 大小, 修改时间) 批量写进 seen
+            # 临时表。这样不用在内存里堆上百万条元组（100 万条约 250 MB），
+            # 也不用为每个文件单独查一次库（100 万次 SELECT 实测约 39 秒）。
+            created = not os.path.isfile(self.db_path)
+            db = self._open_db()
+            self._tune_scan_conn(db)
+            self._fast = self._init_seen(db)
+            if created and self.writable:
+                self._log("首次扫描：已创建 filehash.db（记录在比对阶段才写入）")
 
-            def tick(n):
-                self.ui["total"] = n
-                self.ui["phase"] = f"枚举文件（已发现 {n}）"
+            # ---------- 阶段 2：枚举 ----------
+            self.ui["phase"] = "枚举文件"
+            t0 = time.time()
+            n = 0
+            buf = []
+            files = [] if not self._fast else None
+            insert_sql = ("INSERT OR IGNORE INTO seen"
+                          "(rel_path, file_size, mtime) VALUES(?,?,?)")
+
+            def tick(cnt):
+                self.ui["total"] = cnt
+                self.ui["phase"] = f"枚举文件（已发现 {cnt}）"
 
             def skipped():
                 self.stats["skipped"] += 1
 
-            for item in iter_files(self.root, self.log, self.stop, tick,
-                                   on_skip=skipped):
-                files.append(item)
-            files.sort(key=lambda x: x[0].lower())
-            self.ui["total"] = len(files)
+            for rel, size, mtime in iter_files(self.root, self.log, self.stop,
+                                               tick, on_skip=skipped):
+                stored = self._stored_rel(rel)
+                n += 1
+                if self._fast:
+                    buf.append((stored, size, mtime))
+                    if len(buf) >= 2000:
+                        db.conn.executemany(insert_sql, buf)
+                        buf.clear()
+                else:
+                    files.append((rel, size, mtime))
+                    self._seen_mem.add(stored)
+            if self._fast:
+                if buf:
+                    db.conn.executemany(insert_sql, buf)
+                    buf.clear()
+                # 用表里的实际条数：NOCASE 唯一约束下，大小写只差的名字会并成一条
+                total = db.conn.execute("SELECT COUNT(*) FROM seen").fetchone()[0]
+            else:
+                total = n
+            self._total = total
+            self.ui["total"] = total
             if self.stats["skipped"]:
                 self._log(f"注意：本次有 {self.stats['skipped']} 个目录 / 文件读不了"
                           f"（权限 / 被占用），它们下面的记录不会被删除"
                           f"（读不到 ≠ 不存在）")
             if self.stop.is_set():
                 self.ui["aborted"] = True
-                self._log(f"已手动停止（已枚举 {len(files)} 个文件，未删除任何记录）")
+                self._log(f"已手动停止（已枚举 {n} 个文件，未删除任何记录）")
                 return self.stats
-            self._log(f"枚举完成：{len(files)} 个文件，用时 {time.time() - t0:.1f}s")
+            self._log(f"枚举完成：{total} 个文件，用时 {time.time() - t0:.1f}s")
 
-            # ---------- 阶段 2：打开库 ----------
-            db = self._open_db()
+            # ---------- 阶段 3：分类 ----------
+            # 一条 SQL 把「枚举到的文件」和「库里的记录」对起来：不算哈希的模式
+            # 只留下真的变了的行（新增 / 变更 / 恢复），算哈希的模式全量留下，
+            # 顺手把旧记录带出来 —— 省掉逐条 SELECT，也顺手拿到「未变」的条数。
+            t0 = time.time()
+            self.ui["phase"] = "比对数据库"
+            if self._fast:
+                sql = ("CREATE TEMP TABLE todo AS SELECT"
+                       " s.rel_path AS p, s.file_size AS sz, s.mtime AS mt,"
+                       " r.id AS rid, r.sha256 AS sha, r.file_size AS osz,"
+                       " r.mtime AS omt, r.status AS st, r.last_hash_time AS lst"
+                       " FROM seen s LEFT JOIN file_records r"
+                       " ON r.rel_path = s.rel_path")
+                if not self.hashing:
+                    # 和 _process_one 里 size+mtime 的判定严格对齐：
+                    # 库里的 size 为空、mtime 为空、status 不是 active（含老库的
+                    # NULL）都算要处理；否则这些行会被当成「未变」永远修不掉
+                    sql += (" WHERE r.id IS NULL"
+                            " OR r.status IS NULL OR r.status <> 'active'"
+                            " OR r.file_size IS NULL OR r.file_size <> s.file_size"
+                            " OR r.mtime IS NULL OR ABS(r.mtime - s.mtime) >= 1e-6")
+                db.conn.execute("DROP TABLE IF EXISTS todo")
+                db.conn.execute(sql)
+                todo_n = db.conn.execute("SELECT COUNT(*) FROM todo").fetchone()[0]
+            else:
+                todo_n = len(files)
+            if self.hashing:
+                self._log(f"比对完成：{todo_n} 个文件要读，用时 {time.time() - t0:.1f}s")
+            elif self._fast:
+                self.stats["same"] = max(0, total - todo_n)
+                self._log(f"比对完成：{todo_n} 条有差异，{self.stats['same']} 条一致，"
+                          f"用时 {time.time() - t0:.1f}s")
+            else:
+                self._log(f"临时表不可用，改为逐条比对（{total} 个文件），"
+                          f"耗时会长一些")
 
-            # 本次遍历到的 rel_path 集合。优先用连接级 TEMP 表（不写主库）；
-            # 万一连接不允许建临时表（特殊只读介质 / 老版本驱动），
-            # 退化成内存 set —— 「记不下来」不能变成「整个扫描失败」。
-            self._seen_mem = None
-            try:
-                db.conn.execute("CREATE TEMP TABLE IF NOT EXISTS seen("
-                                "rel_path TEXT COLLATE NOCASE PRIMARY KEY)")
-            except sqlite3.Error as e:
-                self._seen_mem = set()
-                self._log(f"临时表不可用（{e}），改用内存比对（结果不受影响）")
-
-            def _flush_buf(buf):
-                """把一格 rel_path 批量写进 seen（TEMP 表或内存 set），然后清空"""
-                if not buf:
-                    return
-                if self._seen_mem is None:
-                    db.conn.executemany(
-                        "INSERT OR IGNORE INTO seen(rel_path) VALUES(?)", buf)
-                else:
-                    self._seen_mem.update(item[0] for item in buf)
-                buf.clear()
-
-            def flush_seen():
-                _flush_buf(seen_buf)
-
-            # ---------- 阶段 3：比对 / 哈希 ----------
-            seen_buf = []
+            # ---------- 阶段 4：处理差异 / 计算哈希 ----------
+            self.ui["phase"] = "读取文件" if self.hashing else "写入差异"
             pending = 0
+            done = 0
+            # 不算哈希时，比对本身算「已处理」的大头，进度条从已比对的位置往前走
+            done_base = 0 if self.hashing else max(0, total - todo_n)
+            stopped = False
             if self.writable:
                 db.conn.execute("BEGIN")
-
-            for i, (rel, size, mtime) in enumerate(files, 1):
-                if self.stop.is_set():
-                    self.ui["aborted"] = True
-                    break
-                stored = self._stored_rel(rel)
-                abs_path = os.path.join(self.root, rel.replace("/", os.sep))
-                self.ui["cur_name"] = rel
-                self.ui["cur_done"] = 0
-                self.ui["cur_total"] = size or 0
-                self.ui["done"] = i - 1
-                try:
-                    pending += self._process_one(db, stored, abs_path, rel, size, mtime)
-                except OSError as e:
-                    self.stats["errors"] += 1
-                    self._log(f"[跳过文件] {rel}：{e}")
-                except sqlite3.Error as e:
-                    self.stats["errors"] += 1
-                    if self.writable and is_write_failure(e):
-                        # 中途库突然写不进去（拔盘 / 磁盘满 / 被设成只读）：
-                        # 立刻停，别让用户对着几万个文件等一个注定存不下的扫描
-                        self.ui["error"] = f"数据库写不进去：{e}"
-                        self._log(f"[数据库写不进去] {rel}：{e}")
-                        self._log(f"已扫描 {i - 1}/{len(files)} 个文件，"
-                                  f"之前每 {COMMIT_EVERY} 条提交一次，已提交的已保存；"
-                                  f"剩下的不再继续。")
-                        self._log("请检查：只读属性 / 写保护开关 / 磁盘空间 / "
-                                  "磁盘是否还在")
+            for chunk in self._row_chunks(db, files):
+                for stored, rel, size, mtime, row in chunk:
+                    if self.stop.is_set():
                         self.ui["aborted"] = True
+                        stopped = True
                         break
-                    self._log(f"[数据库错误] {rel}：{e}")
-                # 无论成功/跳过都登记到 seen，避免仅因读失败被误判为「缺失」
-                seen_buf.append((stored,))
-                if len(seen_buf) >= 2000:
-                    flush_seen()
-                if self.writable and pending >= COMMIT_EVERY:
-                    db.conn.execute("COMMIT")
-                    db.conn.execute("BEGIN")
-                    pending = 0
-
-            flush_seen()
+                    self.ui["cur_name"] = rel
+                    self.ui["cur_done"] = 0
+                    self.ui["cur_total"] = size or 0
+                    self.ui["done"] = done_base + done
+                    done += 1
+                    try:
+                        pending += self._process_one(db, stored, rel, size, mtime,
+                                                     row)
+                    except OSError as e:
+                        self.stats["errors"] += 1
+                        self._log(f"[跳过文件] {rel}：{e}")
+                    except sqlite3.Error as e:
+                        self.stats["errors"] += 1
+                        if self.writable and is_write_failure(e):
+                            # 中途库突然写不进去（拔盘 / 磁盘满 / 被设成只读）：
+                            # 立刻停，别让用户对着几万个文件等一个注定存不下的扫描
+                            self.ui["error"] = f"数据库写不进去：{e}"
+                            self._log(f"[数据库写不进去] {rel}：{e}")
+                            self._log(f"已处理 {done}/{todo_n} 条，"
+                                      f"之前每 {COMMIT_EVERY} 条提交一次，"
+                                      f"已提交的已保存；剩下的不再继续。")
+                            self._log("请检查：只读属性 / 写保护开关 / 磁盘空间 / "
+                                      "磁盘是否还在")
+                            self.ui["aborted"] = True
+                            stopped = True
+                            break
+                        self._log(f"[数据库错误] {rel}：{e}")
+                    if self.writable and pending >= COMMIT_EVERY:
+                        db.conn.execute("COMMIT")
+                        db.conn.execute("BEGIN")
+                        pending = 0
+                if stopped:
+                    break
             if self.writable:
                 try:
                     if db.conn.in_transaction:
@@ -1425,7 +1553,7 @@ class Scanner:
                     pass
 
             if not self.ui["aborted"]:
-                self.ui["done"] = len(files)
+                self.ui["done"] = total
             dur = time.time() - started
             s = self.stats
             gone = (f"删除记录 {s['removed']}" if self.writable
@@ -1559,17 +1687,23 @@ class Scanner:
         return s
 
     # ---- 单文件处理：A 新增 / B 比对 / C 恢复 ----
-    def _process_one(self, db, stored, abs_path, rel, size, mtime):
+    def _process_one(self, db, stored, rel, size, mtime, row=_UNSET):
         """返回本次写的行数（0/1），供批量提交计数。
-        只读模式（快速预检 / 完整检查）一律不写库，只往差异清单里加一条。"""
-        row = db.get(stored)
+        只读模式（快速预检 / 完整检查）一律不写库，只往差异清单里加一条。
+
+        row 是库里对应的旧记录 (id, sha256, file_size, mtime, status, last)：
+        调用方已经从比对结果里一并取出来了，不用再 SELECT 一次（100 万次
+        逐条 SELECT 实测 39 秒）；传 _UNSET 表示没查过，这里自己查。
+        """
+        if row is _UNSET:
+            row = db.get(stored)
         hashing, writable = self.hashing, self.writable
 
         # ---- 分支 A：库里没有 → 新文件 ----
         if row is None:
             digest = None
             if hashing:
-                digest = self._hash(abs_path, size)
+                digest = self._hash(self._abs_of(rel), size)
                 if digest is None:
                     return 0
             self.stats["new"] += 1
@@ -1596,7 +1730,7 @@ class Scanner:
             # 再和库里的哈希比较；不能因为 size+mtime 一致就跳过，否则修改时间
             # 被保留、内容被替换的文件会被误判成「一致」。
             if hashing:
-                digest = self._hash(abs_path, size)
+                digest = self._hash(self._abs_of(rel), size)
                 if digest is None:
                     return 0
 
@@ -1671,7 +1805,7 @@ class Scanner:
         digest = None
         if hashing:
             # 完整检查同样要实际算哈希，不能凭旧的大小/时间复用旧哈希
-            digest = self._hash(abs_path, size)
+            digest = self._hash(self._abs_of(rel), size)
             if digest is None:
                 return 0
         elif same and old_sha:
@@ -1787,7 +1921,18 @@ class Scanner:
     def _add_written(self, kind, rel, stored, size, mtime, digest=None,
                      last=None, old_size=None, old_mtime=None, old_sha=None):
         """可写模式：本次已经写进数据库的修改，作为结果行显示。
-        没有 pending，因此不会被「写入数据库」当成待写回的差异。"""
+        没有 pending，因此不会被「写入数据库」当成待写回的差异。
+
+        行数到 ROW_CAP 就只计数不建行：这一步的记录早在库里了，
+        表格只是预览；第一次给上百万文件的盘建档时，建 100 万个行
+        要多花几百 MB 内存和一次全量排序。
+        """
+        if len(self.ui["rows"]) >= ROW_CAP:
+            self.truncated += 1
+            if self.truncated == 1:
+                self._log(f"本次修改超过 {ROW_CAP} 条：表格只保留前 {ROW_CAP} 条，"
+                          f"其余已写进数据库（可在「数据库」页查看）")
+            return
         self.ui["rows"].append(
             (rel, digest or "", size, mtime, last,
              self._diff_detail(kind, size, mtime, old_size, old_mtime,
@@ -5786,9 +5931,12 @@ def build_hash_tab(parent, app=None):
                 lbl_count.config(
                     text=f"已停止：本次已修改 {len(pairs)} 条（已写库）")
             else:
-                lbl_count.config(
-                    text=f"{MODE_NAMES.get(mode, '')}完成：本次修改 "
-                         f"{len(pairs)} 条（已写库）")
+                cut = getattr(sc, "truncated", 0)
+                text = (f"{MODE_NAMES.get(mode, '')}完成：本次修改 "
+                        f"{len(pairs) + cut} 条（已写库）")
+                if cut:
+                    text += f"，表格只显示前 {ROW_CAP} 条"
+                lbl_count.config(text=text)
         else:
             show_db_view()
         state["scanner"] = None
