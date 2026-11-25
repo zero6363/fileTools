@@ -775,8 +775,12 @@ class CompressOptionsDialog(ui.Toplevel):
         btnrow = ui.Frame(self)
         btnrow.pack(fill="x", padx=10, pady=10)
         # 与系统 messagebox 统一：主操作（确定）在左，取消在右
-        ui.Button(btnrow, text="取消", command=self.destroy, width=10).pack(side="right", padx=6)
-        ui.Button(btnrow, text="确定", command=self._ok, width=10).pack(side="right")
+        btn_cancel = ui.Button(btnrow, text="取消", command=self.destroy, width=10)
+        btn_cancel.pack(side="right", padx=6)
+        btn_ok = ui.Button(btnrow, text="确定", command=self._ok, width=10)
+        btn_ok.pack(side="right")
+        # 回车 / 空格都能触发「确定」；焦点在输入框里时空格照常输入。
+        ui.bind_dialog_keys(self, btn_ok, (btn_cancel, btn_ok))
 
         self._pick_dir_state()
         self.protocol("WM_DELETE_WINDOW", self.destroy)

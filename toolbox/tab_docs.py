@@ -468,22 +468,47 @@ def txt_to_images(input_dir, output_dir, font_path, font_size, max_chars_per_lin
 # ⑯ TXT合并 —— 原 txt合并.py
 # ============================================================
 
-def merge_files(target_dir, target_suffix, scan_subdir):
+def merge_output_suffix(target_suffix, out_suffix):
+    """规范化输出后缀：留空表示与目标后缀一致；未带点号时自动补一个"""
+    s = (out_suffix or "").strip()
+    if not s:
+        return target_suffix
+    return s if s.startswith(".") else "." + s
+
+
+def merge_output_path(target_dir, base_name, out_suffix):
+    """输出文件：<第一个文件名>_合并结果<输出后缀>；已存在则追加 _1、_2 避免覆盖"""
+    path = os.path.join(target_dir, f"{base_name}_合并结果{out_suffix}")
+    if not os.path.exists(path):
+        return path
+    i = 1
+    while os.path.exists(os.path.join(target_dir, f"{base_name}_合并结果_{i}{out_suffix}")):
+        i += 1
+    return os.path.join(target_dir, f"{base_name}_合并结果_{i}{out_suffix}")
+
+
+def merge_files(target_dir, target_suffix, scan_subdir, out_suffix=None):
     if not os.path.isdir(target_dir):
         return False, f"错误：路径「{target_dir}」不是有效文件夹！"
 
+    out_suffix = merge_output_suffix(target_suffix, out_suffix)
+
     split_line = "\n" + "=" * 50 + "\n"
-    file_list = []
+    pairs = []          # (排序键, 完整路径, 文件名)
     if scan_subdir:
         for root, _, files in os.walk(target_dir):
             for fname in files:
                 if fname.endswith(target_suffix):
-                    file_list.append((os.path.join(root, fname), fname))
+                    full_path = os.path.join(root, fname)
+                    pairs.append((os.path.relpath(full_path, target_dir), full_path, fname))
     else:
         for name in os.listdir(target_dir):
             full_path = os.path.join(target_dir, name)
             if os.path.isfile(full_path) and name.endswith(target_suffix):
-                file_list.append((full_path, name))
+                pairs.append((name, full_path, name))
+    # 自然排序：让合并顺序确定，也保证「第一个文件」可预期（9 排在 10 前面）
+    pairs.sort(key=lambda p: natural_key(p[0]))
+    file_list = [(full_path, fname) for _, full_path, fname in pairs]
 
     if not file_list:
         return False, f"提示：未找到任何 {target_suffix} 文件！"
@@ -503,15 +528,14 @@ def merge_files(target_dir, target_suffix, scan_subdir):
             error_log += f"读取失败 {fpath}：{str(e)}\n"
             continue
 
-    output_name = f"全部合并结果{target_suffix}"
-    output_path = os.path.join(target_dir, output_name)
-    # 防止覆盖：已存在则自动加 _1、_2 后缀
-    if os.path.exists(output_path):
-        i = 1
-        while os.path.exists(os.path.join(target_dir, f"全部合并结果{target_suffix}_{i}")):
-            i += 1
-        output_path = os.path.join(target_dir, f"全部合并结果{target_suffix}_{i}")
-        output_name = os.path.basename(output_path)
+    # 输出文件名 = 第一个文件名（去掉目标后缀）+ _合并结果 + 输出后缀
+    first_name = file_list[0][1]
+    if first_name.endswith(target_suffix):
+        base_name = first_name[:-len(target_suffix)]
+    else:
+        base_name = os.path.splitext(first_name)[0]
+    base_name = base_name.strip() or "合并"
+    output_path = merge_output_path(target_dir, base_name, out_suffix)
     try:
         with open(output_path, "w", encoding="utf-8") as fw:
             fw.write(total_text)
@@ -707,7 +731,28 @@ def build_merge_tab(parent):
                  values=[".txt", ".srt", ".md", ".log"]).grid(
                      row=1, column=1, sticky="w", padx=(0, 6), pady=5)
     form_note(form, 1, "可直接输入自定义后缀")
-    var_sub = make_check(form, "递归遍历子目录", default=False, row=2, column=1,
+    # 输出后缀：默认与目标后缀一致；用户自己改过之后不再跟随
+    form_label(form, 2, "输出后缀：")
+    var_out_suffix = tk.StringVar(value=".txt")
+    out_manual = [False]
+
+    def _mark_out_manual(*_):
+        out_manual[0] = True
+
+    out_box = ttk.Combobox(form, textvariable=var_out_suffix, width=12,
+                           values=[".txt", ".srt", ".md", ".log"],
+                           command=_mark_out_manual)
+    out_box.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=5)
+    out_box.bind("<KeyRelease>", _mark_out_manual)
+    form_note(form, 2, "默认与目标后缀一致；输出文件名 = 第一个文件名_合并结果")
+
+    def _follow_suffix(*_):
+        """目标后缀变化时，输出后缀跟着改（用户手动改过就不再跟随）"""
+        if not out_manual[0]:
+            var_out_suffix.set(var_suffix.get())
+
+    var_suffix.trace_add("write", _follow_suffix)
+    var_sub = make_check(form, "递归遍历子目录", default=False, row=3, column=1,
                          columnspan=3)
     text_log, log = make_log_panel(parent, 2, colspan=1)
 
@@ -720,10 +765,11 @@ def build_merge_tab(parent):
         if not suffix:
             messagebox.showwarning("提醒", "请选择需要合并的文件后缀！")
             return
+        out_suffix = merge_output_suffix(suffix, var_out_suffix.get())
         clear_log(text_log)
 
         def work():
-            ok, msg = merge_files(dir_path, suffix, var_sub.get())
+            ok, msg = merge_files(dir_path, suffix, var_sub.get(), out_suffix)
             for line in msg.splitlines():
                 log(line)
 
@@ -731,7 +777,7 @@ def build_merge_tab(parent):
                  on_done=lambda err: (messagebox.showerror("失败", "合并失败，详情见日志。") if err
                                       else messagebox.showinfo("完成", "合并结束，详情见日志。")))
 
-    btn = make_start_button(form, 3, "开始合并", start)
+    btn = make_start_button(form, 4, "开始合并", start)
 
 
 def build_txt_rename_tab(parent):

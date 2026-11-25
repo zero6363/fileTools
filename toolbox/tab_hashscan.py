@@ -5476,13 +5476,19 @@ def build_hash_tab(parent, app=None):
 
         box = ui.Frame(dlg)
         box.grid(row=1, column=0, sticky="e", padx=18, pady=(8, 16))
-        ui.Button(box, text="写入本页差异",
-                  state=tk.NORMAL if page_n else tk.DISABLED,
-                  command=lambda: close("page")).pack(side=tk.LEFT, padx=(0, 6))
-        ui.Button(box, text="写入全部差异",
-                  state=tk.NORMAL if all_n else tk.DISABLED,
-                  command=lambda: close("all")).pack(side=tk.LEFT, padx=(0, 6))
-        ui.Button(box, text="否", command=lambda: close(None)).pack(side=tk.LEFT)
+        btn_page = ui.Button(box, text="写入本页差异",
+                             state=tk.NORMAL if page_n else tk.DISABLED,
+                             command=lambda: close("page"))
+        btn_page.pack(side=tk.LEFT, padx=(0, 6))
+        btn_all = ui.Button(box, text="写入全部差异",
+                            state=tk.NORMAL if all_n else tk.DISABLED,
+                            command=lambda: close("all"))
+        btn_all.pack(side=tk.LEFT, padx=(0, 6))
+        btn_no = ui.Button(box, text="否", command=lambda: close(None))
+        btn_no.pack(side=tk.LEFT)
+        # 回车 / 空格都触发主操作（本页优先，其次全部）
+        primary = btn_page if page_n else (btn_all if all_n else btn_no)
+        ui.bind_dialog_keys(dlg, primary, (btn_page, btn_all, btn_no))
         dlg.protocol("WM_DELETE_WINDOW", lambda: close(None))
         dlg.bind("<Escape>", lambda _e: close(None))
         parent.wait_window(dlg)
@@ -7105,8 +7111,12 @@ def build_hash_tab(parent, app=None):
 
             btns = ui.Frame(dlg)
             btns.grid(row=3, column=0, sticky="e", padx=12, pady=(0, 10))
-            ui.Button(btns, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=3)
-            ui.Button(btns, text="开始同步", command=ok).pack(side=tk.RIGHT, padx=3)
+            btn_cancel = ui.Button(btns, text="取消", command=dlg.destroy)
+            btn_cancel.pack(side=tk.RIGHT, padx=3)
+            btn_ok = ui.Button(btns, text="开始同步", command=ok)
+            btn_ok.pack(side=tk.RIGHT, padx=3)
+            # 回车 / 空格都能确认同步
+            ui.bind_dialog_keys(dlg, btn_ok, (btn_cancel, btn_ok))
             dlg.wait_window()
             return var_trash.get() if result["ok"] else None
 

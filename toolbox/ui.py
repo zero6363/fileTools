@@ -1183,6 +1183,78 @@ def center_window(win, parent=None, width=None, height=None):
     return x, y, w, h
 
 
+# 弹窗里「空格键该留给控件自己」的输入类控件（tk / ttk 的类名都列上）。
+# 输入框打空格、复选框 / 单选框 / 滑条按空格，都不应该顺手把弹窗确认掉。
+_KEY_INPUT_CLASSES = frozenset({
+    "Entry", "TEntry", "Text", "Listbox", "Combobox", "TCombobox",
+    "Checkbutton", "TCheckbutton", "Radiobutton", "TRadiobutton",
+    "Scale", "TScale", "Spinbox", "TSpinbox",
+})
+
+
+def bind_dialog_keys(dialog, confirm, buttons=()):
+    """给弹窗统一绑定回车 / 空格触发按钮（消息框和各自定义对话框共用）。
+
+    · 焦点落在 buttons 里任一按钮 → 触发那个按钮（CTkButton 的 focus_set 实际
+      落到内部 tk.Label 上，所以这里沿父链找，而不是只认 focus_get 的返回值）；
+    · 焦点落在输入框 / 复选 / 单选 / 滑条等 → 不拦截，保留控件原生空格行为；
+    · 其余情况 → 触发 confirm（默认 / 主按钮）。
+
+    注意 dialog.bind 用 add="+"：CTkToplevel 自己也可能绑了按键，别覆盖掉。
+    """
+    candidates = tuple(buttons) or (confirm,)
+    if all(b is not confirm for b in candidates):
+        candidates += (confirm,)
+
+    def _owner(widget):
+        for _ in range(6):
+            if widget is None:
+                break
+            for b in candidates:
+                if widget is b:
+                    return b
+            try:
+                widget = widget.master
+            except Exception:
+                break
+        return None
+
+    def _is_input(widget):
+        for _ in range(6):
+            if widget is None:
+                break
+            try:
+                if widget.winfo_class() in _KEY_INPUT_CLASSES:
+                    return True
+            except Exception:
+                pass
+            try:
+                widget = widget.master
+            except Exception:
+                break
+        return False
+
+    def _trigger(_event=None):
+        try:
+            w = dialog.focus_get()
+        except Exception:
+            w = None
+        btn = _owner(w)
+        if btn is None and not _is_input(w):
+            btn = confirm
+        if btn is None:
+            return None
+        try:
+            btn.invoke()
+        except Exception:
+            return None
+        return "break"
+
+    dialog.bind("<Return>", _trigger, add="+")
+    dialog.bind("<space>", _trigger, add="+")
+    return _trigger
+
+
 class Toplevel(_CTkCompat, ctk.CTkToplevel):
     """弹窗基类：第一次显示时自动居中到所属窗口。
 
@@ -1468,7 +1540,7 @@ __all__ = [
     "Combobox", "Textbox", "Listbox", "ScrollableFrame", "Toplevel", "CTk",
     "ProgressBar", "Progressbar", "Scrollbar", "Slider", "Scale", "make_card",
     "center_window", "virtual_screen_bounds", "monitor_work_area",
-    "monitor_work_areas", "set_geometry_px", "dialog_size",
+    "monitor_work_areas", "set_geometry_px", "dialog_size", "bind_dialog_keys",
     "Treeview", "Style", "Separator", "Notebook", "init_appearance", "ctk",
     "attach_tree_hover",
 ]

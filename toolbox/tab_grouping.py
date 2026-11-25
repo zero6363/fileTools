@@ -17,6 +17,17 @@ from .common import (clean_path, clear_log, form_label, form_note, make_check,
 
 ALL_FILES = "*"
 
+# 排序选项（UI 显示文本 → 内部键）。只作用于「按数量分组」：
+# 排序结果决定哪些文件进第 1 组、第 2 组……「按年月分组」按 mtime 归档，与顺序无关。
+SORT_NAME, SORT_SIZE = "文件名", "文件大小"
+ORDER_ASC, ORDER_DESC = "升序", "降序"
+SORT_KEYS = {SORT_NAME: "name", SORT_SIZE: "size"}
+
+
+def sort_desc(sort_key, descending):
+    """日志里描述当前排序方式"""
+    return ("文件大小" if sort_key == "size" else "文件名") + ("降序" if descending else "升序")
+
 
 def normalize_suffix(s):
     """把用户输入的后缀统一成 .xxx；* / 空 = 所有文件（任意后缀）。
@@ -53,34 +64,53 @@ def empty_msg(suffix):
     return f"未找到匹配的文件（筛选条件：{suffix}），无需处理。"
 
 
-def list_files_with_suffix(src_dir, suffix):
-    """列出 src_dir 下（仅当前一层）匹配的文件名，按名称排序。
-    suffix="*"（或空）表示所有文件，不限制后缀。"""
+def list_files_with_suffix(src_dir, suffix, sort_key="name", descending=False):
+    """列出 src_dir 下（仅当前一层）匹配的文件名并排序。
+    suffix="*"（或空）表示所有文件，不限制后缀。
+    sort_key="name"（默认）按文件名排序；"size" 按文件字节数排序，
+    大小相同则保持文件名升序（两趟稳定排序，结果可复现）。
+    descending=True 时整体反向；默认文件名升序，与旧版行为完全一致。"""
     match_all = not suffix or suffix == ALL_FILES
+    suffix_cmp = suffix.lower() if not match_all else ""
     result = []
-    for name in os.listdir(src_dir):
-        full = os.path.join(src_dir, name)
-        if not os.path.isfile(full):
-            continue
-        if not match_all and not name.lower().endswith(suffix.lower()):
-            continue
-        result.append(name)
-    return sorted(result)
+    with os.scandir(src_dir) as it:
+        for entry in it:
+            try:
+                if not entry.is_file():
+                    continue
+            except OSError:
+                continue
+            name = entry.name
+            if not match_all and not name.lower().endswith(suffix_cmp):
+                continue
+            result.append(name)
+    if sort_key == "size":
+        # 先按文件名升序，再按大小做稳定排序：同大小的文件顺序固定
+        names = sorted(result)
+        sizes = {}
+        for name in names:
+            try:
+                sizes[name] = os.path.getsize(os.path.join(src_dir, name))
+            except OSError:
+                sizes[name] = -1  # 扫描期间被删/无权限：不中断，排到一端
+        return sorted(names, key=lambda n: sizes[n], reverse=descending)
+    return sorted(result, reverse=descending)
 
 
-def group_by_count(src_dir, suffix, per_group, prefix, log):
-    """按数量分组：每组 per_group 个文件，移入 前缀_1、前缀_2 ... 文件夹。
-    suffix="*"（或空）表示所有文件，任意后缀都会分组。
+def group_by_count(src_dir, suffix, per_group, prefix, log, sort_key="name", descending=False):
+    """按数量分组：排序后每组 per_group 个文件，移入 前缀_1、前缀_2 ... 文件夹。
+    suffix="*"（或空）表示所有文件，任意后缀都会分组；
+    sort_key / descending 决定分组前的文件顺序（默认文件名升序）。
     目标已存在同名文件时跳过该文件，绝不覆盖，防止文件丢失。"""
-    files = list_files_with_suffix(src_dir, suffix)
+    files = list_files_with_suffix(src_dir, suffix, sort_key, descending)
     if not files:
         log(empty_msg(suffix))
         return 0
     per_group = max(1, int(per_group))
     prefix = prefix or "Group"
     total_groups = (len(files) + per_group - 1) // per_group
-    log(f"共找到 {len(files)} 个文件（{suffix_desc(suffix)}），按每组 {per_group} 个分为 {total_groups} 组"
-        f"（文件夹名前缀 {prefix}_）...")
+    log(f"共找到 {len(files)} 个文件（{suffix_desc(suffix)}），按{sort_desc(sort_key, descending)}排序后，"
+        f"每组 {per_group} 个分为 {total_groups} 组（文件夹名前缀 {prefix}_）...")
     moved = skipped = 0
     for gi in range(1, total_groups + 1):
         group_dir = os.path.join(src_dir, f"{prefix}_{gi}")
@@ -230,6 +260,7 @@ def build_group_tab(parent):
     parent.grid_columnconfigure(0, weight=1)
     parent.grid_rowconfigure(2, weight=1)
     make_tip(parent, 0, "按数量：按后缀分组（.jpg / .txt / .mp4，* = 所有文件、任意后缀），每组数量可自定义；"
+                        "可先按文件名或文件大小升/降序排列，再依次切分每组（默认文件名升序）；"
                         "按年月：按修改时间归入 年-月 文件夹。同名文件自动跳过，不覆盖。",
              colspan=1, autowrap=True)
 
@@ -275,8 +306,23 @@ def build_group_tab(parent):
     prefix_entry.grid(row=4, column=1, sticky="w", padx=(0, 6), pady=5)
     prefix_note = form_note(form, 4, "随后缀自动变化")
 
+    # 排序：两个只读下拉放在同一行，左边缘与上方输入框对齐
+    sort_label = form_label(form, 5, "排序方式：")
+    sort_row = ui.Frame(form, fg_color="transparent")
+    sort_row.grid(row=5, column=1, sticky="w", padx=(0, 6), pady=3)
+    var_sort = tk.StringVar(value=SORT_NAME)
+    sort_box = ttk.Combobox(sort_row, textvariable=var_sort, width=12, state="readonly",
+                            values=[SORT_NAME, SORT_SIZE])
+    sort_box.pack(side=tk.LEFT, padx=(0, 8))
+    var_order = tk.StringVar(value=ORDER_ASC)
+    order_box = ttk.Combobox(sort_row, textvariable=var_order, width=10, state="readonly",
+                             values=[ORDER_ASC, ORDER_DESC])
+    order_box.pack(side=tk.LEFT)
+    sort_note = form_note(form, 5, "先按此顺序排列文件，再依次切分每组（决定第 1 组放哪些文件）")
+
     count_widgets = [suffix_box, per_label, box_per, per_note,
-                     prefix_label, prefix_entry, prefix_note]
+                     prefix_label, prefix_entry, prefix_note,
+                     sort_label, sort_row, sort_note]
     ym_widgets = [suffix_box_ym]
 
     def sync_prefix(*_a):
@@ -325,7 +371,11 @@ def build_group_tab(parent):
             if count_mode:
                 per = max(1, int(var_per.get()))
                 prefix = clean_path(var_prefix.get()) or "Group"
-                work = lambda: group_by_count(src, suffix, per, prefix, log)
+                # 读下拉框当前显示值（CTkComboBox 改写 variable 时会先过一次空值），
+                # 并对非法值兜底回默认，避免中间态导致排序失效。
+                sort_key = SORT_KEYS.get(sort_box.get(), "name")
+                descending = order_box.get() == ORDER_DESC
+                work = lambda: group_by_count(src, suffix, per, prefix, log, sort_key, descending)
             else:
                 work = lambda: group_by_yearmonth(src, suffix, log)
         except ValueError:
@@ -335,7 +385,7 @@ def build_group_tab(parent):
         run_task(btn, log, work,
                  on_done=lambda err: None if err else messagebox.showinfo("完成", "分组结束，详情见日志。"))
 
-    btn = make_start_button(form, 5, "开始分组", start)
+    btn = make_start_button(form, 6, "开始分组", start)
 
 
 def build_flatten_tab(parent):

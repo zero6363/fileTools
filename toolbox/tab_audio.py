@@ -31,11 +31,10 @@ import traceback
 import uuid
 from tkinter import filedialog, messagebox
 
-from . import config
-from . import ui
+from . import common, config, ui
 from .common import (ScrollPage, clean_path, clear_log, form_label, form_note,
                      make_check, make_entry_row, make_form, make_logger,
-                     make_num_row, make_path_row, make_tip, natural_key)
+                     make_num_row, make_tip, natural_key)
 from .tab_encode import locate_ffmpeg, save_ffmpeg_hint
 from .theme import COLOR, FONTS
 
@@ -86,6 +85,85 @@ _SPLIT_RE = re.compile(r"[\s,;，；、]+")
 
 
 # ============================================================
+# 剪贴板 → 文件夹路径（本页专用）
+# ------------------------------------------------------------
+# 不用全局 paste_path_to 的原因：
+#   · 它只改 StringVar，输入框里若留有旧值、变量同步稍有延迟，看起来
+#     就是「点了粘贴没反应」；这里同时改变量和输入框内容，并给出反馈；
+#   · 它优先取「磁盘上存在的最长空格前缀」，遇到带空格的真实目录名
+#     会被截成父目录；这里整段就是路径时原样保留（含还没建的新目录）；
+#   · 识别不到时它会把输入框清空，旧路径跟着丢了；这里保留原值并提示。
+# ============================================================
+
+def _abs_like(p):
+    """归一化后是否像一条完整的 Windows 绝对路径（盘符 / UNC）"""
+    if not p or any(ch in p for ch in "\r\n\t"):
+        return False
+    return bool(re.match(r"^[A-Za-z]:\\", p) or p.startswith("\\\\"))
+
+
+def _single_path(text):
+    """整段文本就是一条路径 → 归一化结果；夹着说明文字 → 空串"""
+    if not text or any(ch in text for ch in "\r\n\t"):
+        return ""
+    s = text.strip()
+    # 「D:\abc 输出：E:\out」这种带说明的整句交给全局解析器拆；
+    # 「D:\Program Files\合集（2023）」里的空格是名字的一部分，要留着。
+    if re.search(r"\s", s) and re.search(r"[，。；：！？、]", s):
+        return ""
+    p = common._normalize_win_path(s)
+    return p if _abs_like(p) else ""
+
+
+def _path_from_clipboard(widget):
+    """读剪贴板，返回 (文件夹路径, 错误说明)。
+
+    识别不到时路径为空串——调用方保留输入框原值，绝不清空。
+    """
+    text = ""
+    try:
+        text = widget.clipboard_get()
+    except Exception:
+        try:
+            root = tk._default_root
+            text = root.clipboard_get() if root is not None else ""
+        except Exception:
+            text = ""
+    text = (text or "").strip()
+    if not text:
+        return "", ("剪贴板是空的。\n\n"
+                    "请先在资源管理器地址栏复制路径，或选中文件夹后 Ctrl+C。")
+
+    # ① 整段就是一条路径：最常见（地址栏 /「复制为路径」），原样用，
+    #    不按空格回退，也不要求目录已经存在（输出文件夹常常要新建）。
+    single = _single_path(text)
+    if single:
+        if os.path.isfile(single):
+            single = os.path.dirname(single) or single
+        return single, ""
+
+    # ② 一段文字里夹着路径 / 多个路径：交给统一的解析器挑最像的一条
+    p = common.parse_windows_path(text)
+    if p:
+        p = common._normalize_win_path(p)
+        if os.path.isfile(p):
+            p = os.path.dirname(p) or p
+        return p, ""
+
+    # ③ 资源管理器复制的是「文件夹对象」（文本只有名字）→ CF_HDROP 精确路径
+    hdrop = common._clipboard_hdrop()
+    if hdrop:
+        p = common._normalize_win_path(hdrop)
+        if os.path.isfile(p):
+            p = os.path.dirname(p) or p
+        return p, ""
+
+    return "", ("剪贴板里没识别到 Windows 文件夹路径。\n\n"
+                "支持：地址栏 /「复制为路径」的完整路径、带引号的路径、"
+                "file:/// 链接、UNC 路径，以及聊天文字里夹着的路径。")
+
+
+# ============================================================
 # 配置
 # ============================================================
 
@@ -107,12 +185,14 @@ def _as_bool(value, default):
 
 def _load_prefs():
     sec = config.get_section(CONFIG_SECTION)
+    # 源 / 输出文件夹不再记忆：每次打开都是空的，免得上次任务残留的
+    # 旧路径被误当成这次的目录。其余选项（后缀 / 容器 / 并行数…）照旧。
+    if sec.get("source") or sec.get("dest"):
+        _save_prefs(source="", dest="")
     container = str(sec.get("container") or "auto")
     if container not in _LABEL_TO_KEY.values():
         container = "auto"
     return {
-        "source": str(sec.get("source") or ""),
-        "dest": str(sec.get("dest") or ""),
         "exts": str(sec.get("exts") or DEFAULT_EXTS),
         "container": container,
         "parallel": _as_int(sec.get("parallel", 2), 2, 1, 8),
@@ -470,6 +550,77 @@ def extract_job(files, opts, rt, log):
 # 界面
 # ============================================================
 
+def _make_path_row(form, row, label, title, note, on_paste):
+    """「源 / 输出文件夹」输入行，返回 (StringVar, Entry, apply_value)。
+
+    粘贴按钮和 Ctrl+V 走同一条路径：整框替换（不是插到旧路径中间），
+    同时写变量与输入框内容，成功给可见反馈；识别不到路径时保留原值
+    并弹提示，绝不清空已有内容。
+    """
+    form_label(form, row, label)
+    var = tk.StringVar(value="")
+    entry = ui.Entry(form, textvariable=var, width=40)
+    entry.grid(row=row, column=1, sticky="w", padx=(0, 6), pady=3)
+
+    def apply_value(path):
+        path = common._normalize_win_path(path)
+        var.set(path)
+        try:
+            entry.delete(0, tk.END)
+            entry.insert(0, path)
+        except Exception:
+            pass
+        try:
+            entry.icursor(tk.END)
+            entry.xview_moveto(1.0)
+        except Exception:
+            pass
+        return path
+
+    def feedback(path):
+        try:
+            on_paste(label.strip("：:"), path)
+        except Exception:
+            pass
+
+    def do_paste():
+        path, err = _path_from_clipboard(entry)
+        if not path:
+            messagebox.showwarning("粘贴", err)
+            return False
+        feedback(apply_value(path))
+        return True
+
+    def do_browse():
+        p = filedialog.askdirectory(title=title)
+        if p:
+            feedback(apply_value(p))
+
+    last_key_paste = [0.0]
+
+    def on_ctrl_v(_event):
+        # 同一次按键可能同时命中 <Control-v> 和 <<Paste>>，别弹两次提示
+        now = time.monotonic()
+        if now - last_key_paste[0] < 0.15:
+            return "break"
+        last_key_paste[0] = now
+        do_paste()
+        return "break"          # 接管默认粘贴，避免插进旧路径中间
+
+    btns = ui.Frame(form)
+    btns.grid(row=row, column=2, sticky="w", padx=(0, 4), pady=3)
+    ui.Button(btns, text="粘贴", command=do_paste).pack(
+        side=tk.LEFT, padx=(0, 4))
+    ui.Button(btns, text="浏览…", command=do_browse).pack(side=tk.LEFT)
+    # CTkEntry.bind 会转发到内部 tk.Entry 并强制 add=True（键盘焦点在那里）；
+    # 千万别再对内部 Entry 用默认 bind()——那会覆盖 CTk 自己的回调。
+    for seq in ("<Control-v>", "<Control-V>", "<<Paste>>"):
+        entry.bind(seq, on_ctrl_v)
+    if note:
+        form_note(form, row, note)
+    return var, entry, apply_value
+
+
 def _make_runtime():
     return {
         "running": False,
@@ -492,6 +643,23 @@ def _snapshot(rt):
 def build_audioextract_tab(parent, app=None):
     prefs = _load_prefs()
 
+    # 粘贴反馈要用到后面才创建的日志 / 状态栏 / 运行时，先留挂载点
+    feedback = {"log": None, "status": None, "rt": None}
+
+    def on_paste(label, path):
+        if feedback["log"] is not None:
+            try:
+                feedback["log"]("已粘贴到%s：%s" % (label, path))
+            except Exception:
+                pass
+        try:
+            rt = feedback["rt"]
+            lbl = feedback["status"]
+            if lbl is not None and (rt is None or not rt["running"]):
+                lbl.configure(text="已粘贴 %s：%s" % (label, path))
+        except Exception:
+            pass
+
     page = ScrollPage(parent)
     page.pack(fill=tk.BOTH, expand=True)
     body = page.body
@@ -510,11 +678,12 @@ def build_audioextract_tab(parent, app=None):
     form = make_form(body)
     form.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
 
-    var_src = make_path_row(form, 0, "源文件夹：", default=prefs["source"],
-                            title="选择要提取音轨的文件夹")
-    var_dst = make_path_row(form, 1, "输出文件夹：", default=prefs["dest"],
-                            title="音频保存到哪个文件夹",
-                            note="不存在会自动创建")
+    var_src, ent_src, apply_src = _make_path_row(
+        form, 0, "源文件夹：", "选择要提取音轨的文件夹",
+        "不记住路径，支持 Ctrl+V 整框替换", on_paste)
+    var_dst, ent_dst, apply_dst = _make_path_row(
+        form, 1, "输出文件夹：", "音频保存到哪个文件夹",
+        "不记住路径，不存在会自动创建", on_paste)
     var_exts = make_entry_row(form, 2, "视频后缀：", default=prefs["exts"],
                               entry_width=48,
                               note="空格分隔，默认已含 ts / flv / mp4 等")
@@ -575,6 +744,7 @@ def build_audioextract_tab(parent, app=None):
     btn_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(10, 2))
 
     rt = _make_runtime()
+    feedback["rt"] = rt
 
     btn_start = ui.Button(
         btn_row, text="开始提取", height=36,
@@ -590,6 +760,7 @@ def build_audioextract_tab(parent, app=None):
     lbl_status = ui.RowLabel(btn_row, text="未开始", font=FONTS["base"],
                              text_color=COLOR["text_secondary"])
     lbl_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    feedback["status"] = lbl_status
 
     # ---------------- 运行日志（默认收起） ----------------
     log_wrap = ui.Frame(body)
@@ -613,6 +784,7 @@ def build_audioextract_tab(parent, app=None):
                           font=FONTS["log"])
     text_log.grid(row=0, column=0, sticky="nsew")
     log = make_logger(text_log)
+    feedback["log"] = log
 
     def toggle_log():
         if var_log_open.get():
@@ -713,7 +885,8 @@ def build_audioextract_tab(parent, app=None):
         container = _LABEL_TO_KEY.get(var_container.get().strip(), "auto")
         recursive = bool(var_recursive.get())
         keep = bool(var_keep.get())
-        _save_prefs(source=src, dest=dst, exts=var_exts.get().strip(),
+        # 源 / 输出文件夹不写进配置：每次打开都重新选，避免误用旧路径
+        _save_prefs(exts=var_exts.get().strip(),
                     container=container, parallel=parallel,
                     recursive=recursive, keep_structure=keep)
 
@@ -842,8 +1015,8 @@ def build_audioextract_tab(parent, app=None):
             for p in paths:
                 folder = p if os.path.isdir(p) else os.path.dirname(p)
                 if folder and os.path.isdir(folder):
-                    var_src.set(folder)
-                    log("已接收拖入的文件夹：%s" % folder)
+                    path = apply_src(folder)
+                    log("已接收拖入的文件夹：%s" % path)
                     return
 
         try:

@@ -191,7 +191,9 @@ class MessageDialog(ui.Toplevel):
         keep = str(buttons or "ok").lower()
         self.protocol("WM_DELETE_WINDOW", lambda: self._close(_ON_CLOSE.get(keep, "ok")))
         self.bind("<Escape>", lambda _e: self._close(_ON_ESC.get(keep, "ok")))
-        self.bind("<Return>", self._on_return)
+        # 回车 / 空格都触发主按钮（焦点在别的按钮上就触发那个）：统一走 ui 的绑定器，
+        # 和选项对话框、同步确认框的行为保持一致。
+        ui.bind_dialog_keys(self, focus_btn, tuple(self._buttons.values()))
 
         self._center_after_idle()
 
@@ -211,28 +213,6 @@ class MessageDialog(ui.Toplevel):
             scale = getattr(self, "_scale", 1.0)
             ui.center_window(self, parent=self._owner,
                              width=(self._content_w + 2 * _PAD_X) * scale)
-        except Exception:
-            pass
-
-    def _on_return(self, _event=None):
-        """回车：焦点在某个按钮上就按它，否则按默认按钮。"""
-        try:
-            w = self.focus_get()
-        except Exception:
-            w = None
-        if w is not None and w in tuple(self._buttons.values()):
-            try:
-                w.invoke()
-                return "break"
-            except Exception:
-                pass
-        self._invoke_focus()
-        return "break"
-
-    def _invoke_focus(self):
-        """回车 = 默认按钮（没有默认按钮时 = 主按钮）。"""
-        try:
-            self._focus_btn.invoke()
         except Exception:
             pass
 
