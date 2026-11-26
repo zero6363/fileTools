@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""⑧ 视频常用压制 —— FFmpeg 硬件编码（NVENC 优先 / 无则 QSV）+ 内嵌字幕硬烧 + 自动归档
+r"""⑧ 视频常用压制 —— FFmpeg 硬件编码（NVENC 优先 / 无则 QSV）+ 内嵌 / 外挂字幕硬烧 + 自动归档
 
 压制参数参考 ShanaEncoder 的常用设置：
     AV1  (NVENC)   -preset p1      -cq 36
     H.265(NVENC)   -preset p4      -cq 29
     H.265(QSV)     -preset medium  -global_quality 24
 
-字幕样式同样复刻 ShanaEncoder：微软雅黑 / 字号 15 / 轮廓 2 / 阴影 2 /
-左右边距 10 / 底边距 20 / 强制 ASS 样式 / 居中底部；
-滤镜顺序固定为「字幕在前、旋转在后」（-noautorotate + transpose）。
+字幕统一成白字黑边 + 轻阴影 + 居中底部（微软雅黑，640 宽基准 20px），
+忽略原字幕自带样式（烧录前剥掉 {\fs} / {\an} / {\pos} / {\c} 等内联标签）；
+滤镜顺序固定为「旋转 → 缩放 → 字幕」，字幕按最终画幅排版。
 
 文件归档：压制成功把源文件移到 success/，失败移到 error/；
 输出命名 原文件名.crf<质量值>.mp4。
@@ -61,10 +61,6 @@ HD_CRF = 18                  # 高清模式：原分辨率，AV1 / H.265 都用 
 SIXFORTY_EDGE = 640          # 640p 模式：最长边限制 640
 MODE_REMUX = "copy"          # 极速转封装：不解码重编码，-c copy 直接换容器成 mp4（flv/mkv/ts… → mp4）
 
-# ShanaEncoder 字幕样式（强制 ASS 样式）
-SUB_FORCE_STYLE = ("FontName=Microsoft YaHei,FontSize=15,Outline=2,Shadow=2,"
-                   "MarginL=10,MarginR=10,MarginV=20,Alignment=2")
-
 NVENC_PRESETS = ["p1", "p2", "p3", "p4", "p5", "p6", "p7"]
 QSV_PRESETS = ["veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
 X265_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast",
@@ -82,6 +78,12 @@ TEXT_SUB_CODECS = {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt",
                    "text", "microdvd", "subviewer", "subviewer1", "jacosub",
                    "sami", "realtext", "stl", "vplayer", "pjs", "mpl2",
                    "eia_608", "eia_708", "dvb_teletext"}
+
+# 外挂字幕：视频同目录的 .srt/.ass 等，内嵌没有文字字幕时兜底硬烧
+EXT_SUB_EXTS = (".ass", ".ssa", ".srt", ".vtt")
+
+# ASS 没写 PlayRes 时 libass 的默认脚本坐标
+ASS_DEFAULT_PLAYRES = (384, 288)
 
 _ENCODER_CHAIN = {
     CODEC_AV1: ("av1_nvenc", "av1_qsv", "libsvtav1", "libaom-av1", "librav1e"),
@@ -765,7 +767,10 @@ def rotation_filter(rotation):
 
 
 def pick_subtitle(info):
-    """挑一条要硬烧的字幕：优先中文 → 默认轨 → 第一条"""
+    """挑一条要硬烧的内嵌字幕：优先中文完整轨 → 默认轨 → 中文 forced → 第一条
+
+    forced（强制）字幕一般只翻译画面里的外语、标识，整片对白在另一条完整轨里；
+    先挑非 forced 的，避免「烧上了整片却没几个字」。"""
     subs = info.get("subs") or []
     text_subs = [s for s in subs if s["codec"] in TEXT_SUB_CODECS]
     if not text_subs:
@@ -777,12 +782,113 @@ def pick_subtitle(info):
                 or any(k in s["title"] for k in ("中文", "简体", "繁体", "中字", "chs", "cht")))
 
     for s in text_subs:
+        if is_zh(s) and not s["forced"]:
+            return s
+    for s in text_subs:
+        if s["default"] and not s["forced"]:
+            return s
+    for s in text_subs:
         if is_zh(s):
             return s
     for s in text_subs:
-        if s["default"]:
+        if not s["forced"]:
             return s
     return text_subs[0]
+
+
+def _ass_has_dialogue(path):
+    """ASS 里是否真的有字幕文字（空轨转出来只有头部/空事件，烧上去等于没有）"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if not line.startswith("Dialogue:"):
+                    continue
+                # Dialogue 共 10 段，最后一段是文字；去掉 {\an8} 这类纯覆盖标签后还要有内容
+                text = line.split(",", 9)[-1]
+                text = re.sub(r"\{[^}]*\}", "", text).strip()
+                if text:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def strip_ass_override_tags(path):
+    r"""删掉 Dialogue 文本里的 {...} 覆盖标签，让原字幕不能盖过统一字幕样式。
+
+    ASS 的 {\fs60} / {\an8\pos(...)} / {\c&H..} / {\b1} 这类内联标签优先级高于
+    force_style，不删的话「统一字号 / 位置 / 配色」会被原字幕自己改回去。
+    \N、\n 换行在括号外，会原样保留；{\p1} 矢量绘图事件直接丢弃（删了标签会变成乱码文字）。
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return
+    out = []
+    in_events = False
+    changed = False
+    for line in lines:
+        s = line.strip()
+        if s.startswith("["):
+            in_events = s.casefold().startswith("[events]")
+            out.append(line)
+            continue
+        if in_events and s.casefold().startswith("dialogue:"):
+            body = line.rstrip("\r\n")
+            parts = body.split(",", 9)
+            if len(parts) != 10:
+                out.append(line)
+                continue
+            raw = parts[9]
+            if re.search(r"\\p\d", raw):
+                # 矢量绘图（{\p1}m 0 0 l ...）不是普通文字，留着反而会显示成一串路径
+                changed = True
+                continue
+            text = re.sub(r"\{[^}]*\}", "", raw)
+            if text != raw:
+                changed = True
+            parts[9] = text
+            out.append(",".join(parts) + "\n")
+            continue
+        out.append(line)
+    if not changed:
+        return
+    try:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.writelines(out)
+    except OSError:
+        pass
+
+
+def read_ass_playres(path):
+    """读 ASS/SSA 的 PlayResX / PlayResY（脚本坐标）；读不到按 libass 默认 384×288。
+
+    force_style 里的 FontSize / 边距都是脚本坐标单位，libass 渲染时会按
+    PlayResY→画面高再缩放一次。要按像素写字号，必须先知道脚本坐标系。"""
+    prx, pry = ASS_DEFAULT_PLAYRES
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for _ in range(80):
+                line = f.readline()
+                if not line:
+                    break
+                s = line.strip()
+                if not s:
+                    continue
+                low = s.lower()
+                if low.startswith(("playresx", "playresy")) and ":" in s:
+                    v = _to_int(s.split(":", 1)[1].strip())
+                    if 16 <= v <= 8192:
+                        if low.startswith("playresx"):
+                            prx = v
+                        else:
+                            pry = v
+                elif s.startswith("[") and "script info" not in low:
+                    break
+    except OSError:
+        pass
+    return prx, pry
 
 
 def extract_subtitle(ffmpeg, src, sub_index, work_dir):
@@ -801,7 +907,79 @@ def extract_subtitle(ffmpeg, src, sub_index, work_dir):
     except Exception:
         return None
     if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
-        return out_name
+        # 丢掉原字幕的内联样式标签，统一用 sub_style 的样式
+        strip_ass_override_tags(out_path)
+        if _ass_has_dialogue(out_path):
+            return out_name
+    return None
+
+
+def _sub_lang_score(suffix):
+    """语言后缀的中文优先分：zh/chs/简体… → 1，其余 → 0"""
+    s = suffix.casefold()
+    keys = ("zh", "chi", "zho", "cn", "chs", "cht", "sc", "tc",
+            "chinese", "中文", "简体", "繁体", "中字")
+    return 1 if any(k in s for k in keys) else 0
+
+
+def find_external_subtitle(src):
+    """在视频同目录找同名外挂字幕（支持 abc.zh.srt 这类语言后缀）。
+
+    排序：中文语言后缀 > 完全同名 > 其他语言后缀。找不到返回 None。
+    只看一层目录，不顺带扫子目录（素材目录里常有整季字幕，跨目录配对容易配错）。"""
+    folder = os.path.dirname(os.path.abspath(src))
+    stem = os.path.splitext(os.path.basename(src))[0].casefold()
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return None
+    cands = []
+    for name in names:
+        base, ext = os.path.splitext(name)
+        if ext.lower() not in EXT_SUB_EXTS:
+            continue
+        low = base.casefold()
+        if low == stem:
+            cands.append((3, name, os.path.join(folder, name)))
+            continue
+        if low.startswith(stem + "."):
+            suffix = low[len(stem) + 1:]
+            # 只认最多两层、且不含空格的后缀（abc.zh / abc.chs&eng / abc.zh.default），
+            # 避免把 abc.预告片.srt 这类别的文件当成本片字幕
+            if suffix and len(suffix.split(".")) <= 2 and " " not in suffix:
+                cands.append((4 if _sub_lang_score(suffix) else 2, name,
+                              os.path.join(folder, name)))
+    if not cands:
+        return None
+    cands.sort(key=lambda c: (-c[0], natural_key(c[1])))
+    return cands[0][2]
+
+
+def extract_external_subtitle(ffmpeg, sub_path, work_dir):
+    """把外挂字幕（srt/ass/ssa/vtt）转成 work_dir/sub.ass，返回文件名或 None。
+
+    国内 .srt 常见 GBK/GB18030 编码：先按 UTF-8 转，结果里没有 Dialogue 事件
+    （解码失败或空文件）再按 GB18030 重试一次。"""
+    out_name = "sub.ass"
+    out_path = os.path.join(work_dir, out_name)
+    attempts = [[]]
+    if os.path.splitext(sub_path)[1].lower() in (".srt", ".vtt"):
+        attempts.append(["-sub_charenc", "GB18030"])
+    for extra in attempts:
+        try:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+        except OSError:
+            pass
+        try:
+            _run([ffmpeg, "-y", "-v", "error", *extra, "-i", sub_path,
+                  "-c:s", "ass", out_name], timeout=300, cwd=work_dir)
+        except Exception:
+            continue
+        if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+            strip_ass_override_tags(out_path)
+            if _ass_has_dialogue(out_path):
+                return out_name
     return None
 
 
@@ -900,22 +1078,42 @@ def _dv_vbv_kbps(w, h, fps):
     return int(max(3000, min(200000, round(rate))))
 
 
-def sub_style(width, height):
-    """按最终画面尺寸算字幕样式：竖屏 / 小画幅自动缩字号 + 智能换行，保证一行放得下、不超出屏幕。
+def sub_style(width, height, playres=None):
+    """统一字幕样式：白字黑边、轻阴影、底部居中；字号按画面宽度自适应。
 
-    字号以 640 宽时 15px 为基准按比例缩放（12–26 封顶），左右边距取宽度 2%、
-    下边距取高度 3%，描边阴影随字号走。"""
+    字号以 640 宽时 20px 为基准（约 5.5% 画面高），左右边距取宽度 2.5%、
+    下边距取高度 4%，描边随字号走，阴影 1–2px（半透明黑，避免糊成一团）。
+
+    ASS 的 FontSize / Outline / Margin 都是「脚本坐标」单位：libass 会按
+    PlayResY→画面高、PlayResX→画面宽再缩放一次。这里按 playres 反算成脚本单位，
+    否则 1080p 脚本的字幕压到 360p 后只剩 5px 左右，等于看不见。"""
     w = max(1, int(width))
     h = max(1, int(height))
-    size = max(12, min(26, round(w * 15 / 640)))
-    mlr = max(6, min(40, round(w * 0.02)))
-    mv = max(10, min(60, round(h * 0.03)))
-    edge = max(1, min(3, round(size / 7)))
-    return (f"FontName=Microsoft YaHei,FontSize={size},Outline={edge},Shadow={edge},"
-            f"MarginL={mlr},MarginR={mlr},MarginV={mv},Alignment=2,WrapStyle=0")
+    prx, pry = playres or ASS_DEFAULT_PLAYRES
+    kx = max(0.05, float(prx) / w)          # 1 像素 = 多少脚本单位
+    ky = max(0.05, float(pry) / h)
+    size_px = max(14, min(40, round(w * 20 / 640)))
+    mlr_px = max(8, min(48, round(w * 0.025)))
+    mv_px = max(12, min(72, round(h * 0.04)))
+    outline_px = max(1, min(3, round(size_px / 9)))
+    shadow_px = max(1, min(2, round(size_px / 18)))
+    return ("FontName=Microsoft YaHei,"
+            f"FontSize={max(6, round(size_px * ky))},"
+            # 原字幕的字体 / 配色 / 加粗 / 边框样式全部盖掉，统一成白字黑边
+            "PrimaryColour=&H00FFFFFF,SecondaryColour=&H00FFFFFF,"
+            "OutlineColour=&H00000000,BackColour=&H80000000,"
+            "Bold=0,Italic=0,Underline=0,StrikeOut=0,"
+            "BorderStyle=1,"
+            f"Outline={max(1, round(outline_px * ky))},"
+            f"Shadow={max(1, round(shadow_px * ky))},"
+            "Alignment=2,"
+            f"MarginL={max(2, round(mlr_px * kx))},"
+            f"MarginR={max(2, round(mlr_px * kx))},"
+            f"MarginV={max(2, round(mv_px * ky))},"
+            "WrapStyle=0")
 
 
-def build_filters(info, target, sub_name):
+def build_filters(info, target, sub_name, sub_playres=None):
     """滤镜顺序：旋转 → 缩放 → 字幕。
 
     字幕必须放最后，渲染在「旋转、缩放之后」的最终画面上。放前面的话：
@@ -934,7 +1132,7 @@ def build_filters(info, target, sub_name):
     if sub_name:
         dw, dh = display_size(info)
         fw, fh = target if target else (dw, dh)
-        filters.append(f"subtitles={sub_name}:force_style='{sub_style(fw, fh)}'")
+        filters.append(f"subtitles={sub_name}:force_style='{sub_style(fw, fh, sub_playres)}'")
     return filters
 
 
@@ -976,7 +1174,7 @@ def resolve_plan(settings, info):
 
 
 def build_command(settings, info, plan, src, dst, work_dir, sub_name,
-                  progress_to="pipe:1", no_hwaccel=False):
+                  progress_to="pipe:1", no_hwaccel=False, sub_playres=None):
     ff = settings["ffmpeg"]
     show_console = bool(settings.get("show_console"))
     # 显示 ffmpeg 窗口时用 warning + 自带统计行；否则静默，只看我们解析的进度
@@ -997,7 +1195,7 @@ def build_command(settings, info, plan, src, dst, work_dir, sub_name,
             args += ["-strict", "unofficial", "-tag:v", "hvc1"]
         args += ["-movflags", "+faststart", "-f", "mp4", dst]
         return args
-    filters = build_filters(info, plan["target"], sub_name)
+    filters = build_filters(info, plan["target"], sub_name, sub_playres)
     # NVENC 显存直通：解码走 NVDEC、帧全程留在显存直到编码完成，省掉 CPU↔GPU
     # 来回拷贝（高清/4K 提速最明显）。有 CPU 滤镜（缩放/旋转/字幕烧录）时退一级：
     # 只开 GPU 解码（帧自动回内存），滤镜链照常工作——显存帧进不了 CPU 滤镜，
@@ -1318,20 +1516,33 @@ def _encode_once(settings, info, plan, src, dst, work_dir, on_progress, stop_eve
     on_cmd(命令行字符串) 在启动前回调一次，用来把实际执行的命令写进日志。
     no_hwaccel=True：构建命令时不带任何 hwaccel 参数（直通失败后的回退重试）。"""
     sub_name = None
+    sub_playres = None
     sub_note = ""
     # 极速转封装不解码，没法烧字幕（烧字幕必须重编码），直接跳过
     if settings["burn_sub"] and not plan.get("remux"):
         sub = pick_subtitle(info)
-        if sub is None:
-            sub_note = "无可用内嵌字幕（位图字幕不支持硬烧）"
-            if info["subs"]:
-                sub_note = "只有位图字幕（PGS/VobSub），无法硬烧"
-        else:
+        if sub is not None:
             sub_name = extract_subtitle(settings["ffmpeg"], src, sub["index"], work_dir)
-            if sub_name is None:
-                sub_note = "字幕提取失败，已跳过硬烧"
-            else:
+            if sub_name:
                 sub_note = f"硬烧第{sub['index']}条字幕"
+            else:
+                sub_note = "内嵌字幕提取失败（该轨可能为空），已跳过"
+        if sub_name is None:
+            # 内嵌没有可烧的文字字幕时，兜底找同目录同名的外挂字幕
+            ext = find_external_subtitle(src)
+            if ext:
+                sub_name = extract_external_subtitle(settings["ffmpeg"], ext, work_dir)
+                if sub_name:
+                    sub_note = f"硬烧外挂字幕 {os.path.basename(ext)}"
+                else:
+                    sub_note = f"外挂字幕转换失败：{os.path.basename(ext)}"
+            elif sub is None:
+                sub_note = "无内嵌字幕，同目录也没找到外挂字幕（.srt/.ass/.ssa/.vtt）"
+                if info["subs"]:
+                    sub_note = "只有位图字幕（PGS/VobSub），同目录也没有外挂字幕，无法硬烧"
+        if sub_name:
+            # force_style 的数值要按脚本 PlayRes 换算，先读出来
+            sub_playres = read_ass_playres(os.path.join(work_dir, sub_name))
     show_console = bool(settings.get("show_console"))
     prog_path = os.path.join(work_dir, "progress.txt") if show_console else "pipe:1"
     report = os.path.join(work_dir, "ffmpeg-report.txt") if show_console else ""
@@ -1339,7 +1550,7 @@ def _encode_once(settings, info, plan, src, dst, work_dir, on_progress, stop_eve
     try:
         cmd = build_command(settings, info, plan, src, dst,
                             work_dir, sub_name, progress_to=prog_path,
-                            no_hwaccel=no_hwaccel)
+                            no_hwaccel=no_hwaccel, sub_playres=sub_playres)
         if on_cmd:
             on_cmd(cmd)
         if show_console:
@@ -1949,7 +2160,7 @@ def build_encode_tab(parent, app=None):
     # 信息探测（多线程，不阻塞 GUI）
     # ============================================================
 
-    def fill_info(iid, info):
+    def fill_info(iid, info, ext_sub=None):
         it = state["items"].get(iid)
         if not it:
             return
@@ -1967,11 +2178,12 @@ def build_encode_tab(parent, app=None):
         if dv_label(info):
             codec_txt += " " + dv_label(info)
         subs = info["subs"]
-        if not subs:
-            sub_txt = "无"
-        else:
+        if subs:
             langs = ",".join(s["lang"] or "?" for s in subs[:2])
             sub_txt = f"{len(subs)}条 {langs}"
+        else:
+            sub_txt = (f"外挂 {os.path.splitext(ext_sub)[1].lstrip('.').upper()}"
+                       if ext_sub else "无")
         it["cells"].update({
             "dur": fmt_duration(info["duration"]),
             "res": f"{dw}x{dh}" + (" ↻" if info["rotation"] else ""),
@@ -1990,7 +2202,9 @@ def build_encode_tab(parent, app=None):
             if not ff:
                 ff, fp = locate_ffmpeg(load_ffmpeg_hint())
             info = probe_media(fp, path) if fp else None
-            run_ui(lambda: fill_info(iid, info))
+            # 外挂字幕查找也放在后台线程：同一目录几千个素材时，逐个 listdir 放 UI 线程会卡列表
+            ext_sub = find_external_subtitle(path) if (info and not info["subs"]) else None
+            run_ui(lambda: fill_info(iid, info, ext_sub))
 
         probe_pool.submit(work)
 

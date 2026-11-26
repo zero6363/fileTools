@@ -24,30 +24,34 @@
   ⑧ 视频常用压制  <- 新增：调用 FFmpeg 批量压制（NVENC 优先 / 无则 QSV / 再退软件），
                       AV1 / H.265 自由选，内嵌字幕硬烧（复刻 ShanaEncoder 样式），
                       成功后源文件归档到 success/
-  ⑨ 视频横竖屏    <- 新增：识别指定文件夹下的视频是横屏还是竖屏，分别移动到
+  ⑨ 视频合并      <- 新增：参考 LosslessCut「连接文件」。按文件名自然排序把
+                      多个视频首尾相接，FFmpeg concat + -c copy 不转码；拼接前
+                      逐文件比对编码参数，不兼容的自动拆成多个兼容组，分组预览
+                      里可逐组选择合并 / 剔除，每组分别输出
+  ⑩ 视频横竖屏    <- 新增：识别指定文件夹下的视频是横屏还是竖屏，分别移动到
                       「横屏」「竖屏」子文件夹；不处理子文件夹，纯读容器头极速
-  ⑩ 音轨提取      <- 新增：从 ts / flv / mp4 等视频里把音轨原样抽出来
+  ⑪ 音轨提取      <- 新增：从 ts / flv / mp4 等视频里把音轨原样抽出来
                        （ffmpeg -c:a copy，不转码，几 GB 的视频也只要一两秒）；
                        按音轨编码自动选容器（AAC → m4a、MP3 → mp3、
                        FLAC → flac、AC-3 / DTS → mka）；输出文件夹里已有
                        同名音频则跳过，绝不覆盖；可递归子文件夹、保留目录
                        结构、多文件并行
-  ⑪ WebP转JPG     <- webp2jpg.py
-  ⑫ 图片压缩      <- image_compressor（D:/code/pigc）：mozjpeg 无损优化 + libjpeg-turbo 备选
-  ⑬ 视频字幕清理  <- 新增：双向清理字幕与视频的配对残留。没有视频
+  ⑫ WebP转JPG     <- webp2jpg.py
+  ⑬ 图片压缩      <- image_compressor（D:/code/pigc）：mozjpeg 无损优化 + libjpeg-turbo 备选
+  ⑭ 视频字幕清理  <- 新增：双向清理字幕与视频的配对残留。没有视频
                        伴生的字幕（srt/ass/ssa/sub，视频已删或未下载的
                        残留）统一移动到根目录的 novideo/；勾选反向后，
                        没有字幕伴生的视频也移动到 nosrt/。按文件主名
                        匹配（不要求同目录），默认认识 abc.zh.srt 这类
                        语言后缀；同名不覆盖（自动 _1/_2），可先「仅列出」
                        预览再执行
-  ⑭ 图片生成MD    <- 记录md.py
-  ⑮ TXT转图片     <- txt2img.py
-  ⑯ TXT合并       <- txt合并.py
-  ⑰ TXT重命名     <- txt重命名.py
-  ⑱ 加密包分类    <- zipTestPsw.py
-  ⑲ ReSoBackup备份 <- ReSoBackup-main（Go 项目，Python 重实现）：RS 纠删码分片 + AES-256-GCM
-  ⑳ 硬盘哈希扫描  <- 新增：冷数据建档校验。数据库 filehash.db 直接建在
+  ⑮ 图片生成MD    <- 记录md.py
+  ⑯ TXT转图片     <- txt2img.py
+  ⑰ TXT合并       <- txt合并.py
+  ⑱ TXT重命名     <- txt重命名.py
+  ⑲ 加密包分类    <- zipTestPsw.py
+  ⑳ ReSoBackup备份 <- ReSoBackup-main（Go 项目，Python 重实现）：RS 纠删码分片 + AES-256-GCM
+  ㉑ 硬盘哈希扫描  <- 新增：冷数据建档校验。数据库 filehash.db 直接建在
                       扫描根目录下（一块盘/一个根目录一个库）。四种模式按
                       「改不改库 × 算不算哈希」组合：快速建档 / 快速预检 /
                       完整建档 / 完整检查；只读模式（预检、检查）扫出的差异
@@ -58,7 +62,7 @@
                       toolbox_config.json 的 hashscan 分区里，可统一管理、跨库
                       检索；「合并数据库」把子目录的库并进来，「用上级库」按上级
                       库给子目录建库（两者都只动数据库、不读文件）
-  ㉑ Robocopy极速复制 <- 新增：封装 Windows 自带 robocopy，在文件夹之间
+  ㉒ Robocopy极速复制 <- 新增：封装 Windows 自带 robocopy，在文件夹之间
                        多线程（/MT）快速复制；可选断点续传（/Z），中断后重跑
                        会跳过已完成文件、续传未完成的大文件；限制重试次数
                        避免被占用文件卡住；不启用镜像模式，绝不删除目标里
@@ -69,16 +73,16 @@
   config.py         统一配置（toolbox_config.json，按 window/compress/ffmpeg/hashscan/
                     speedcopy/audioextract 分区，老版本分散的四个 json 首次启动自动并入）
   tab_grouping.py   ①③④   tab_live.py ⑤    tab_rename.py ②⑥⑦
-  tab_encode.py ⑧         tab_video.py ⑨         tab_audio.py ⑩
-  tab_media.py ⑪⑱        tab_compress.py ⑫       tab_subtitle.py ⑬
-  tab_docs.py ⑭⑮⑯⑰       tab_rsbackup.py ⑲
-  tab_hashscan.py ⑳        tab_speedcopy.py ㉑
-  （⑧ / ⑩ 依赖外部 FFmpeg；⑳ / ㉑ 只需标准库）
+  tab_encode.py ⑧         tab_video_merge.py ⑨  tab_video.py ⑩
+  tab_audio.py ⑪          tab_media.py ⑫⑲        tab_compress.py ⑬
+  tab_subtitle.py ⑭       tab_docs.py ⑮⑯⑰⑱       tab_rsbackup.py ⑳
+  tab_hashscan.py ㉑        tab_speedcopy.py ㉒
+  （⑧ / ⑨ / ⑪ 依赖外部 FFmpeg；㉑ / ㉒ 只需标准库）
 
 所有涉及文件移动/重命名的操作均防覆盖：同名跳过或自动改名，两阶段重命名，绝不丢失数据。
 依赖（按需安装，缺失时对应标签页会在运行时提示）：
   pip install pillow chardet pycryptodome
-  pip install pyzipper rarfile py7zr   # ⑱ 加密包分类增强（zip 用标准库即可识别）
+  pip install pyzipper rarfile py7zr   # ⑲ 加密包分类增强（zip 用标准库即可识别）
 """
 import os
 import sys
@@ -93,7 +97,7 @@ from .theme import apply_theme, COLOR, FONTS, ui_scale
 from . import ui, ui as ttk
 
 # 左侧菜单宽度：默认值 / 可拖拽范围（记忆值越界时回退默认）
-# 导航字号加大后需要更宽的默认值，避免最长的「⑲ ReSoBackup备份」被裁切。
+# 导航字号加大后需要更宽的默认值，避免最长的「⑳ ReSoBackup备份」被裁切。
 NAV_DEFAULT_WIDTH = 250
 NAV_MIN_WIDTH = 240
 NAV_MAX_WIDTH = 380
@@ -120,6 +124,7 @@ from .tab_docs import (build_md_tab, build_merge_tab, build_txt2img_tab,
 from .tab_media import build_webp_tab, build_zip_tab
 from .tab_compress import build_compress_tab
 from .tab_encode import build_encode_tab
+from .tab_video_merge import build_video_merge_tab
 from .tab_audio import build_audioextract_tab
 from .tab_rsbackup import build_rsbackup_tab
 from .tab_hashscan import build_hash_tab
@@ -138,6 +143,7 @@ TOOL_BUILDERS = [
     ("序号重命名", build_seq_rename_tab),
     ("文件名删除", build_trim_tab),
     ("视频常用压制", build_encode_tab),
+    ("视频合并", build_video_merge_tab),
     ("视频横竖屏", build_video_tab),
     ("音轨提取", build_audioextract_tab),
     ("WebP转JPG", build_webp_tab),
@@ -159,9 +165,9 @@ TOOL_BUILDERS = [
 # 顺序按实际操作流程排。
 NAV_GROUPS = [
     ("文件整理", 7),      # ①~⑦
-    ("媒体处理", 6),      # ⑧~⑬
-    ("文本与文档", 4),    # ⑭~⑰
-    ("校验与备份", 4),    # ⑱~㉑
+    ("媒体处理", 7),      # ⑧~⑭
+    ("文本与文档", 4),    # ⑮~⑱
+    ("校验与备份", 4),    # ⑲~㉒
 ]
 
 if sum(_count for _name, _count in NAV_GROUPS) != len(TOOL_BUILDERS):
@@ -260,8 +266,9 @@ class ToolboxApp:
         self._drop_handlers = {}  # {frame: handler} 各工具页注册的拖放处理器
         self._show_handlers = {}  # {frame: handler} 各工具页注册的「切换到该页时」回调
         self._current_index = 0
-        self._hash_api = None    # ⑳ 页面首次打开后才创建（懒加载）
+        self._hash_api = None    # ㉑ 页面首次打开后才创建（懒加载）
         self._encode_api = None  # ⑧ 同上
+        self._video_merge_api = None  # ⑨ 同上
         # 启动时只造 N 个空容器，页面内容等第一次点开再建。
         # 全部 CTk 控件一次性造完要 2.4 秒（占启动耗时八成），
         # 而用户每次只看一页，不该为没打开的页面付这笔时间。
@@ -351,8 +358,8 @@ class ToolboxApp:
             handler(paths)
         else:
             self.status.config(text="当前工具不支持拖放（可拖入：⑥序号重命名 / ⑧视频常用压制 / "
-                                    "⑨视频横竖屏 / ⑫图片压缩 / ⑳硬盘哈希扫描 / "
-                                    "⑩音轨提取）")
+                                    "⑨视频合并 / ⑩视频横竖屏 / ⑬图片压缩 / ㉑硬盘哈希扫描 / "
+                                    "⑪音轨提取）")
 
     def _build_page(self, index):
         """首次打开某页时才构建它的内容（空容器在启动时已经建好）。
@@ -367,7 +374,7 @@ class ToolboxApp:
         self._built[index] = True
         frame = self.tool_frames[index]
         title, builder = self._builders[index]
-        # 最复杂的 ⑳ / ⑥ 首次构建约 0.4~0.5 秒，先把状态栏刷出来再建，
+        # 最复杂的 ㉑ / ⑥ 首次构建约 0.4~0.5 秒，先把状态栏刷出来再建，
         # 免得点下去像是没反应（构建完 show_tool 会把状态栏改回当前工具）
         try:
             self.status.config(text=f"正在打开「{title}」…")
@@ -377,7 +384,7 @@ class ToolboxApp:
         try:
             if builder in (build_seq_rename_tab, build_trim_tab, build_video_tab,
                            build_compress_tab, build_rsbackup_tab, build_encode_tab,
-                           build_hash_tab,
+                           build_video_merge_tab, build_hash_tab,
                            build_audioextract_tab):
                 result = builder(frame, self)
                 if builder is build_hash_tab:
@@ -385,6 +392,8 @@ class ToolboxApp:
                     self._hash_api = result
                 elif builder is build_encode_tab:
                     self._encode_api = result
+                elif builder is build_video_merge_tab:
+                    self._video_merge_api = result
             else:
                 builder(frame)
         except Exception:
@@ -470,7 +479,7 @@ class ToolboxApp:
             lines.append("请运行：pip install " + " ".join(p for p, _ in missing))
             if optional:
                 lines.append("")
-                lines.append("可选增强（⑱ 加密包分类）：pip install " + " ".join(optional))
+                lines.append("可选增强（⑲ 加密包分类）：pip install " + " ".join(optional))
             self.status.config(text="部分依赖缺失，详见弹出提示")
             messagebox.showwarning("缺少依赖", "\n".join(lines))
         else:
@@ -594,9 +603,9 @@ class ToolboxApp:
 def check_dependencies():
     missing = []
     if not _module_available("PIL"):
-        missing.append(("pillow", "⑮ TXT转图片 / ⑪ WebP转JPG"))
+        missing.append(("pillow", "⑯ TXT转图片 / ⑫ WebP转JPG"))
     if not _module_available("chardet"):
-        missing.append(("chardet", "⑮ TXT转图片（缺失时使用内置编码猜测，功能仍可用）"))
+        missing.append(("chardet", "⑯ TXT转图片（缺失时使用内置编码猜测，功能仍可用）"))
     optional = []
     for mod in ("pyzipper", "rarfile", "py7zr"):
         if not _module_available(mod):
